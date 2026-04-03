@@ -3,56 +3,90 @@ import type {
   ChatResponse,
   ChatStreamResponse,
   JsonValue,
+  ModelConfig,
+  ProxyConfig,
   StreamChunk,
   Usage,
 } from '../types/index.js';
 import { createJsonHeaders } from '../utils/index.js';
 
-export interface ClaudeApiClientOptions {
+export interface ClaudeApiBootstrapConfig {
   baseUrl: string;
   apiKey?: string;
+  defaultModel: ModelConfig;
+  proxy?: ProxyConfig;
+}
+
+export interface ClaudeApiClientOptions extends ClaudeApiBootstrapConfig {
   fetchImpl?: typeof fetch;
+}
+
+export interface ApiRequestOptions {
+  signal?: AbortSignal;
+  modelOverride?: Partial<ModelConfig>;
 }
 
 export class ClaudeApiClient {
   private readonly fetchImpl: typeof fetch;
+  private activeModel: ModelConfig;
 
   constructor(private readonly options: ClaudeApiClientOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.activeModel = options.defaultModel;
   }
 
-  async createMessage(request: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
-    const init: RequestInit = {
-      method: 'POST',
-      headers: createJsonHeaders(this.options.apiKey ? { Authorization: `Bearer ${this.options.apiKey}` } : undefined),
-      body: JSON.stringify(request),
+  getModel(): ModelConfig {
+    return this.activeModel;
+  }
+
+  switchModel(config: Partial<ModelConfig>): ModelConfig {
+    this.activeModel = {
+      ...this.activeModel,
+      ...config,
     };
-    if (signal) init.signal = signal;
+    return this.activeModel;
+  }
 
-    const res = await this.fetchImpl(`${this.options.baseUrl}/v1/messages`, init);
+  async createMessage(request: Omit<ChatRequest, 'config'> & { config?: ModelConfig }, opts: ApiRequestOptions = {}): Promise<ChatResponse> {
+    const res = await this.fetchImpl(this.resolveUrl('/v1/messages'), {
+      method: 'POST',
+      headers: this.resolveHeaders(),
+      body: JSON.stringify({
+        ...request,
+        config: {
+          ...(request.config ?? this.activeModel),
+          ...(opts.modelOverride ?? {}),
+        },
+      }),
+      signal: opts.signal ?? null,
+    });
 
-    if (!res.ok) {
-      throw new Error(`Claude API error: ${res.status}`);
-    }
-
+    if (!res.ok) throw new Error(`Claude API error: ${res.status}`);
     return (await res.json()) as ChatResponse;
   }
 
-  createMessageStream(request: ChatRequest): ChatStreamResponse {
-    const controller = new AbortController();
+  createMessageStream(request: Omit<ChatRequest, 'config'> & { config?: ModelConfig }, opts: ApiRequestOptions = {}): ChatStreamResponse {
+    const abortController = new AbortController();
 
     const stream = new ReadableStream<StreamChunk>({
-      start: async (streamController) => {
+      start: async (controller) => {
         try {
-          const res = await this.fetchImpl(`${this.options.baseUrl}/v1/messages:stream`, {
+          const res = await this.fetchImpl(this.resolveUrl('/v1/messages:stream'), {
             method: 'POST',
-            headers: createJsonHeaders(this.options.apiKey ? { Authorization: `Bearer ${this.options.apiKey}` } : undefined),
-            body: JSON.stringify(request),
-            signal: controller.signal,
+            headers: this.resolveHeaders(),
+            body: JSON.stringify({
+              ...request,
+              config: {
+                ...(request.config ?? this.activeModel),
+                ...(opts.modelOverride ?? {}),
+              },
+            }),
+            signal: opts.signal ?? abortController.signal,
           });
 
           if (!res.ok || !res.body) {
-            streamController.error(new Error(`Stream failed: ${res.status}`));
+            controller.enqueue({ type: 'error', error: `Stream request failed: ${res.status}` });
+            controller.close();
             return;
           }
 
@@ -63,25 +97,52 @@ export class ClaudeApiClient {
             const { done, value } = await reader.read();
             if (done) break;
             const text = decoder.decode(value, { stream: true });
-            streamController.enqueue({ type: 'delta', textDelta: text });
+            if (text.length > 0) controller.enqueue({ type: 'delta', textDelta: text });
           }
 
-          streamController.enqueue({ type: 'done' });
-          streamController.close();
+          controller.enqueue({ type: 'done' });
+          controller.close();
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown stream error';
-          streamController.enqueue({ type: 'error', error: message });
-          streamController.close();
+          controller.enqueue({
+            type: 'error',
+            error: error instanceof Error ? error.message : 'Unknown stream error',
+          });
+          controller.close();
         }
       },
-      cancel: () => controller.abort(),
+      cancel: () => abortController.abort(),
     });
 
     return {
       stream,
-      cancel: () => controller.abort(),
+      cancel: () => abortController.abort(),
     };
   }
+
+  private resolveUrl(path: string): string {
+    if (!this.options.proxy?.enabled) return `${this.options.baseUrl}${path}`;
+    return `${this.options.proxy.baseUrl}${path}`;
+  }
+
+  private resolveHeaders(): HeadersInit {
+    return createJsonHeaders({
+      ...(this.options.proxy?.headers ?? {}),
+      ...(this.options.apiKey ? { Authorization: `Bearer ${this.options.apiKey}` } : {}),
+    });
+  }
+}
+
+export function bootstrapClaudeApi(config: ClaudeApiBootstrapConfig, fetchImpl?: typeof fetch): ClaudeApiClient {
+  return new ClaudeApiClient(
+    fetchImpl
+      ? {
+          ...config,
+          fetchImpl,
+        }
+      : {
+          ...config,
+        },
+  );
 }
 
 export function estimateUsageFromText(input: string, output: string): Usage {

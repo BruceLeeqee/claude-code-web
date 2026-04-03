@@ -1,4 +1,4 @@
-import type { JsonValue } from '../../types/index.js';
+import type { JsonValue, ProxyConfig } from '../../types/index.js';
 
 export interface ProxyRequest {
   url: string;
@@ -14,22 +14,29 @@ export interface ProxyResponse {
 }
 
 export interface UpstreamProxy {
-  send(request: ProxyRequest): Promise<ProxyResponse>;
+  send(request: ProxyRequest, signal?: AbortSignal): Promise<ProxyResponse>;
 }
 
 export class FetchUpstreamProxy implements UpstreamProxy {
-  constructor(private readonly baseUrl = '') {}
+  constructor(private readonly config: ProxyConfig) {}
 
-  async send(request: ProxyRequest): Promise<ProxyResponse> {
+  async send(request: ProxyRequest, signal?: AbortSignal): Promise<ProxyResponse> {
     const init: RequestInit = {
       method: request.method,
+      signal: signal ?? null,
     };
 
-    if (request.headers) init.headers = request.headers;
-    if (request.body !== undefined) init.body = JSON.stringify(request.body);
+    init.headers = {
+      ...(this.config.headers ?? {}),
+      ...(request.headers ?? {}),
+    };
 
-    const res = await fetch(`${this.baseUrl}${request.url}`, init);
+    if (request.body !== undefined) {
+      init.body = JSON.stringify(request.body);
+      (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
+    }
 
+    const res = await fetch(`${this.config.baseUrl}${request.url}`, init);
     const body = (await res.json().catch(() => null)) as JsonValue;
     const headers: Record<string, string> = {};
     res.headers.forEach((value, key) => {

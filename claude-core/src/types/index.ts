@@ -15,7 +15,7 @@ export interface Usage {
 export interface CostBreakdown {
   inputCostUsd: number;
   outputCostUsd: number;
-  cacheCostUsd?: number;
+  cacheCostUsd: number;
   totalCostUsd: number;
 }
 
@@ -40,13 +40,17 @@ export interface ToolResult {
   error?: string;
 }
 
-export interface StreamChunk {
-  type: 'delta' | 'done' | 'error' | 'tool_call' | 'tool_result';
-  textDelta?: string;
-  message?: ChatMessage;
-  toolCall?: ToolCall;
-  toolResult?: ToolResult;
-  error?: string;
+export type StreamChunk =
+  | { type: 'delta'; textDelta: string }
+  | { type: 'done'; message?: ChatMessage; usage?: Usage }
+  | { type: 'error'; error: string }
+  | { type: 'tool_call'; toolCall: ToolCall }
+  | { type: 'tool_result'; toolResult: ToolResult };
+
+export interface ProxyConfig {
+  enabled: boolean;
+  baseUrl: string;
+  headers?: Record<string, string>;
 }
 
 export interface ModelConfig {
@@ -106,6 +110,8 @@ export interface EventBus {
 export interface PluginContext {
   events: EventBus;
   storage: StorageAdapter;
+  exposeService: (name: string, service: unknown) => void;
+  getService: <T>(name: string) => T | null;
 }
 
 export interface Plugin {
@@ -148,7 +154,22 @@ export interface MCPResponse {
   };
 }
 
+export interface MCPRegistryServer {
+  id: string;
+  label: string;
+  endpoint: string;
+  authType?: 'none' | 'bearer' | 'apiKey';
+}
+
 export interface CostPolicy {
   maxSessionCostUsd?: number;
   warnThresholdUsd?: number;
+}
+
+export interface SessionSnapshot {
+  id: string;
+  contextId: string;
+  createdAt: number;
+  updatedAt: number;
+  title?: string;
 }

@@ -7,8 +7,13 @@ export interface PricingTable {
   cacheWritePer1k?: number;
 }
 
+export interface CostSnapshot {
+  totalUsd: number;
+  records: Array<{ usage: Usage; cost: CostBreakdown; at: number }>;
+}
+
 export class CostTracker {
-  private total = 0;
+  private records: Array<{ usage: Usage; cost: CostBreakdown; at: number }> = [];
 
   constructor(
     private readonly pricing: PricingTable,
@@ -26,25 +31,39 @@ export class CostTracker {
 
     const totalCostUsd = inputCostUsd + outputCostUsd + cacheCostUsd;
 
-    this.total += totalCostUsd;
-
-    return {
+    const breakdown: CostBreakdown = {
       inputCostUsd,
       outputCostUsd,
       cacheCostUsd,
       totalCostUsd,
     };
+
+    this.records.push({ usage, cost: breakdown, at: Date.now() });
+    return breakdown;
   }
 
   sessionTotal(): number {
-    return this.total;
+    return this.records.reduce((sum, it) => sum + it.cost.totalCostUsd, 0);
   }
 
   shouldWarn(): boolean {
-    return (this.policy.warnThresholdUsd ?? Number.POSITIVE_INFINITY) <= this.total;
+    const threshold = this.policy.warnThresholdUsd ?? Number.POSITIVE_INFINITY;
+    return this.sessionTotal() >= threshold;
   }
 
   exceeded(): boolean {
-    return (this.policy.maxSessionCostUsd ?? Number.POSITIVE_INFINITY) < this.total;
+    const max = this.policy.maxSessionCostUsd ?? Number.POSITIVE_INFINITY;
+    return this.sessionTotal() > max;
+  }
+
+  snapshot(): CostSnapshot {
+    return {
+      totalUsd: this.sessionTotal(),
+      records: [...this.records],
+    };
+  }
+
+  reset(): void {
+    this.records = [];
   }
 }

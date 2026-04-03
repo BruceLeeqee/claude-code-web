@@ -34,9 +34,39 @@ export class CoordinatorEngine {
     this.state = { ...this.state, steps, updatedAt: Date.now() };
   }
 
+  updateStep(stepId: string, patch: Partial<CoordinationStep>): CoordinationStep | null {
+    const idx = this.state.steps.findIndex((s) => s.id === stepId);
+    if (idx < 0) return null;
+
+    const current = this.state.steps[idx];
+    if (!current) return null;
+
+    const next: CoordinationStep = {
+      ...current,
+      ...patch,
+      id: current.id,
+      title: patch.title ?? current.title,
+      status: patch.status ?? current.status,
+    };
+
+    if (patch.detail !== undefined) {
+      next.detail = patch.detail;
+    }
+
+    const steps = [...this.state.steps];
+    steps[idx] = next;
+    this.state = { ...this.state, steps, updatedAt: Date.now() };
+    return next;
+  }
+
+  detectPlanModeHint(message: ChatMessage): boolean {
+    const normalized = message.content.toLowerCase();
+    return normalized.includes('plan') || normalized.includes('步骤') || normalized.includes('phase');
+  }
+
   ingestAssistantMessage(message: ChatMessage): void {
-    if (!message.content.toLowerCase().includes('plan')) return;
-    if (this.state.mode === 'single') {
+    if (this.state.mode !== 'single') return;
+    if (this.detectPlanModeHint(message)) {
       this.setMode('plan');
     }
   }

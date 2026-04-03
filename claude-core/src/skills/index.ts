@@ -1,5 +1,10 @@
 import type { Skill, SkillInput, SkillOutput } from '../types/index.js';
 
+export interface SkillExecutionResult {
+  skillId: string;
+  output: SkillOutput;
+}
+
 export class SkillRegistry {
   private readonly skills = new Map<string, Skill>();
 
@@ -15,10 +20,13 @@ export class SkillRegistry {
     return [...this.skills.values()];
   }
 
-  async runAll(input: SkillInput): Promise<SkillOutput[]> {
-    const outputs: SkillOutput[] = [];
+  async runAll(input: SkillInput): Promise<SkillExecutionResult[]> {
+    const outputs: SkillExecutionResult[] = [];
     for (const skill of this.skills.values()) {
-      outputs.push(await skill.run(input));
+      outputs.push({
+        skillId: skill.id,
+        output: await skill.run(input),
+      });
     }
     return outputs;
   }

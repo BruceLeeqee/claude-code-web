@@ -1,21 +1,12 @@
-import type { JsonValue, ToolCall, ToolResult } from '../types/index.js';
-
-export interface ToolExecutionContext {
-  signal?: AbortSignal;
-  metadata?: Record<string, unknown>;
-}
-
-export interface ToolDefinition<TInput extends JsonValue = JsonValue, TOutput extends JsonValue = JsonValue> {
-  name: string;
-  description: string;
-  inputSchema?: unknown;
-  run(input: TInput, ctx: ToolExecutionContext): Promise<TOutput>;
-}
+import type { ToolCall, ToolResult } from '../types/index.js';
+import type { AgentTool, ToolExecutionContext, ToolMiddleware } from './Tool.js';
+import { ToolDispatcher } from './Tool.js';
 
 export class ToolRegistry {
-  private readonly tools = new Map<string, ToolDefinition>();
+  private readonly tools = new Map<string, AgentTool>();
+  private middleware: ToolMiddleware[] = [];
 
-  register(tool: ToolDefinition): void {
+  register(tool: AgentTool): void {
     this.tools.set(tool.name, tool);
   }
 
@@ -23,35 +14,18 @@ export class ToolRegistry {
     this.tools.delete(name);
   }
 
-  list(): ToolDefinition[] {
+  list(): AgentTool[] {
     return [...this.tools.values()];
   }
 
-  async execute(call: ToolCall, ctx: ToolExecutionContext = {}): Promise<ToolResult> {
-    const tool = this.tools.get(call.toolName);
-    if (!tool) {
-      return {
-        toolCallId: call.id,
-        ok: false,
-        output: null,
-        error: `Tool not found: ${call.toolName}`,
-      };
-    }
+  use(middleware: ToolMiddleware): void {
+    this.middleware = [...this.middleware, middleware];
+  }
 
-    try {
-      const output = await tool.run(call.input, ctx);
-      return {
-        toolCallId: call.id,
-        ok: true,
-        output,
-      };
-    } catch (error) {
-      return {
-        toolCallId: call.id,
-        ok: false,
-        output: null,
-        error: error instanceof Error ? error.message : 'Unknown tool error',
-      };
-    }
+  async execute(call: ToolCall, context: ToolExecutionContext): Promise<ToolResult> {
+    const dispatcher = new ToolDispatcher((name) => this.tools.get(name), this.middleware);
+    return dispatcher.dispatch(call, context);
   }
 }
+
+export type { AgentTool, ToolExecutionContext, ToolMiddleware } from './Tool.js';

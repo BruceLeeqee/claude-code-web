@@ -4,17 +4,23 @@ export interface Migration<TState> {
   run(state: TState): TState;
 }
 
-export class MigrationRunner<TState> {
+export class MigrationRunner<TState extends { version: number }> {
   constructor(private readonly migrations: Migration<TState>[]) {}
 
-  run(state: TState, currentVersion: number, targetVersion: number): TState {
+  run(state: TState, targetVersion: number): TState {
     let next = state;
-    const plan = this.migrations
-      .filter((m) => m.from >= currentVersion && m.to <= targetVersion)
-      .sort((a, b) => a.from - b.from);
 
-    for (const migration of plan) {
-      next = migration.run(next);
+    while (next.version < targetVersion) {
+      const step = this.migrations.find((m) => m.from === next.version);
+      if (!step) {
+        throw new Error(`No migration found from v${next.version}`);
+      }
+
+      next = step.run(next);
+
+      if (next.version !== step.to) {
+        throw new Error(`Migration output version mismatch: expected ${step.to}, got ${next.version}`);
+      }
     }
 
     return next;

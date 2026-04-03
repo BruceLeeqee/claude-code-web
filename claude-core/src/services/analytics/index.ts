@@ -16,6 +16,22 @@ export class NoopAnalyticsSink implements AnalyticsSink {
   }
 }
 
+export class InMemoryAnalyticsSink implements AnalyticsSink {
+  private readonly events: AnalyticsEvent[] = [];
+
+  async track(event: AnalyticsEvent): Promise<void> {
+    this.events.push(event);
+  }
+
+  list(): AnalyticsEvent[] {
+    return [...this.events];
+  }
+
+  clear(): void {
+    this.events.length = 0;
+  }
+}
+
 export function usageToAnalytics(usage: Usage, cost?: CostBreakdown): AnalyticsEvent {
   return {
     name: 'usage.recorded',
