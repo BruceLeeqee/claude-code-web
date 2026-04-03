@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AsyncPipe } from '@angular/common';
 import { AppSettingsService, type AppTheme } from '../../core/app-settings.service';
+import { AdvancedArchitectureService } from '../../core/advanced-architecture.service';
 
 @Component({
   selector: 'app-settings-page',
@@ -14,9 +15,16 @@ import { AppSettingsService, type AppTheme } from '../../core/app-settings.servi
 })
 export class SettingsPageComponent {
   private readonly settingsService = inject(AppSettingsService);
+  private readonly architecture = inject(AdvancedArchitectureService);
   private readonly fb = inject(FormBuilder);
 
   readonly settings$ = this.settingsService.settings$;
+  readonly voiceState$ = this.architecture.voiceState$;
+  readonly vimState$ = this.architecture.vimState$;
+  readonly memFiles$ = this.architecture.memFiles$;
+  readonly transportKind$ = this.architecture.transportKind$;
+  readonly transportLog$ = this.architecture.transportLog$;
+  readonly analytics$ = this.architecture.analytics$;
 
   readonly form = this.fb.group({
     apiKey: [''],
@@ -83,5 +91,53 @@ export class SettingsPageComponent {
 
   reset(): void {
     this.settingsService.reset();
+  }
+
+  setTransport(kind: 'remoteIO' | 'sse' | 'websocket'): void {
+    this.architecture.setTransport(kind);
+  }
+
+  async connectTransport(): Promise<void> {
+    await this.architecture.connectTransport();
+  }
+
+  async disconnectTransport(): Promise<void> {
+    await this.architecture.disconnectTransport();
+  }
+
+  async pingTransport(): Promise<void> {
+    await this.architecture.sendTransportMessage('ping', { source: 'settings-page' });
+  }
+
+  startVoice(): void {
+    this.architecture.startListening();
+  }
+
+  speakVoice(): void {
+    this.architecture.startSpeaking();
+  }
+
+  stopVoice(): void {
+    this.architecture.stopVoice();
+  }
+
+  vimKey(key: string): void {
+    this.architecture.sendVimKey(key);
+  }
+
+  writeMemFile(): void {
+    this.architecture.writeFile('/demo/notes.md', '# Demo\nThis is a browser memory file.');
+  }
+
+  removeMemFile(): void {
+    this.architecture.removeFile('/demo/notes.md');
+  }
+
+  encodeSample(): string {
+    return this.architecture.encodeBase64('claude-core-browser');
+  }
+
+  decodeSample(value: string): string {
+    return this.architecture.decodeBase64(value);
   }
 }

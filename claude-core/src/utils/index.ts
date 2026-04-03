@@ -1,5 +1,7 @@
 import type { Clock, EventBus, CoreEvent, IdGenerator } from '../types/index.js';
 
+export * from './native-ts.js';
+
 export class SystemClock implements Clock {
   now(): number {
     return Date.now();

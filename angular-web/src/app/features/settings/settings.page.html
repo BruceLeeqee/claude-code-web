@@ -87,6 +87,66 @@
     </div>
   </form>
 
+  <section class="card">
+    <h2>高级架构（浏览器模拟）</h2>
+
+    <div class="inline">
+      <div>
+        <h3>Voice 架构</h3>
+        <p>状态：{{ voiceState$ | async }}</p>
+        <div class="actions">
+          <button type="button" (click)="startVoice()">Listening</button>
+          <button type="button" (click)="speakVoice()">Speaking</button>
+          <button type="button" class="secondary" (click)="stopVoice()">Stop</button>
+        </div>
+      </div>
+
+      <div>
+        <h3>Vim 键位模拟</h3>
+        <p>当前：{{ (vimState$ | async)?.mode }} / {{ (vimState$ | async)?.commandBuffer }}</p>
+        <div class="actions">
+          <button type="button" (click)="vimKey('i')">i</button>
+          <button type="button" (click)="vimKey(':')">:</button>
+          <button type="button" (click)="vimKey('w')">w</button>
+          <button type="button" (click)="vimKey('Enter')">Enter</button>
+          <button type="button" class="secondary" (click)="vimKey('Escape')">Esc</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="inline">
+      <div>
+        <h3>MemDir 内存文件系统</h3>
+        <div class="actions">
+          <button type="button" (click)="writeMemFile()">写入 demo 文件</button>
+          <button type="button" class="secondary" (click)="removeMemFile()">删除 demo 文件</button>
+        </div>
+        <pre>{{ memFiles$ | async | json }}</pre>
+      </div>
+
+      <div>
+        <h3>native-ts 浏览器兼容工具</h3>
+        <p>Base64(claude-core-browser): {{ encodeSample() }}</p>
+        <p>Decode: {{ decodeSample(encodeSample()) }}</p>
+      </div>
+    </div>
+
+    <h3>Transport 抽象（RemoteIO/SSE/WebSocket）</h3>
+    <p>当前：{{ transportKind$ | async }}</p>
+    <div class="actions">
+      <button type="button" (click)="setTransport('remoteIO')">RemoteIO</button>
+      <button type="button" (click)="setTransport('sse')">SSE</button>
+      <button type="button" (click)="setTransport('websocket')">WebSocket</button>
+      <button type="button" (click)="connectTransport()">Connect</button>
+      <button type="button" class="secondary" (click)="pingTransport()">Ping</button>
+      <button type="button" class="secondary" (click)="disconnectTransport()">Disconnect</button>
+    </div>
+    <pre>{{ transportLog$ | async | json }}</pre>
+
+    <h3>Analytics / Growthbook 架构</h3>
+    <pre>{{ analytics$ | async | json }}</pre>
+  </section>
+
   <section class="card preview">
     <h2>当前生效配置（预览）</h2>
     <pre>{{ settings | json }}</pre>
