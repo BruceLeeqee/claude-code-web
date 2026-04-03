@@ -1,10 +1,10 @@
 import {
   AfterViewChecked,
-  AfterViewInit,
   ChangeDetectionStrategy,
-  OnDestroy,
   Component,
   ElementRef,
+  OnInit,
+  OnDestroy,
   ViewChild,
   inject,
   signal,
@@ -34,7 +34,7 @@ import { ClaudeAgentService, type UiMcpServer, type UiToggleItem } from '../../c
   styleUrl: './chat.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class ChatPageComponent implements AfterViewInit, AfterViewChecked, OnDestroy {
+export class ChatPageComponent implements OnInit, AfterViewChecked, OnDestroy {
   private readonly agent = inject(ClaudeAgentService);
   private readonly sanitizer = inject(DomSanitizer);
 
@@ -104,9 +104,7 @@ export class ChatPageComponent implements AfterViewInit, AfterViewChecked, OnDes
     marked.setOptions({ renderer, gfm: true, breaks: true });
   }
 
-  async ngAfterViewInit(): Promise<void> {
-    this.initMonaco();
-    this.initTerminal();
+  async ngOnInit(): Promise<void> {
     await this.agent.hydrate();
   }
 
@@ -210,6 +208,20 @@ export class ChatPageComponent implements AfterViewInit, AfterViewChecked, OnDes
     this.writeTerminal('Demo replay started...');
     await this.agent.replayDemoScript();
     this.writeTerminal('Demo replay finished.');
+  }
+
+  async ensureEditorLoaded(): Promise<void> {
+    if (!this.monacoInstance) {
+      this.initMonaco();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  async ensureTerminalLoaded(): Promise<void> {
+    if (!this.term) {
+      this.initTerminal();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 
   loadPromptFromEditor(): void {

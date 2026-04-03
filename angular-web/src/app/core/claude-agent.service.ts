@@ -3,9 +3,12 @@ import {
   BehaviorSubject,
   Observable,
   Subject,
+  asyncScheduler,
   combineLatest,
+  debounceTime,
   distinctUntilChanged,
   map,
+  throttleTime,
 } from 'rxjs';
 import {
   type ChatMessage,
@@ -72,7 +75,10 @@ export class ClaudeAgentService {
     { id: 'promo-overlay', name: 'Promo Overlay', enabled: false, scope: 'plugin' },
   ]);
 
-  readonly messages$ = this.messagesSubject.asObservable();
+  readonly messages$ = this.messagesSubject.asObservable().pipe(
+    throttleTime(60, asyncScheduler, { leading: true, trailing: true }),
+    debounceTime(30),
+  );
   readonly planMode$ = this.planModeSubject.asObservable();
   readonly planSteps$ = this.planStepsSubject.asObservable();
   readonly tools$ = this.toolsSubject.asObservable();

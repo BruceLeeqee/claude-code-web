@@ -18,7 +18,11 @@
     <section class="card composer">
       <h2>Prompt</h2>
 
-      <div #monacoHost class="editor-host"></div>
+      @defer (on interaction) {
+        <div #monacoHost class="editor-host"></div>
+      } @placeholder {
+        <div class="editor-host placeholder">编辑器延迟加载中，点击“初始化编辑器”后加载。</div>
+      }
 
       <textarea
         [ngModel]="input()"
@@ -29,6 +33,7 @@
       ></textarea>
 
       <div class="actions">
+        <button type="button" class="secondary" (click)="ensureEditorLoaded()">初始化编辑器</button>
         <button type="button" (click)="loadPromptFromEditor()" [disabled]="vm.status === 'streaming'">从编辑器载入</button>
         <button type="button" (click)="send()" [disabled]="vm.status === 'streaming'">发送</button>
         <button type="button" (click)="sendStream()" [disabled]="vm.status === 'streaming'">流式发送</button>
@@ -54,7 +59,15 @@
         </div>
       </div>
 
-      <div #terminalHost class="terminal-host"></div>
+      <div class="actions" style="margin-top: 0; margin-bottom: 10px;">
+        <button type="button" class="secondary" (click)="ensureTerminalLoaded()">初始化终端</button>
+      </div>
+
+      @defer (on interaction) {
+        <div #terminalHost class="terminal-host"></div>
+      } @placeholder {
+        <div class="terminal-host placeholder">终端延迟加载中，点击“初始化终端”后加载。</div>
+      }
     </section>
   </section>
 
