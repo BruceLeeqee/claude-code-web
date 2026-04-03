@@ -1,0 +1,161 @@
+.page {
+  width: min(1200px, 100% - 32px);
+  margin: 20px auto 40px;
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: linear-gradient(180deg, #111827 0%, #0b1220 100%);
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 25%);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+
+  p {
+    margin: 4px 0 0;
+    color: #94a3b8;
+  }
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #1e293b;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 960px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.composer,
+.terminal,
+.messages {
+  h2 {
+    margin: 0 0 12px;
+    font-size: 14px;
+    color: #e2e8f0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+}
+
+.editor-host {
+  height: 220px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+textarea {
+  width: 100%;
+  background: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 12px;
+  resize: vertical;
+  font-size: 14px;
+}
+
+.actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+
+  button {
+    border: none;
+    border-radius: 10px;
+    padding: 10px 14px;
+    background: #2563eb;
+    color: #fff;
+    cursor: pointer;
+    font-weight: 600;
+
+    &:disabled {
+      background: #334155;
+      cursor: not-allowed;
+    }
+  }
+}
+
+.terminal-host {
+  height: 340px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #334155;
+}
+
+.messages {
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+  }
+
+  .msg {
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 10px;
+
+    &.user {
+      background: #0f172a;
+    }
+
+    &.assistant {
+      background: #1e1b4b;
+    }
+
+    .meta {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+      color: #e2e8f0;
+    }
+  }
+}
+
+.empty {
+  color: #94a3b8;
+}
