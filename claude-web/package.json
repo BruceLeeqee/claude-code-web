@@ -1,5 +1,5 @@
 {
-  "name": "angular-web",
+  "name": "claude-web",
   "version": "0.0.0",
   "scripts": {
     "ng": "ng",

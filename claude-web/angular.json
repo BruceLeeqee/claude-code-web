@@ -7,7 +7,7 @@
   },
   "newProjectRoot": "projects",
   "projects": {
-    "angular-web": {
+    "claude-web": {
       "projectType": "application",
       "schematics": {
         "@schematics/angular:component": {
@@ -23,7 +23,7 @@
         "build": {
           "builder": "@angular-devkit/build-angular:application",
           "options": {
-            "outputPath": "dist/angular-web",
+            "outputPath": "dist/claude-web",
             "index": "src/index.html",
             "browser": "src/main.ts",
             "polyfills": [
@@ -33,6 +33,8 @@
             "inlineStyleLanguage": "scss",
             "assets": [
               "src/favicon.ico",
+              "src/favicon.png",
+              "src/favicon.svg",
               "src/assets"
             ],
             "styles": [
@@ -81,10 +83,10 @@
           "builder": "@angular-devkit/build-angular:dev-server",
           "configurations": {
             "production": {
-              "buildTarget": "angular-web:build:production"
+              "buildTarget": "claude-web:build:production"
             },
             "development": {
-              "buildTarget": "angular-web:build:development"
+              "buildTarget": "claude-web:build:development"
             }
           },
           "defaultConfiguration": "development"
@@ -92,7 +94,7 @@
         "extract-i18n": {
           "builder": "@angular-devkit/build-angular:extract-i18n",
           "options": {
-            "buildTarget": "angular-web:build"
+            "buildTarget": "claude-web:build"
           }
         },
         "test": {
@@ -106,6 +108,8 @@
             "inlineStyleLanguage": "scss",
             "assets": [
               "src/favicon.ico",
+              "src/favicon.png",
+              "src/favicon.svg",
               "src/assets"
             ],
             "styles": [
