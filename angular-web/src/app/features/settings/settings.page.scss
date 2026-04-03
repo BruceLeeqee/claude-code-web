@@ -1,0 +1,99 @@
+.page {
+  width: min(1000px, 100% - 32px);
+  margin: 20px auto 40px;
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 15%);
+
+  h1,
+  h2 {
+    margin: 0 0 10px;
+  }
+
+  p {
+    margin: 0;
+    color: var(--muted-color);
+  }
+}
+
+.form {
+  display: grid;
+  gap: 12px;
+
+  label {
+    display: grid;
+    gap: 6px;
+
+    span {
+      font-size: 13px;
+      color: var(--muted-color);
+    }
+  }
+
+  input,
+  select {
+    width: 100%;
+    border: 1px solid var(--border-color);
+    background: var(--input-bg);
+    color: var(--text-color);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+}
+
+.inline {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .inline {
+    grid-template-columns: 1fr;
+  }
+}
+
+.check {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+
+  input {
+    width: auto;
+  }
+}
+
+.actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 10px;
+
+  button {
+    border: none;
+    border-radius: 10px;
+    padding: 10px 14px;
+    background: #2563eb;
+    color: #fff;
+    cursor: pointer;
+
+    &.secondary {
+      background: #334155;
+    }
+  }
+}
+
+.preview pre {
+  margin: 0;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+  color: var(--text-color);
+  overflow: auto;
+}

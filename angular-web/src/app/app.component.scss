@@ -1,0 +1,21 @@
+.topbar {
+  width: min(1200px, calc(100% - 32px));
+  margin: 14px auto 0;
+  display: flex;
+  gap: 8px;
+
+  a {
+    text-decoration: none;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    background: var(--card-bg);
+
+    &.active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+    }
+  }
+}
