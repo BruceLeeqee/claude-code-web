@@ -1,232 +1,161 @@
-<main class="page" *ngIf="vm$ | async as vm">
-  <section class="card header">
-    <div>
-      <h1>Claude Web Agent</h1>
-      <p>{{ status$ | async }}</p>
-    </div>
-
-    <div class="chips">
-      <span class="chip">Mode: {{ vm.mode }}</span>
-      <span class="chip">Tools: {{ vm.tools.length }}</span>
-      <span class="chip">Messages: {{ vm.messages.length }}</span>
-      <span class="chip">Plan Steps: {{ vm.planSteps.length }}</span>
-      <span class="chip">Total: ${{ vm.cost.totalCostUsd }}</span>
-    </div>
-  </section>
-
-  <section class="grid">
-    <section class="card composer">
-      <h2>Prompt</h2>
-
-      @defer (on interaction) {
-        <div #monacoHost class="editor-host"></div>
-      } @placeholder {
-        <div class="editor-host placeholder">编辑器延迟加载中，点击“初始化编辑器”后加载。</div>
-      }
-
-      <textarea
-        [ngModel]="input()"
-        (ngModelChange)="input.set($event)"
-        [disabled]="vm.status === 'streaming'"
-        rows="4"
-        placeholder="输入你的问题，例如：请给我一个重构计划"
-      ></textarea>
-
-      <div class="actions">
-        <button type="button" class="secondary" (click)="ensureEditorLoaded()">初始化编辑器</button>
-        <button type="button" (click)="loadPromptFromEditor()" [disabled]="vm.status === 'streaming'">从编辑器载入</button>
-        <button type="button" (click)="send()" [disabled]="vm.status === 'streaming'">发送</button>
-        <button type="button" (click)="sendStream()" [disabled]="vm.status === 'streaming'">流式发送</button>
-        <button type="button" class="secondary" (click)="clearSession()" [disabled]="vm.status === 'streaming'">清空会话</button>
-        <button type="button" class="secondary" (click)="exportHistory()">导出历史</button>
-      </div>
-    </section>
-
-    <section class="card terminal">
-      <h2>Terminal (Simulated)</h2>
-
-      <div class="ws-panel">
-        <input
-          class="search"
-          [ngModel]="wsUrl()"
-          (ngModelChange)="wsUrl.set($event)"
-          placeholder="ws://localhost:8787/terminal"
-        />
-        <div class="inline-actions">
-          <span class="status" [class.online]="wsState() === 'connected'">{{ wsState() }}</span>
-          <button type="button" class="mini" (click)="connectWebSocket()">连接</button>
-          <button type="button" class="mini" (click)="disconnectWebSocket()">断开</button>
+@if (vm$ | async; as vm) {
+  @if (settings$ | async; as st) {
+    <div class="chat-layout">
+      <header class="chat-top">
+        <div class="top-title">
+          <span class="title">Claude Web Agent</span>
+          <span class="subtitle">{{ st.model }} · {{ vm.mode }}</span>
         </div>
+        <div class="top-status">
+          @if (vm.status === 'streaming') {
+            <span class="pill streaming">生成中…</span>
+          } @else if (vm.status === 'error') {
+            <span class="pill error">出错</span>
+          } @else {
+            <span class="pill ready">就绪</span>
+          }
+          <span class="hint">工具 {{ vm.tools.length }} · 消息 {{ vm.messages.length }} · 约 ${{ vm.cost.totalCostUsd }}</span>
+        </div>
+      </header>
+
+      <div #thread class="chat-thread">
+        @if (vm.messages.length === 0) {
+          <div class="thread-empty">
+            <p>开始对话</p>
+            <p class="muted">在下方输入问题，Enter 发送（Shift+Enter 换行）。</p>
+          </div>
+        } @else {
+          <ul #messageList class="msg-list" (click)="onMessageAction($event)">
+            @for (msg of vm.messages; track msg.id) {
+              <li [class]="'bubble ' + msg.role">
+                <div class="bubble-label">{{ msg.role === 'user' ? 'You' : 'Claude' }}</div>
+                <div class="bubble-body markdown" [innerHTML]="renderMarkdown(msg.content)"></div>
+              </li>
+            }
+          </ul>
+        }
       </div>
 
-      <div class="actions" style="margin-top: 0; margin-bottom: 10px;">
-        <button type="button" class="secondary" (click)="ensureTerminalLoaded()">初始化终端</button>
+      <div class="composer-wrap">
+        <div class="composer-rule"></div>
+        <div class="composer">
+          <span class="prompt-glyph" aria-hidden="true">&gt;</span>
+          <textarea
+            class="composer-input"
+            rows="1"
+            [ngModel]="input()"
+            (ngModelChange)="input.set($event)"
+            (keydown)="onComposerKeydown($event)"
+            [disabled]="vm.status === 'streaming'"
+            placeholder="Message…"
+          ></textarea>
+        </div>
+        <div class="composer-actions">
+          <button type="button" class="btn primary" (click)="sendStream()" [disabled]="vm.status === 'streaming'">发送</button>
+          <button type="button" class="btn ghost" (click)="send()" [disabled]="vm.status === 'streaming'">非流式</button>
+          <button type="button" class="btn ghost" (click)="clearSession()" [disabled]="vm.status === 'streaming'">清空</button>
+          <button type="button" class="btn ghost" (click)="exportHistory()">导出</button>
+        </div>
+        <footer class="chat-footer">
+          <span>设置与密钥见顶部 Settings</span>
+          <span class="footer-right">? 快捷键 · Enter 发送</span>
+        </footer>
       </div>
 
-      @defer (on interaction) {
-        <div #terminalHost class="terminal-host"></div>
-      } @placeholder {
-        <div class="terminal-host placeholder">终端延迟加载中，点击“初始化终端”后加载。</div>
-      }
-    </section>
-  </section>
-
-  <section class="card plan-board">
-    <div class="plan-head">
-      <h2>Plan Mode / Coordinator</h2>
-      <div class="mode-switch">
-        <button type="button" [class.active]="vm.mode === 'single'" (click)="setMode('single')">Single</button>
-        <button type="button" [class.active]="vm.mode === 'plan'" (click)="setMode('plan')">Plan</button>
-        <button type="button" [class.active]="vm.mode === 'parallel'" (click)="setMode('parallel')">Parallel</button>
-      </div>
-    </div>
-
-    <div class="plan-create">
-      <textarea
-        [ngModel]="planDraft()"
-        (ngModelChange)="planDraft.set($event)"
-        rows="4"
-        placeholder="每行一个步骤，例如：\n需求分析\n任务拆解\n代码实现\n结果验证"
-      ></textarea>
-      <button type="button" (click)="buildPlan()">生成步骤</button>
-    </div>
-
-    @if (vm.planSteps.length === 0) {
-      <p class="empty">暂无步骤。先输入步骤草案并点击“生成步骤”。</p>
-    } @else {
-      <ul class="plan-list">
-        @for (step of vm.planSteps; track step.id) {
-          <li class="plan-item" [class]="step.status">
-            <div class="step-main">
-              <span class="status-dot"></span>
-              <div>
-                <h3>{{ step.title }}</h3>
-                <p>{{ step.status }}{{ step.detail ? ' · ' + step.detail : '' }}</p>
+      <details class="advanced-panel">
+        <summary>高级 · Plan / 工具 / MCP / 日志</summary>
+        <div class="advanced-body">
+          <section class="adv-block">
+            <div class="adv-head">
+              <h3>Plan / Coordinator</h3>
+              <div class="mode-switch">
+                <button type="button" [class.active]="vm.mode === 'single'" (click)="setMode('single')">Single</button>
+                <button type="button" [class.active]="vm.mode === 'plan'" (click)="setMode('plan')">Plan</button>
+                <button type="button" [class.active]="vm.mode === 'parallel'" (click)="setMode('parallel')">Parallel</button>
               </div>
             </div>
-
-            <div class="step-actions">
-              <button type="button" (click)="executeStep(step)" [disabled]="step.status === 'completed'">执行</button>
-              <button type="button" class="ghost" (click)="skipStep(step)">跳过</button>
-              <button type="button" class="ghost" (click)="retryStep(step)">重试</button>
-              <button type="button" class="danger" (click)="cancelStep(step)">取消</button>
-            </div>
-          </li>
-        }
-      </ul>
-    }
-  </section>
-
-  <section class="tool-grid">
-    <section class="card">
-      <div class="panel-head">
-        <h2>工具面板</h2>
-      </div>
-      <ul class="flat-list">
-        @for (tool of vm.tools; track tool) {
-          <li>
-            <span>{{ tool }}</span>
-            <span class="tag">模拟</span>
-          </li>
-        }
-      </ul>
-    </section>
-
-    <section class="card">
-      <div class="panel-head">
-        <h2>MCP 服务管理</h2>
-      </div>
-      <ul class="flat-list">
-        @for (server of vm.mcpServers; track server.id) {
-          <li>
-            <div>
-              <strong>{{ server.name }}</strong>
-              <p>{{ server.endpoint }}</p>
-            </div>
-            <div class="inline-actions">
-              <span class="status" [class.online]="server.status === 'online'">{{ server.status }}</span>
-              <button type="button" class="mini" (click)="toggleMcp(server)">{{ server.enabled ? '禁用' : '启用' }}</button>
-              <button type="button" class="mini" (click)="refreshMcp(server)">刷新</button>
-            </div>
-          </li>
-        }
-      </ul>
-    </section>
-  </section>
-
-  <section class="tool-grid">
-    <section class="card">
-      <div class="panel-head">
-        <h2>技能 / 插件开关</h2>
-      </div>
-      <input
-        class="search"
-        [ngModel]="capabilityQuery()"
-        (ngModelChange)="capabilityQuery.set($event)"
-        placeholder="搜索技能或插件"
-      />
-      <ul class="flat-list" *ngIf="filteredToggles$ | async as toggles">
-        @for (item of toggles; track item.id) {
-          <li>
-            <div>
-              <strong>{{ item.name }}</strong>
-              <p>{{ item.scope }}</p>
-            </div>
-            <button type="button" class="mini" [class.active]="item.enabled" (click)="toggleCapability(item)">
-              {{ item.enabled ? 'ON' : 'OFF' }}
-            </button>
-          </li>
-        }
-      </ul>
-    </section>
-
-    <section class="card">
-      <div class="panel-head">
-        <h2>工具调用日志</h2>
-        <div class="inline-actions">
-          <button type="button" class="mini" (click)="logFilter.set('all')">All</button>
-          <button type="button" class="mini" (click)="logFilter.set('success')">Success</button>
-          <button type="button" class="mini" (click)="logFilter.set('skipped')">Skipped</button>
-          <button type="button" class="mini" (click)="logFilter.set('failed')">Failed</button>
-          <button type="button" class="mini" (click)="replayDemo()">回放</button>
-          <button type="button" class="mini" (click)="clearLogs()">清空</button>
-        </div>
-      </div>
-      <ul class="log-list" *ngIf="filteredLogs$ | async as logs">
-        @for (log of logs; track log.id) {
-          <li>
-            <div class="line1">
-              <strong>{{ log.toolName }}</strong>
-              <span class="result" [class.ok]="log.result === 'success'" [class.warn]="log.result === 'skipped'" [class.fail]="log.result === 'failed'">
-                {{ log.result }}
-              </span>
-            </div>
-            <div class="line2">{{ log.action }} · {{ log.ts | date:'HH:mm:ss' }}</div>
-            @if (log.detail) {
-              <div class="line2">{{ log.detail }}</div>
+            <textarea
+              class="adv-textarea"
+              [ngModel]="planDraft()"
+              (ngModelChange)="planDraft.set($event)"
+              rows="3"
+              placeholder="每行一个步骤"
+            ></textarea>
+            <button type="button" class="btn small" (click)="buildPlan()">生成步骤</button>
+            @if (vm.planSteps.length === 0) {
+              <p class="muted small">暂无步骤</p>
+            } @else {
+              <ul class="plan-mini">
+                @for (step of vm.planSteps; track step.id) {
+                  <li>
+                    <span>{{ step.title }}</span>
+                    <span class="muted">{{ step.status }}</span>
+                    <button type="button" class="btn tiny" (click)="executeStep(step)">执行</button>
+                    <button type="button" class="btn tiny ghost" (click)="skipStep(step)">跳过</button>
+                  </li>
+                }
+              </ul>
             }
-          </li>
-        } @empty {
-          <li class="empty">暂无日志</li>
-        }
-      </ul>
-    </section>
-  </section>
+          </section>
 
-  <section class="card messages">
-    <h2>会话消息</h2>
+          <div class="adv-columns">
+            <section class="adv-block">
+              <h3>工具</h3>
+              <ul class="tag-list">
+                @for (tool of vm.tools; track tool) {
+                  <li>{{ tool }}</li>
+                }
+              </ul>
+            </section>
+            <section class="adv-block">
+              <h3>MCP</h3>
+              <ul class="flat-mini">
+                @for (server of vm.mcpServers; track server.id) {
+                  <li>
+                    <span>{{ server.name }}</span>
+                    <button type="button" class="btn tiny" (click)="toggleMcp(server)">开关</button>
+                  </li>
+                }
+              </ul>
+            </section>
+          </div>
 
-    @if (vm.messages.length === 0) {
-      <p class="empty">当前没有消息。先发送一条试试看。</p>
-    } @else {
-      <ul #messageList (click)="onMessageAction($event)">
-        @for (msg of vm.messages; track msg.id) {
-          <li [class]="'msg ' + msg.role">
-            <div class="meta">{{ msg.role }} · {{ msg.timestamp | date:'HH:mm:ss' }}</div>
-            <div class="markdown" [innerHTML]="renderMarkdown(msg.content)"></div>
-          </li>
-        }
-      </ul>
-    }
-  </section>
-</main>
+          <section class="adv-block">
+            <h3>技能 / 插件</h3>
+            <input class="adv-search" [ngModel]="capabilityQuery()" (ngModelChange)="capabilityQuery.set($event)" placeholder="搜索" />
+            @if (filteredToggles$ | async; as toggles) {
+              <ul class="flat-mini">
+                @for (item of toggles; track item.id) {
+                  <li>
+                    <span>{{ item.name }}</span>
+                    <button type="button" class="btn tiny" (click)="toggleCapability(item)">{{ item.enabled ? 'ON' : 'OFF' }}</button>
+                  </li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="adv-block">
+            <div class="adv-head">
+              <h3>工具日志</h3>
+              <div class="log-filters">
+                <button type="button" class="btn tiny" (click)="logFilter.set('all')">All</button>
+                <button type="button" class="btn tiny" (click)="replayDemo()">回放</button>
+                <button type="button" class="btn tiny ghost" (click)="clearLogs()">清空</button>
+              </div>
+            </div>
+            @if (filteredLogs$ | async; as logs) {
+              <ul class="log-mini">
+                @for (log of logs; track log.id) {
+                  <li>{{ log.toolName }} · {{ log.result }} · {{ log.action }}</li>
+                } @empty {
+                  <li class="muted">暂无</li>
+                }
+              </ul>
+            }
+          </section>
+        </div>
+      </details>
+    </div>
+  }
+}

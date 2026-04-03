@@ -22,6 +22,7 @@ export interface CostSettings {
 
 export interface AppSettings {
   apiKey: string;
+  modelProvider: 'anthropic' | 'openai' | 'minimax' | 'custom';
   model: string;
   proxy: ProxySettings;
   compression: CompressionSettings;
@@ -33,7 +34,8 @@ const STORAGE_KEY = 'claude-web:settings:v1';
 
 const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
-  model: 'claude-3-5-sonnet-latest',
+  modelProvider: 'minimax',
+  model: 'MiniMax-M2.7',
   proxy: {
     enabled: false,
     baseUrl: '',

@@ -10,10 +10,11 @@ export const appConfig: ApplicationConfig = {
     ...provideClaudeCore({
       defaultSessionId: 'web-default',
       api: {
-        baseUrl: 'https://api.anthropic.com',
+        // MiniMax Anthropic-compatible endpoint
+        baseUrl: 'https://api.minimaxi.com/anthropic',
         defaultModel: {
-          provider: 'anthropic',
-          model: 'claude-3-5-sonnet-latest',
+          provider: 'minimax',
+          model: 'MiniMax-M2.7',
           temperature: 0.2,
           maxTokens: 4096,
         },

@@ -24,6 +24,7 @@ export interface ChatMessage {
   role: Role;
   content: string;
   timestamp: number;
+  /** Optional API-shaped payload for Anthropic replay (`anthropicWire`); see claude-core `api/anthropic-messages`. */
   metadata?: JsonObject;
 }
 
@@ -40,12 +41,22 @@ export interface ToolResult {
   error?: string;
 }
 
+/** One completed Anthropic assistant turn after SSE ends (may include tool_use blocks). */
+export interface AnthropicTurnSnapshot {
+  stopReason: string | null;
+  assistantText: string;
+  assistantContentBlocks: JsonArray;
+  toolCalls: ToolCall[];
+  usage?: Usage;
+}
+
 export type StreamChunk =
   | { type: 'delta'; textDelta: string }
   | { type: 'done'; message?: ChatMessage; usage?: Usage }
   | { type: 'error'; error: string }
   | { type: 'tool_call'; toolCall: ToolCall }
-  | { type: 'tool_result'; toolResult: ToolResult };
+  | { type: 'tool_result'; toolResult: ToolResult }
+  | { type: 'anthropic_turn'; turn: AnthropicTurnSnapshot };
 
 export interface ProxyConfig {
   enabled: boolean;
@@ -54,7 +65,7 @@ export interface ProxyConfig {
 }
 
 export interface ModelConfig {
-  provider: 'anthropic' | 'openai' | 'custom';
+  provider: 'anthropic' | 'openai' | 'minimax' | 'custom';
   model: string;
   temperature?: number;
   maxTokens?: number;
@@ -68,12 +79,17 @@ export interface ChatRequest {
   systemPrompt?: string;
   contextId?: string;
   metadata?: JsonObject;
+  /** Anthropic `tools` array; when set (Anthropic-compatible providers), enables tool_use / tool_result rounds. */
+  tools?: JsonArray;
 }
 
 export interface ChatResponse {
   message: ChatMessage;
   usage?: Usage;
   raw?: JsonValue;
+  /** Present for Anthropic-compatible non-stream turns when the model returns tool_use. */
+  stopReason?: string | null;
+  toolCalls?: ToolCall[];
 }
 
 export interface ChatStreamResponse {

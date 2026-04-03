@@ -1,15 +1,5 @@
 import { Inject, Injectable } from '@angular/core';
-import {
-  BehaviorSubject,
-  Observable,
-  Subject,
-  asyncScheduler,
-  combineLatest,
-  debounceTime,
-  distinctUntilChanged,
-  map,
-  throttleTime,
-} from 'rxjs';
+import { BehaviorSubject, Observable, Subject, combineLatest, map } from 'rxjs';
 import {
   type ChatMessage,
   type CoordinationMode,
@@ -19,6 +9,7 @@ import {
   type ToolCall,
 } from 'claude-core';
 import { CLAUDE_CORE_CONFIG, CLAUDE_RUNTIME, type ClaudeCoreRuntime } from './claude-core.providers';
+import { AppSettingsService } from './app-settings.service';
 
 export type AgentStatus = 'idle' | 'streaming' | 'error';
 
@@ -75,10 +66,8 @@ export class ClaudeAgentService {
     { id: 'promo-overlay', name: 'Promo Overlay', enabled: false, scope: 'plugin' },
   ]);
 
-  readonly messages$ = this.messagesSubject.asObservable().pipe(
-    throttleTime(60, asyncScheduler, { leading: true, trailing: true }),
-    debounceTime(30),
-  );
+  /** No debounce: streaming deltas must reach the UI every tick. */
+  readonly messages$ = this.messagesSubject.asObservable();
   readonly planMode$ = this.planModeSubject.asObservable();
   readonly planSteps$ = this.planStepsSubject.asObservable();
   readonly tools$ = this.toolsSubject.asObservable();
@@ -121,15 +110,28 @@ export class ClaudeAgentService {
       toolLogs,
       toggles,
     })),
-    distinctUntilChanged((a, b) => JSON.stringify(a) === JSON.stringify(b)),
   );
 
   constructor(
     @Inject(CLAUDE_RUNTIME) private readonly runtime: ClaudeCoreRuntime,
     @Inject(CLAUDE_CORE_CONFIG) private readonly config: { defaultSessionId?: string },
+    private readonly appSettings: AppSettingsService,
   ) {
     this.sessionId = config.defaultSessionId ?? 'default';
     this.toolsSubject.next(this.runtime.tools.list().map((t) => t.name));
+
+    this.appSettings.settings$.subscribe((settings) => {
+      this.runtime.client.configureRuntime({
+        apiKey: settings.apiKey,
+        model: {
+          provider: settings.modelProvider,
+          model: settings.model,
+          temperature: this.runtime.client.getModel().temperature ?? 0.2,
+          maxTokens: this.runtime.client.getModel().maxTokens ?? 4096,
+        },
+      });
+    });
+
     void this.hydrate();
   }
 
@@ -340,13 +342,21 @@ export class ClaudeAgentService {
 
     const reader = result.stream.getReader();
     let partial = '';
+    let firstChunk = true;
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        // Core appends the user message inside the stream start; sync once before applying
+        // deltas so the last row is "user", not the previous turn's assistant.
+        if (firstChunk) {
+          firstChunk = false;
+          await this.hydrate();
+        }
         this.applyChunk(value, partial);
         if (value.type === 'delta') partial += value.textDelta;
+        else if (value.type === 'tool_result') partial = '';
       }
 
       await this.hydrate();
@@ -422,8 +432,27 @@ export class ClaudeAgentService {
       return;
     }
 
+    if (chunk.type === 'anthropic_turn') {
+      return;
+    }
+
     if (chunk.type === 'tool_call' && chunk.toolCall) {
-      void this.executeTool(chunk.toolCall);
+      this.appendLog({
+        toolName: chunk.toolCall.toolName,
+        action: `tool:${chunk.toolCall.toolName}`,
+        result: 'success',
+        detail: chunk.toolCall.id,
+      });
+      return;
+    }
+
+    if (chunk.type === 'tool_result' && chunk.toolResult) {
+      this.appendLog({
+        toolName: 'bridge',
+        action: 'tool-result',
+        result: chunk.toolResult.ok ? 'success' : 'failed',
+        detail: chunk.toolResult.error ?? JSON.stringify(chunk.toolResult.output).slice(0, 200),
+      });
       return;
     }
 

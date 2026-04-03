@@ -13,8 +13,21 @@
     </label>
 
     <label>
+      <span>模型供应商</span>
+      <select formControlName="modelProvider">
+        <option value="anthropic">Anthropic</option>
+        <option value="openai">OpenAI</option>
+        <option value="minimax">MiniMax</option>
+        <option value="custom">Custom</option>
+      </select>
+    </label>
+
+    <label>
       <span>模型选择</span>
       <select formControlName="model">
+        <option value="MiniMax-M2.7">MiniMax-M2.7</option>
+        <option value="abab6.5s-chat">MiniMax abab6.5s-chat</option>
+        <option value="abab6.5g-chat">MiniMax abab6.5g-chat</option>
         <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
         <option value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</option>
         <option value="claude-3-opus-latest">Claude 3 Opus</option>
@@ -83,8 +96,17 @@
 
     <div class="actions">
       <button type="submit">保存设置</button>
+      <button type="button" (click)="testConnection()" [disabled]="testStatus() === 'testing'">
+        {{ testStatus() === 'testing' ? '测试中...' : '测试连接' }}
+      </button>
       <button type="button" class="secondary" (click)="reset()">恢复默认</button>
     </div>
+
+    @if (testMessage()) {
+      <p [style.color]="testStatus() === 'ok' ? '#22c55e' : testStatus() === 'error' ? '#ef4444' : '#94a3b8'">
+        {{ testMessage() }}
+      </p>
+    }
   </form>
 
   <section class="card">

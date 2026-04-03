@@ -1,0 +1,22 @@
+<main class="page">
+  <section class="card">
+    <h1>启动自检</h1>
+    <p>自动检测 bridge、token、upstream 连通性。</p>
+    <div class="actions">
+      <button type="button" (click)="runAll()">开始自检</button>
+    </div>
+  </section>
+
+  <section class="card status">
+    <div class="row"><span>{{ badge(bridgeState()) }}</span><strong>Bridge 服务</strong><small>{{ bridgeState() }}</small></div>
+    <div class="row"><span>{{ badge(tokenState()) }}</span><strong>Bridge Token</strong><small>{{ tokenState() }}</small></div>
+    <div class="row"><span>{{ badge(upstreamState()) }}</span><strong>Upstream 模型</strong><small>{{ upstreamState() }}</small></div>
+  </section>
+
+  @if (detail()) {
+    <section class="card">
+      <h2>详情</h2>
+      <pre>{{ detail() }}</pre>
+    </section>
+  }
+</main>
