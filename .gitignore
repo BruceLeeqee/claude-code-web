@@ -1,14 +1,17 @@
 # 依赖（全仓库）
 node_modules/
 
-# claude-core 构建产物（npm run build 生成，不纳入版本库）
-claude-core/dist/
+# zyfront-core 构建产物（npm run build 生成，不纳入版本库）
+zyfront-core/dist/
 
 # 日志与本地环境
 *.log
 .env
 .env.*
 !.env.example
+
+# zyfront-desktop 构建产物（npm run build 生成，不纳入版本库）
+zyfront-desktop/dist/
 
 # 操作系统
 .DS_Store
