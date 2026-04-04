@@ -16,3 +16,6 @@ zyfront-desktop/dist/
 # 操作系统
 .DS_Store
 Thumbs.db
+
+# 本地工具 / 编辑器生成的项目记忆（不入库）
+.omc/

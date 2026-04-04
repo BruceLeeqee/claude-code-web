@@ -12,8 +12,8 @@
 
 | Highlight | What it means |
 |-----------|----------------|
-| **Browser-first** | The UI and **`claude-core`** runtime run in the browser—no desktop shell required to use the app. |
-| **Claude Code–style core** | Assistant loop, context, history, coordinator, tools, plugins, skills, and API clients live in **`claude-core`** (browser-safe TypeScript). |
+| **Browser-first** | The UI and **`zyfront-core`** runtime run in the browser—no desktop shell required to use the app. |
+| **Claude Code–style core** | Assistant loop, context, history, coordinator, tools, plugins, skills, and API clients live in **`zyfront-core`** (browser-safe TypeScript). |
 | **Plan Mode** | **`PlanEngine`** + coordinator wiring for structured multi-step workflows (aligned with how you think in “plan then execute”). |
 | **Tool system** | **`ToolSystem`** registers agent tools; optional **Local Bridge** adds sandboxed `fs.*`, `terminal.exec`, and related capabilities on your machine. |
 | **MCP & extensions** | **MCP**-oriented surfaces in the stack; **plugins** and **skills** registries extend behavior without forking the core. |
@@ -24,37 +24,49 @@
 ## Architecture
 
 ```
-claude-code-web/
-├── claude-web/       # Angular 17 SPA (chat, settings, self-check, Monaco, xterm)
-├── claude-core/      # Shared runtime: API, assistant, tools, MCP, skills, plugins, coordinator
+zyfront-AI/                    # monorepo root
+├── zyfront-core/             # Shared library: API, assistant, tools, MCP, skills, plugins, coordinator (TypeScript)
+├── zyfront-web/              # Angular 17 SPA — browser client (chat, settings, self-check, Monaco, xterm)
+├── zyfront-desktop/          # Electron + same Angular app — desktop shell (`main.js`, packaging via electron-builder)
 └── README.md
 ```
 
-1. The model may request **tool calls** → `claude-core` → (when configured) **`POST /api/tools/call`** on the Local Bridge.  
+1. The model may request **tool calls** → `zyfront-core` → (when configured) **`POST /api/tools/call`** on the Local Bridge.  
 2. The bridge runs **filesystem / terminal** actions inside **`BRIDGE_ROOT`** and returns results for the next model turn.  
 3. LLM traffic can be proxied through the bridge (`/api/llm/messages`, `/api/llm/stream`) depending on your setup.
 
-The app is **not** “serverless-only”: the **optional** Local Bridge is a small **Node** process for local dev power. The **product experience** is still a **pure web client** talking to APIs you control.
+The app is **not** “serverless-only”: the **optional** Local Bridge is a small **Node** process for local dev power. The **product experience** is still a **pure web client** talking to APIs you control. **`zyfront-desktop`** reuses the same UI/runtime patterns inside Electron for a packaged desktop build.
 
 ---
 
-## Quick start
+## Quick start (web)
 
-From the **`claude-web/`** package:
+From the **`zyfront-web/`** package:
 
 ```bash
-cd claude-web
+cd zyfront-web
 npm install
-npm run bridge:start   # optional: separate terminal
+npm run bridge:start   # optional: separate terminal (see zyfront-web/local-bridge)
 npm start              # ng serve → http://localhost:4200
+```
+
+## Quick start (desktop)
+
+From **`zyfront-desktop/`** (build Angular, then Electron or installer):
+
+```bash
+cd zyfront-desktop
+npm install
+npm run electron:start    # ng build + electron .
+# or: npm run dist       # Windows NSIS (uses ELECTRON_BUILDER_BINARIES_MIRROR in scripts for mirror-friendly downloads)
 ```
 
 Configure the client via **`localStorage`**: `bridge.baseUrl`, `bridge.token` (defaults match the bridge).
 
-Build **`claude-core`** when you change the library:
+Build **`zyfront-core`** when you change the library:
 
 ```bash
-cd claude-core
+cd zyfront-core
 npm install
 npm run build
 ```
@@ -78,7 +90,7 @@ Example tool body:
 ```json
 {
   "tool": "fs.read",
-  "args": { "path": "claude-web/package.json" }
+  "args": { "path": "zyfront-web/package.json" }
 }
 ```
 
@@ -105,16 +117,18 @@ Example tool body:
 
 | Location | Purpose |
 |----------|---------|
-| **Root `README.md`** | Overview, architecture, bridge, security |
-| **`claude-web/README.md`** | App-specific quick start (if present) |
+| **Root `README.md`** | Overview, architecture, bridge, security, monorepo map |
+| **`zyfront-web/README.md`** | Browser app quick start (if present) |
+| **`zyfront-desktop/README.md`** | Electron app / packaging notes (if present) |
+| **`zyfront-core/`** | Library source; run `npm run build` after API or type changes |
 
-**Folder name:** Prefer cloning into a root folder named **`claude-code-web`** so paths and scripts match this document.
+**Clone root:** Any folder name works; this document uses **`zyfront-AI`** as the repository root directory name.
 
 ---
 
 ## Contributing & license
 
-Issues and PRs are welcome. **`claude-core`** is **MIT**; check each package for details.
+Issues and PRs are welcome. **`zyfront-core`** is **MIT**; check each package for details.
 
 ---
 
@@ -124,7 +138,7 @@ Use these as video titles, hooks, or captions (translate as needed for your audi
 
 - *“Claude Code Web — the agent loop in the browser.”*  
 - *“Plan Mode, tools, MCP-style hooks, skills — one Angular shell.”*  
-- *“`claude-core` in TypeScript: share logic between web and future hosts.”*  
+- *“`zyfront-core` in TypeScript: share logic between web and future hosts.”*  
 - *“Optional Local Bridge: real FS and terminal, sandboxed.”*
 
 **Suggested hashtags:** `#ClaudeCodeWeb` `#CCW` `#Angular` `#TypeScript` `#AI` `#WebDev` `#开源`

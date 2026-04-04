@@ -1,6 +1,6 @@
 {
   "files.watcherExclude": {
-    "**/claude-core/dist/**": true,
+    "**/zyfront-core/dist/**": true,
     "**/angular-web/dist/**": true,
     "**/claude-web/dist/**": true,
     "**/node_modules/**": true,

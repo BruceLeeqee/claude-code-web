@@ -1,0 +1,10 @@
+<!-- 应用顶栏与主出口 -->
+<header class="topbar-wrap">
+  <div class="brand">ZyTrader</div>
+  <nav class="topbar">
+    <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Terminal</a>
+    <a routerLink="/settings" routerLinkActive="active">Settings</a>
+  </nav>
+</header>
+
+<router-outlet />

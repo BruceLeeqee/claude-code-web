@@ -1,0 +1,36 @@
+{
+  "name": "zyfront-core",
+  "version": "0.1.0",
+  "description": "Browser-safe TypeScript core runtime inspired by ClaudeCode architecture",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "start": "tsc -p tsconfig.json --watch --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "clean": "rimraf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "claude",
+    "ai",
+    "core",
+    "browser",
+    "typescript"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "rimraf": "^6.0.1"
+  }
+}
