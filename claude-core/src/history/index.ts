@@ -1,6 +1,10 @@
+/**
+ * 会话消息历史：`HistoryStore` 抽象 + 内存实现与带版本迁移的持久化实现。
+ */
 import type { ChatMessage, IdGenerator, StorageAdapter } from '../types/index.js';
 import type { Migration } from '../migrations/index.js';
 
+/** 按 sessionId 隔离的消息存储契约 */
 export interface HistoryStore {
   append(sessionId: string, message: ChatMessage): Promise<void>;
   list(sessionId: string): Promise<ChatMessage[]>;
@@ -23,19 +27,23 @@ interface HistoryDocumentV2 {
 
 type HistoryDocument = HistoryDocumentV1 | HistoryDocumentV2;
 
+/** 进程内 Map 存储，重启即丢失 */
 export class InMemoryHistoryStore implements HistoryStore {
   private readonly map = new Map<string, ChatMessage[]>();
 
+  /** 追加一条消息到会话尾部 */
   async append(sessionId: string, message: ChatMessage): Promise<void> {
     const list = this.map.get(sessionId) ?? [];
     list.push(message);
     this.map.set(sessionId, list);
   }
 
+  /** 返回会话消息列表副本 */
   async list(sessionId: string): Promise<ChatMessage[]> {
     return [...(this.map.get(sessionId) ?? [])];
   }
 
+  /** 按消息 id 合并 patch */
   async update(sessionId: string, messageId: string, patch: Partial<ChatMessage>): Promise<ChatMessage | null> {
     const list = this.map.get(sessionId) ?? [];
     const index = list.findIndex((m) => m.id === messageId);
@@ -56,6 +64,7 @@ export class InMemoryHistoryStore implements HistoryStore {
     return next;
   }
 
+  /** 删除指定消息，未找到返回 false */
   async remove(sessionId: string, messageId: string): Promise<boolean> {
     const list = this.map.get(sessionId) ?? [];
     const next = list.filter((m) => m.id !== messageId);
@@ -64,11 +73,13 @@ export class InMemoryHistoryStore implements HistoryStore {
     return true;
   }
 
+  /** 清空该会话全部消息 */
   async clear(sessionId: string): Promise<void> {
     this.map.delete(sessionId);
   }
 }
 
+/** 将历史文档 JSON 持久化到 `StorageAdapter`，并在读取时跑迁移链 */
 export class PersistentHistoryStore implements HistoryStore {
   private readonly migrations: Migration<HistoryDocument>[] = [
     {
@@ -96,6 +107,7 @@ export class PersistentHistoryStore implements HistoryStore {
     return `history:${sessionId}`;
   }
 
+  /** 读取存储文档，必要时从 v1 迁移到 v2 并写回 */
   private async loadDoc(sessionId: string): Promise<HistoryDocumentV2> {
     const raw = await this.storage.get<HistoryDocument>(this.key(sessionId));
 
@@ -127,6 +139,7 @@ export class PersistentHistoryStore implements HistoryStore {
     return current;
   }
 
+  /** 保存文档并刷新 updatedAt */
   private async saveDoc(sessionId: string, doc: HistoryDocumentV2): Promise<void> {
     await this.storage.set(this.key(sessionId), {
       ...doc,
@@ -134,17 +147,20 @@ export class PersistentHistoryStore implements HistoryStore {
     });
   }
 
+  /** 追加消息；若 id 为空则用 IdGenerator 生成 */
   async append(sessionId: string, message: ChatMessage): Promise<void> {
     const doc = await this.loadDoc(sessionId);
     doc.messages.push({ ...message, id: message.id || this.ids.next('msg') });
     await this.saveDoc(sessionId, doc);
   }
 
+  /** 列出持久化会话中的全部消息 */
   async list(sessionId: string): Promise<ChatMessage[]> {
     const doc = await this.loadDoc(sessionId);
     return [...doc.messages];
   }
 
+  /** 更新持久化文档中的单条消息 */
   async update(sessionId: string, messageId: string, patch: Partial<ChatMessage>): Promise<ChatMessage | null> {
     const doc = await this.loadDoc(sessionId);
     const idx = doc.messages.findIndex((m) => m.id === messageId);
@@ -167,6 +183,7 @@ export class PersistentHistoryStore implements HistoryStore {
     return next;
   }
 
+  /** 从持久化文档删除一条消息 */
   async remove(sessionId: string, messageId: string): Promise<boolean> {
     const doc = await this.loadDoc(sessionId);
     const next = doc.messages.filter((m) => m.id !== messageId);
@@ -176,6 +193,7 @@ export class PersistentHistoryStore implements HistoryStore {
     return true;
   }
 
+  /** 删除整个会话存储键 */
   async clear(sessionId: string): Promise<void> {
     await this.storage.remove(this.key(sessionId));
   }

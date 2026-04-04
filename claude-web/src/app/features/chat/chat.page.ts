@@ -1,3 +1,6 @@
+/**
+ * 聊天主页面：绑定 `ClaudeAgentService` 的聚合 vm$、Markdown 渲染、代码块交互与计划/MCP 侧栏。
+ */
 import {
   AfterViewChecked,
   ChangeDetectionStrategy,
@@ -67,6 +70,7 @@ export class ChatPageComponent implements OnInit, AfterViewChecked, OnDestroy {
   );
 
   constructor() {
+    // 自定义 Markdown 代码块 HTML，便于 Prism 高亮与内联编辑/复制
     const renderer = new marked.Renderer();
     renderer.code = (code: string, language?: string) => {
       const lang = language || 'plaintext';
@@ -89,21 +93,25 @@ export class ChatPageComponent implements OnInit, AfterViewChecked, OnDestroy {
     marked.setOptions({ renderer, gfm: true, breaks: true });
   }
 
+  /** 拉取历史并在新消息时滚动到底部 */
   async ngOnInit(): Promise<void> {
     await this.agent.hydrate();
     this.scrollSub = this.agent.messages$.subscribe(() => this.scheduleScrollThread());
   }
 
+  /** 取消消息订阅 */
   ngOnDestroy(): void {
     this.scrollSub?.unsubscribe();
   }
 
+  /** 每次变更检测后对消息列表下的代码块跑 Prism 着色 */
   ngAfterViewChecked(): void {
     if (this.messageList?.nativeElement) {
       Prism.highlightAllUnder(this.messageList.nativeElement);
     }
   }
 
+  /** 将对话线程滚动条置底（微任务中执行避免布局抖动） */
   private scheduleScrollThread(): void {
     queueMicrotask(() => {
       const el = this.threadRef?.nativeElement;
@@ -111,12 +119,14 @@ export class ChatPageComponent implements OnInit, AfterViewChecked, OnDestroy {
     });
   }
 
+  /** Enter 发送，Shift+Enter 换行 */
   onComposerKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
     void this.sendStream();
   }
 
+  /** 非流式发送 */
   async send(): Promise<void> {
     const text = this.input().trim();
     if (!text) return;
@@ -125,6 +135,7 @@ export class ChatPageComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.scheduleScrollThread();
   }
 
+  /** 流式发送（默认主路径） */
   async sendStream(): Promise<void> {
     const text = this.input().trim();
     if (!text) return;
@@ -133,10 +144,12 @@ export class ChatPageComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.scheduleScrollThread();
   }
 
+  /** 清空会话与计划 */
   async clearSession(): Promise<void> {
     await this.agent.clearSession();
   }
 
+  /** 下载当前会话 JSON */
   exportHistory(): void {
     const blob = new Blob([this.agent.exportHistory()], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -147,55 +160,68 @@ export class ChatPageComponent implements OnInit, AfterViewChecked, OnDestroy {
     URL.revokeObjectURL(url);
   }
 
+  /** 切换协调模式 */
   setMode(mode: CoordinationMode): void {
     this.agent.setPlanMode(mode);
   }
 
+  /** 根据草稿文本生成计划步骤 */
   buildPlan(): void {
     this.agent.generatePlanFromText(this.planDraft());
   }
 
+  /** 执行单个计划步骤 */
   async executeStep(step: CoordinationStep): Promise<void> {
     await this.agent.executeStep(step.id);
   }
 
+  /** 跳过步骤 */
   skipStep(step: CoordinationStep): void {
     this.agent.skipStep(step.id);
   }
 
+  /** 重试步骤 */
   retryStep(step: CoordinationStep): void {
     this.agent.retryStep(step.id);
   }
 
+  /** 取消步骤 */
   cancelStep(step: CoordinationStep): void {
     this.agent.cancelStep(step.id);
   }
 
+  /** 切换 MCP 服务器启用 */
   toggleMcp(server: UiMcpServer): void {
     this.agent.toggleMcpServer(server.id);
   }
 
+  /** 刷新 MCP 状态占位 */
   refreshMcp(server: UiMcpServer): void {
     this.agent.refreshMcpStatus(server.id);
   }
 
+  /** 切换技能/插件开关 */
   toggleCapability(item: UiToggleItem): void {
     this.agent.toggleCapability(item.id);
   }
 
+  /** 清空工具日志 */
   clearLogs(): void {
     this.agent.clearToolLogs();
   }
 
+  /** 运行内置演示脚本 */
   async replayDemo(): Promise<void> {
     await this.agent.replayDemoScript();
   }
 
+  /** Markdown → HTML 并标记为可信（已由 escape 与 sanitizer 约束场景） */
   renderMarkdown(content: string): SafeHtml {
     const html = marked.parse(content) as string;
     return this.sanitizer.bypassSecurityTrustHtml(html);
   }
 
+  /** 代码块内 Copy / Edit / Save / Cancel 的事件委托 */
   onMessageAction(event: Event): void {
     const target = event.target as HTMLElement;
     const block = target.closest('.code-block') as HTMLElement | null;
@@ -250,6 +276,7 @@ export class ChatPageComponent implements OnInit, AfterViewChecked, OnDestroy {
     }
   }
 
+  /** 将纯文本转为可安全插入 HTML 的转义串 */
   private escapeHtml(v: string): string {
     return v
       .replaceAll('&', '&amp;')

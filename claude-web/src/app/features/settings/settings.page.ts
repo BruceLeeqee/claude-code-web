@@ -1,3 +1,6 @@
+/**
+ * 设置页：模型与 API、代理、压缩与成本、主题，以及高级架构演示（传输层/语音/Vim/内存 FS）。
+ */
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
@@ -47,6 +50,7 @@ export class SettingsPageComponent {
   });
 
   constructor() {
+    // 设置流与表单双向同步（避免 patch 时触发 valueChanges 循环）
     this.settings$.subscribe((settings) => {
       this.form.patchValue(
         {
@@ -68,6 +72,7 @@ export class SettingsPageComponent {
     });
   }
 
+  /** 校验表单并写回 `AppSettingsService` */
   save(): void {
     if (this.form.invalid) {
       this.form.markAllAsTouched();
@@ -97,6 +102,7 @@ export class SettingsPageComponent {
     });
   }
 
+  /** 经本地 Bridge 探测上游模型 HTTP 是否成功 */
   async testConnection(): Promise<void> {
     if (this.form.invalid) {
       this.form.markAllAsTouched();
@@ -136,54 +142,67 @@ export class SettingsPageComponent {
     }
   }
 
+  /** 恢复默认设置 */
   reset(): void {
     this.settingsService.reset();
   }
 
+  /** 切换演示用传输层类型 */
   setTransport(kind: 'remoteIO' | 'sse' | 'websocket'): void {
     this.architecture.setTransport(kind);
   }
 
+  /** 连接传输层（演示） */
   async connectTransport(): Promise<void> {
     await this.architecture.connectTransport();
   }
 
+  /** 断开传输层 */
   async disconnectTransport(): Promise<void> {
     await this.architecture.disconnectTransport();
   }
 
+  /** 发送 ping 载荷经当前传输层 */
   async pingTransport(): Promise<void> {
     await this.architecture.sendTransportMessage('ping', { source: 'settings-page' });
   }
 
+  /** 语音：开始监听（演示） */
   startVoice(): void {
     this.architecture.startListening();
   }
 
+  /** 语音：开始播报（演示） */
   speakVoice(): void {
     this.architecture.startSpeaking();
   }
 
+  /** 语音：停止 */
   stopVoice(): void {
     this.architecture.stopVoice();
   }
 
+  /** 向 Vim 模拟器注入按键 */
   vimKey(key: string): void {
     this.architecture.sendVimKey(key);
   }
 
+  /** 写入浏览器内存虚拟文件示例 */
   writeMemFile(): void {
     this.architecture.writeFile('/demo/notes.md', '# Demo\nThis is a browser memory file.');
   }
 
+  /** 删除内存虚拟文件示例 */
   removeMemFile(): void {
     this.architecture.removeFile('/demo/notes.md');
   }
 
+  /** Base64 编码示例串 */
   encodeSample(): string {
     return this.architecture.encodeBase64('claude-core-browser');
   }
 
+  /** Base64 解码 */
   decodeSample(value: string): string {
     return this.architecture.decodeBase64(value);
   }

@@ -1,9 +1,12 @@
-// Unified public entry for Angular/Web consumers
+/**
+ * claude-core 对外统一入口（供 Angular / Web 等消费）。
+ * 汇总类型、API、上下文、历史、工具、技能、插件、协调器、Assistant 等子模块，并导出产品层别名。
+ */
 
-// Canonical type exports
+// 类型导出
 export * from './types/index.js';
 
-// Canonical module exports
+// 各功能模块导出
 export * from './api/index.js';
 export * from './context/index.js';
 export * from './history/index.js';
@@ -25,7 +28,7 @@ export * from './schemas/index.js';
 export * from './migrations/index.js';
 export * from './services/index.js';
 
-// Unified aliases requested by product/API design
+// 产品/API 设计所需的统一别名（如 ToolRegistry → ToolSystem）
 export { ClaudeApiClient as ClaudeClient, bootstrapClaudeApi } from './api/index.js';
 export { ContextManager } from './context/index.js';
 export { PersistentHistoryStore as HistoryManager, InMemoryHistoryStore } from './history/index.js';

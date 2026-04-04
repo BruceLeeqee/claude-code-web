@@ -1,8 +1,12 @@
+/**
+ * 自检页：串联本地 Bridge 健康检查、令牌校验与上游模型连通性（使用当前设置中的 Key/代理）。
+ */
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { LocalBridgeService } from '../../core/local-bridge.service';
 import { AppSettingsService } from '../../core/app-settings.service';
 
+/** 单项检查状态 */
 type CheckState = 'idle' | 'checking' | 'ok' | 'error';
 
 @Component({
@@ -22,6 +26,7 @@ export class SelfCheckPageComponent {
   readonly upstreamState = signal<CheckState>('idle');
   readonly detail = signal('');
 
+  /** 顺序执行 Bridge 与上游模型检查，并汇总错误信息 */
   async runAll(): Promise<void> {
     this.bridgeState.set('checking');
     this.tokenState.set('checking');
@@ -61,6 +66,7 @@ export class SelfCheckPageComponent {
     }
   }
 
+  /** 将状态映射为展示用颜色标签 */
   badge(state: CheckState): string {
     if (state === 'ok') return 'GREEN';
     if (state === 'error') return 'RED';

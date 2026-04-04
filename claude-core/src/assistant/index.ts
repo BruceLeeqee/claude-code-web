@@ -1,3 +1,7 @@
+/**
+ * Assistant 运行时：串联技能、历史、工具、可选压缩与协调器，
+ * 提供非流式 `chatWithMeta` 与流式 `stream`（含多轮 tool 调用循环）。
+ */
 import type {
   ChatMessage,
   ChatRequest,
@@ -25,6 +29,7 @@ import { SessionCompactor, type AutoCompactPolicy } from '../compact/index.js';
 import { CoordinatorEngine } from '../coordinator/index.js';
 import { SimpleIdGenerator } from '../utils/index.js';
 
+/** 构造 `AssistantRuntime` 所需的依赖 */
 export interface AssistantRuntimeOptions {
   api: ClaudeApiClient;
   storage: StorageAdapter;
@@ -36,6 +41,7 @@ export interface AssistantRuntimeOptions {
   coordinator?: CoordinatorEngine;
 }
 
+/** 单次用户输入 + 可选上下文键值，由运行时拼成完整 `ChatRequest` */
 export interface AssistantChatInput extends Omit<ChatRequest, 'messages'> {
   userInput: string;
   contextValues?: JsonObject;
@@ -44,10 +50,15 @@ export interface AssistantChatInput extends Omit<ChatRequest, 'messages'> {
 const MAX_TOOL_ROUNDS = 16;
 
 export class AssistantRuntime {
+  /** 会话上下文持久化（与 history 分离存储键空间） */
   readonly context: ContextManager;
+  /** 会话消息存储（内存或持久化实现） */
   readonly history: HistoryStore;
+  /** 用户输入前置技能管道 */
   readonly skills: SkillRegistry;
+  /** 模型可调用的工具注册表 */
   readonly tools: ToolRegistry;
+  /** UI/计划模式协调状态 */
   readonly coordinator: CoordinatorEngine;
   private readonly ids = new SimpleIdGenerator();
 
@@ -59,11 +70,15 @@ export class AssistantRuntime {
     this.coordinator = opts.coordinator ?? new CoordinatorEngine();
   }
 
+  /** 非流式对话，仅返回最终助手消息 */
   async chat(sessionId: string, request: AssistantChatInput): Promise<ChatMessage> {
     const response = await this.chatWithMeta(sessionId, request);
     return response.message;
   }
 
+  /**
+   * 非流式对话（含 usage/toolCalls）：循环执行 tool 直至无 tool_calls 或达到轮数上限。
+   */
   async chatWithMeta(sessionId: string, request: AssistantChatInput): Promise<ChatResponse> {
     const skillOutputs = await this.skills.runAll({
       userInput: request.userInput,
@@ -147,6 +162,9 @@ export class AssistantRuntime {
     return lastResponse;
   }
 
+  /**
+   * 流式对话：推送文本 delta、tool_call/tool_result，并在兼容体下处理多轮工具后继续请求。
+   */
   stream(sessionId: string, request: AssistantChatInput): ChatStreamResponse {
     const cancelController = new AbortController();
 
@@ -337,6 +355,7 @@ export class AssistantRuntime {
     };
   }
 
+  /** 委托 `ToolRegistry.execute` 执行单次工具 */
   private async executeTool(sessionId: string, toolCall: ToolCall) {
     return this.tools.execute(toolCall, {
       sessionId,

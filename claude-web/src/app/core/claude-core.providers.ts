@@ -1,3 +1,7 @@
+/**
+ * Angular DI 装配：向应用提供 `claude-core` 运行时（客户端、历史、工具、协调器、Assistant）。
+ * 同时将本地 Bridge 上的 fs/terminal 等能力注册为 Agent 可调用的工具。
+ */
 import { InjectionToken, Provider } from '@angular/core';
 import {
   AssistantRuntime,
@@ -17,11 +21,13 @@ import {
   type ModelConfig,
 } from 'claude-core';
 
+/** 注入到应用的 Claude Core 静态配置 */
 export interface ClaudeCoreConfig {
   api: ClaudeApiBootstrapConfig;
   defaultSessionId?: string;
 }
 
+/** 工厂产出的运行时聚合，供各特性服务注入 */
 export interface ClaudeCoreRuntime {
   client: ClaudeClient;
   context: ContextManager;
@@ -33,17 +39,23 @@ export interface ClaudeCoreRuntime {
   assistant: AssistantRuntime;
 }
 
+/** 配置令牌 */
 export const CLAUDE_CORE_CONFIG = new InjectionToken<ClaudeCoreConfig>('CLAUDE_CORE_CONFIG');
+/** HTTP 客户端令牌 */
 export const CLAUDE_CLIENT = new InjectionToken<ClaudeClient>('CLAUDE_CLIENT');
+/** 完整运行时令牌 */
 export const CLAUDE_RUNTIME = new InjectionToken<ClaudeCoreRuntime>('CLAUDE_RUNTIME');
+/** 默认模型配置令牌 */
 export const CLAUDE_DEFAULT_MODEL = new InjectionToken<ModelConfig>('CLAUDE_DEFAULT_MODEL');
 
+/** 读取 localStorage 中的 Bridge 基址与令牌 */
 function getBridgeConfig(): { baseUrl: string; token: string } {
   const baseUrl = localStorage.getItem('bridge.baseUrl') || 'http://127.0.0.1:8787';
   const token = localStorage.getItem('bridge.token') || 'change-me-bridge-token';
   return { baseUrl, token };
 }
 
+/** POST `/api/tools/call`，失败时抛出带 Bridge 错误文案的异常 */
 async function callBridgeTool(tool: string, args: Record<string, unknown>): Promise<JsonValue> {
   const { baseUrl, token } = getBridgeConfig();
   const res = await fetch(`${baseUrl}/api/tools/call`, {
@@ -63,6 +75,7 @@ async function callBridgeTool(tool: string, args: Record<string, unknown>): Prom
   return (data?.data ?? data) as JsonValue;
 }
 
+/** 构造与本地 Bridge 一一对应的 `AgentTool` 列表（供模型 function calling 使用） */
 function buildBridgeTools(): AgentTool[] {
   return [
     {
@@ -85,22 +98,34 @@ function buildBridgeTools(): AgentTool[] {
         required: ['path'],
       },
       async run(input) {
-        return callBridgeTool('fs.read', (input as Record<string, unknown>) ?? {});
+        const o = (input as Record<string, unknown>) ?? {};
+        const p = String(o['path'] ?? '').trim();
+        if (!p) throw new Error('fs.read: path is required.');
+        return callBridgeTool('fs.read', { path: p });
       },
     },
     {
       name: 'fs.write',
-      description: 'Write or overwrite a UTF-8 text file under the bridge sandbox root.',
+      description:
+        'Write or overwrite a UTF-8 text file under the bridge sandbox root. Always set path to a real file path (e.g. "output/notes.md"), never empty or ".". For binary files such as .pptx, do not use this tool; run a small Node script with pptxgenjs via terminal.exec instead.',
       inputSchema: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'Relative file path' },
-          content: { type: 'string', description: 'File contents' },
+          path: { type: 'string', description: 'Relative file path (required, non-empty, not workspace root)' },
+          content: { type: 'string', description: 'UTF-8 text file contents' },
         },
         required: ['path', 'content'],
       },
       async run(input) {
-        return callBridgeTool('fs.write', (input as Record<string, unknown>) ?? {});
+        const o = (input as Record<string, unknown>) ?? {};
+        const p = String(o['path'] ?? '').trim();
+        if (!p) {
+          throw new Error('fs.write: path is required (e.g. "output/deck-outline.md"); do not call with an empty object.');
+        }
+        if (o['content'] === undefined || o['content'] === null) {
+          throw new Error('fs.write: content is required.');
+        }
+        return callBridgeTool('fs.write', { path: p, content: String(o['content']) });
       },
     },
     {
@@ -112,7 +137,10 @@ function buildBridgeTools(): AgentTool[] {
         required: ['path'],
       },
       async run(input) {
-        return callBridgeTool('fs.delete', (input as Record<string, unknown>) ?? {});
+        const o = (input as Record<string, unknown>) ?? {};
+        const p = String(o['path'] ?? '').trim();
+        if (!p) throw new Error('fs.delete: path is required.');
+        return callBridgeTool('fs.delete', { path: p });
       },
     },
     {
@@ -147,6 +175,7 @@ function buildBridgeTools(): AgentTool[] {
   ];
 }
 
+/** 返回一组 Provider，供 `app.config.ts` 中展开注册 */
 export function provideClaudeCore(config: ClaudeCoreConfig): Provider[] {
   return [
     { provide: CLAUDE_CORE_CONFIG, useValue: config },

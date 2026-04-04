@@ -1,9 +1,14 @@
+/**
+ * 通用状态迁移：from/to 版本号与单步转换函数。
+ */
+/** 单步迁移定义 */
 export interface Migration<TState> {
   from: number;
   to: number;
   run(state: TState): TState;
 }
 
+/** 按版本链依次执行迁移直至 targetVersion */
 export class MigrationRunner<TState extends { version: number }> {
   constructor(private readonly migrations: Migration<TState>[]) {}
 

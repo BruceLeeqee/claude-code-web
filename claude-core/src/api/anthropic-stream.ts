@@ -1,6 +1,8 @@
 /**
- * Accumulates one Anthropic Messages API streaming turn (SSE `data:` JSON lines)
- * into assistant content blocks + tool calls, mirroring restored-src's tool_use / tool_result flow.
+ * Anthropic Messages 流式一轮累计器：解析 SSE `data:` JSON 行，
+ * 汇总为助手 content 块与 tool_use（与多轮 tool_result 流程对齐）。
+ * 核心功能：流式响应的高层封装与事件发射器。
+ * 关联场景：开发者直接使用的 client.messages.stream() 方法，其核心实现就在此文件。
  */
 
 import type { AnthropicTurnSnapshot, JsonArray, JsonValue, ToolCall, Usage } from '../types/index.js';
@@ -11,6 +13,7 @@ type TextBlock = { kind: 'text'; text: string };
 type ToolBlock = { kind: 'tool_use'; id: string; name: string; jsonBuf: string };
 type BlockState = TextBlock | ToolBlock;
 
+/** 从流内 usage 对象提取 token 数 */
 function roughUsage(u: unknown): Usage | undefined {
   if (!u || typeof u !== 'object') return undefined;
   const o = u as Record<string, unknown>;
@@ -25,7 +28,7 @@ export class AnthropicSseTurnAccumulator {
   private stopReason: string | null = null;
   private usage: Usage | undefined;
 
-  /** Feed one full SSE line (including `data: {...}`). */
+  /** 处理一行完整 SSE（含 `data:` 前缀与 JSON 负载） */
   consumeLine(line: string): void {
     const trimmed = line.replace(/\r$/, '').trim();
     if (!trimmed.startsWith('data:')) return;
@@ -84,6 +87,7 @@ export class AnthropicSseTurnAccumulator {
     }
   }
 
+  /** 按 index 排序块，合并文本、解析 tool JSON，生成 `AnthropicTurnSnapshot` */
   finalize(): AnthropicTurnSnapshot {
     const indices = [...this.blocks.keys()].sort((a, b) => a - b);
     const assistantContentBlocks: JsonArray = [];

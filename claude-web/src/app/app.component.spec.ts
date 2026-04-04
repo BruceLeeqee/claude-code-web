@@ -1,3 +1,4 @@
+/** 根组件烟测 */
 import { TestBed } from '@angular/core/testing';
 import { AppComponent } from './app.component';
 

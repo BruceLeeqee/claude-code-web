@@ -1,3 +1,10 @@
+/**
+ * 本地 Bridge（Node + Express）
+ * - 为前端提供受 BRIDGE_ROOT 约束的文件读写、目录列表、终端命令（白名单）、工具统一入口
+ * - WebSocket 交互式终端（需 token）
+ * - 代理探测上游 Anthropic 兼容 API，避免浏览器 CORS
+ * 环境变量：BRIDGE_PORT, BRIDGE_HOST, BRIDGE_ROOT, BRIDGE_TOKEN, BRIDGE_CORS_ORIGIN
+ */
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs/promises');
@@ -14,6 +21,7 @@ const TOKEN = process.env.BRIDGE_TOKEN || 'change-me-bridge-token';
 const CORS_ORIGIN = process.env.BRIDGE_CORS_ORIGIN || 'http://localhost:4200';
 const AUDIT_LOG_PATH = path.resolve(process.cwd(), 'local-bridge', 'audit.log');
 
+/** 允许 terminal.exec 使用的命令名列表（仅检查首个 token） */
 const DEFAULT_ALLOWED_COMMANDS = [
   'git',
   'npm',
@@ -34,7 +42,9 @@ const DEFAULT_ALLOWED_COMMANDS = [
   'explorer',
   'cmd',
 ];
+/** local.open_app 允许启动的 Windows 程序 */
 const ALLOWED_OPEN_APPS = ['notepad', 'calc', 'mspaint'];
+/** 明确拒绝的危险命令片段 */
 const BLOCKED_COMMANDS = ['rm -rf /', 'shutdown', 'reboot', 'format', 'mkfs'];
 
 const sessions = new Map();
@@ -43,6 +53,7 @@ const app = express();
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: '4mb' }));
 
+/** 追加一行 JSON 审计日志（失败静默） */
 function appendAudit(record) {
   const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n';
   try {
@@ -53,12 +64,14 @@ function appendAudit(record) {
   }
 }
 
+/** 从 Header 或 Query 读取 bridge token */
 function extractAuthToken(req) {
   const headerToken = req.headers['x-bridge-token'];
   if (typeof headerToken === 'string') return headerToken;
   return String(req.query.token || '');
 }
 
+/** 校验 x-bridge-token / token 与 BRIDGE_TOKEN 一致 */
 function authGuard(req, res, next) {
   const incoming = extractAuthToken(req);
   if (!incoming || incoming !== TOKEN) {
@@ -68,6 +81,7 @@ function authGuard(req, res, next) {
   return next();
 }
 
+/** 将相对路径解析为 ROOT 下的绝对路径，并禁止跳出沙箱 */
 function resolveSafe(inputPath = '.') {
   const abs = path.resolve(ROOT, inputPath);
   if (!abs.startsWith(ROOT)) {
@@ -76,6 +90,24 @@ function resolveSafe(inputPath = '.') {
   return abs;
 }
 
+/** 非空路径且不能等于沙箱根目录，避免把「工作区文件夹」当文件读写 */
+function resolveSafeFilePath(relPath, toolName) {
+  const trimmed = String(relPath ?? '').trim();
+  if (!trimmed) {
+    throw new Error(
+      `${toolName}: path is required (non-empty path under the workspace, e.g. "docs/notes.md")`
+    );
+  }
+  const abs = resolveSafe(trimmed);
+  if (path.normalize(abs) === path.normalize(ROOT)) {
+    throw new Error(
+      `${toolName}: path cannot be the workspace root or "." — use a concrete file path (e.g. "output/slides.pptx").`
+    );
+  }
+  return abs;
+}
+
+/** 校验命令非空、无黑名单片段且首词在白名单 */
 function ensureCommandAllowed(command) {
   const normalized = String(command || '').trim();
   if (!normalized) throw new Error('Empty command is not allowed');
@@ -92,6 +124,7 @@ function ensureCommandAllowed(command) {
   }
 }
 
+/** 在沙箱 cwd 下用 shell 执行命令，带超时杀进程 */
 async function runCommand(command, cwd = '.', timeoutMs = 15000) {
   ensureCommandAllowed(command);
   const safeCwd = resolveSafe(cwd);
@@ -325,6 +358,7 @@ app.post('/api/model/test', async (req, res) => {
   }
 });
 
+/** Agent 工具统一入口：fs.* / terminal.exec / local.open_app 等 */
 app.post('/api/tools/call', async (req, res) => {
   const { tool, args } = req.body || {};
   try {
@@ -340,6 +374,7 @@ app.post('/api/tools/call', async (req, res) => {
   }
 });
 
+/** 工具：列目录 */
 async function fsListTool(args = {}) {
   const dir = resolveSafe(String(args.dir || '.'));
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -351,29 +386,47 @@ async function fsListTool(args = {}) {
   };
 }
 
+/** 工具：读文本文件 */
 async function fsReadTool(args = {}) {
-  const target = resolveSafe(String(args.path || ''));
+  const target = resolveSafeFilePath(args.path, 'fs.read');
   const content = await fs.readFile(target, 'utf8');
   appendAudit({ type: 'tool_fs_read', path: target });
   return { ok: true, tool: 'fs.read', data: { path: target, content } };
 }
 
+/** 工具：写 UTF-8 文本；禁止根路径与已存在目录 */
 async function fsWriteTool(args = {}) {
-  const target = resolveSafe(String(args.path || ''));
-  const content = String(args.content || '');
+  const target = resolveSafeFilePath(args.path, 'fs.write');
+  const content = String(args.content ?? '');
+  try {
+    const st = await fs.stat(target);
+    if (st.isDirectory()) {
+      throw new Error(
+        'fs.write: path is a directory, not a file. Use a file path such as "exports/deck.pptx".'
+      );
+    }
+  } catch (e) {
+    if (e && e.code === 'ENOENT') {
+      // create new file
+    } else {
+      throw e;
+    }
+  }
   await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.writeFile(target, content, 'utf8');
   appendAudit({ type: 'tool_fs_write', path: target, bytes: Buffer.byteLength(content, 'utf8') });
   return { ok: true, tool: 'fs.write', data: { path: target } };
 }
 
+/** 工具：删除文件或目录（递归） */
 async function fsDeleteTool(args = {}) {
-  const target = resolveSafe(String(args.path || ''));
+  const target = resolveSafeFilePath(args.path, 'fs.delete');
   await fs.rm(target, { recursive: true, force: true });
   appendAudit({ type: 'tool_fs_delete', path: target });
   return { ok: true, tool: 'fs.delete', data: { path: target } };
 }
 
+/** 工具：打开白名单 Windows 应用 */
 async function openLocalAppTool(args = {}) {
   const app = String(args.app || '').toLowerCase();
   if (!ALLOWED_OPEN_APPS.includes(app)) {
@@ -386,6 +439,7 @@ async function openLocalAppTool(args = {}) {
   return { ok: true, tool: 'local.open_app', data: { app, ...out } };
 }
 
+/** 工具：执行 shell 命令（内部调用 runCommand） */
 async function terminalExecTool(args = {}) {
   const out = await runCommand(String(args.command || ''), String(args.cwd || '.'), Number(args.timeoutMs || 15000));
   appendAudit({ type: 'tool_terminal_exec', command: out.command, cwd: out.cwd, code: out.code });

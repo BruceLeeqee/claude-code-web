@@ -1,3 +1,9 @@
+/**
+ * Claude 兼容 API 客户端：请求 `/api/llm/messages` 与 `/api/llm/stream`（通常由本地 Bridge 转发），
+ * 核心功能：模块导出清单 (Barrel File)。
+ * 作用：作为该目录的统一出口，将上述三个文件中的核心类、函数、类型（如 Anthropic 客户端、MessageStream、SSEDecoder 等）统一导出，
+ *       方便外部通过单一路径 import ... from './api" 引用，避免深层路径导入。
+ */
 import type {
   ChatMessage,
   ChatRequest,
@@ -23,6 +29,7 @@ import {
   type SseLineBuffer,
 } from './anthropic-sse.js';
 
+/** `bootstrapClaudeApi` 使用的最小配置 */
 export interface ClaudeApiBootstrapConfig {
   baseUrl: string;
   apiKey?: string;
@@ -30,15 +37,18 @@ export interface ClaudeApiBootstrapConfig {
   proxy?: ProxyConfig;
 }
 
+/** 客户端构造选项（可注入自定义 fetch） */
 export interface ClaudeApiClientOptions extends ClaudeApiBootstrapConfig {
   fetchImpl?: typeof fetch;
 }
 
+/** 单次请求的 AbortSignal 与模型覆盖 */
 export interface ApiRequestOptions {
   signal?: AbortSignal;
   modelOverride?: Partial<ModelConfig>;
 }
 
+/** 通过 Bridge 或直连访问 LLM，支持 Anthropic 兼容 JSON 与 SSE 流 */
 export class ClaudeApiClient {
   private readonly fetchImpl: typeof fetch;
   private activeModel: ModelConfig;
@@ -58,10 +68,12 @@ export class ClaudeApiClient {
     this.currentProxy = options.proxy;
   }
 
+  /** 当前生效的模型配置快照 */
   getModel(): ModelConfig {
     return this.activeModel;
   }
 
+  /** 合并更新当前模型参数并返回新快照 */
   switchModel(config: Partial<ModelConfig>): ModelConfig {
     this.activeModel = {
       ...this.activeModel,
@@ -70,6 +82,7 @@ export class ClaudeApiClient {
     return this.activeModel;
   }
 
+  /** 运行时热更新基址、Key、代理与模型（供设置页同步） */
   configureRuntime(config: {
     baseUrl?: string;
     apiKey?: string;
@@ -82,6 +95,7 @@ export class ClaudeApiClient {
     if (config.model) this.switchModel(config.model);
   }
 
+  /** 非流式创建消息，解析 Anthropic 兼容响应中的文本与 tool_use */
   async createMessage(request: Omit<ChatRequest, 'config'> & { config?: ModelConfig }, opts: ApiRequestOptions = {}): Promise<ChatResponse> {
     const activeConfig: ModelConfig = {
       ...(request.config ?? this.activeModel),
@@ -131,6 +145,7 @@ export class ClaudeApiClient {
     return out;
   }
 
+  /** 流式创建消息：兼容体走 SSE 累积器并最终发出 `anthropic_turn` */
   createMessageStream(request: Omit<ChatRequest, 'config'> & { config?: ModelConfig }, opts: ApiRequestOptions = {}): ChatStreamResponse {
     const abortController = new AbortController();
 
@@ -202,11 +217,13 @@ export class ClaudeApiClient {
     };
   }
 
+  /** 解析真实请求 URL（是否走代理 baseUrl） */
   private resolveUrl(path: string): string {
     if (!this.currentProxy?.enabled) return `${this.currentBaseUrl}${path}`;
     return `${this.currentProxy.baseUrl}${path}`;
   }
 
+  /** 非流式请求头：Anthropic 系用 x-api-key，其余 Bearer */
   private resolveHeaders(config: ModelConfig): HeadersInit {
     const apiKey = this.currentApiKey;
     const common = {
@@ -229,7 +246,7 @@ export class ClaudeApiClient {
     });
   }
 
-  /** Same as a normal message body plus stream: true for Anthropic-compatible providers (single /v1/messages endpoint). */
+  /** 在兼容体请求体上附加 `stream: true` */
   private resolveStreamRequestBody(
     request: Omit<ChatRequest, 'config'> & { config?: ModelConfig },
     config: ModelConfig,
@@ -241,12 +258,14 @@ export class ClaudeApiClient {
     return { ...(base as Record<string, JsonValue>), stream: true };
   }
 
+  /** 流式请求头：兼容体需 Accept: text/event-stream */
   private resolveStreamHeaders(config: ModelConfig): HeadersInit {
     const base = this.resolveHeaders(config);
     if (!this.isAnthropicCompatible(config)) return base;
     return { ...base, Accept: 'text/event-stream' };
   }
 
+  /** 组装 POST JSON：Anthropic 消息数组或通用透传 */
   private resolveRequestBody(request: Omit<ChatRequest, 'config'> & { config?: ModelConfig }, config: ModelConfig): JsonValue {
     if (this.isAnthropicCompatible(config)) {
       const body: Record<string, JsonValue> = {
@@ -268,12 +287,14 @@ export class ClaudeApiClient {
     } as unknown as JsonValue;
   }
 
+  /** 是否按 Anthropic Messages API 形状序列化/解析 */
   private isAnthropicCompatible(config: ModelConfig): boolean {
     const model = config.model.toLowerCase();
     return config.provider === 'anthropic' || config.provider === 'minimax' || model.includes('minimax') || model.includes('abab');
   }
 }
 
+/** 工厂：创建默认配置的 `ClaudeApiClient` */
 export function bootstrapClaudeApi(config: ClaudeApiBootstrapConfig, fetchImpl?: typeof fetch): ClaudeApiClient {
   return new ClaudeApiClient(
     fetchImpl
@@ -287,6 +308,7 @@ export function bootstrapClaudeApi(config: ClaudeApiBootstrapConfig, fetchImpl?:
   );
 }
 
+/** 用字符长度粗略估算 token（非精确） */
 export function estimateUsageFromText(input: string, output: string): Usage {
   const roughToken = (t: string) => Math.ceil(t.length / 4);
   return {
@@ -295,6 +317,7 @@ export function estimateUsageFromText(input: string, output: string): Usage {
   };
 }
 
+/** 安全 JSON 解析，失败时返回 `{ raw }` 占位 */
 export function safeJsonParse(raw: string): JsonValue {
   try {
     return JSON.parse(raw) as JsonValue;

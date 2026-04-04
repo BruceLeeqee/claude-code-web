@@ -1,3 +1,9 @@
+/**
+ * Anthropic Messages API 与内部 `ChatMessage` 的互转：wire 元数据、工具定义序列化、
+ * 非流式 JSON 响应解析、工具结果块构造。
+ * 核心功能：定义 Messages API 的核心请求逻辑与类型。
+ * 关联场景：非流式调用 client.messages.create() 的底层实现。
+ */
 import type {
   AnthropicTurnSnapshot,
   ChatMessage,
@@ -9,11 +15,13 @@ import type {
 } from '../types/index.js';
 import type { AgentTool } from '../tools/Tool.js';
 
-/** Stored on `ChatMessage.metadata` for exact Anthropic replay (tool_use / tool_result rounds). */
+/** 存在 `ChatMessage.metadata` 中，用于多轮 tool_use / tool_result 精确回放 */
 export const ANTHROPIC_WIRE_KEY = 'anthropicWire';
 
+/** API 形状的 user/assistant 消息（content 为块数组或结构化值） */
 export type AnthropicWireMessage = { role: 'user' | 'assistant'; content: JsonValue };
 
+/** 读取消息上的 wire 载荷，格式不合法时返回 null */
 export function getAnthropicWire(msg: ChatMessage): AnthropicWireMessage | null {
   const w = msg.metadata?.[ANTHROPIC_WIRE_KEY];
   if (!w || typeof w !== 'object') return null;
@@ -25,6 +33,7 @@ export function getAnthropicWire(msg: ChatMessage): AnthropicWireMessage | null 
   return { role, content: content as JsonValue };
 }
 
+/** 将单条 `ChatMessage` 转为 API `messages[]` 元素（优先使用已存 wire） */
 export function toAnthropicApiMessage(msg: ChatMessage): { role: string; content: JsonValue } {
   const wire = getAnthropicWire(msg);
   if (wire) {
@@ -45,6 +54,7 @@ export function toAnthropicApiMessage(msg: ChatMessage): { role: string; content
   };
 }
 
+/** 将注册的 `AgentTool` 转为 API `tools` 数组（含 input_schema） */
 export function toolsFromAgentTools(tools: AgentTool[]): JsonArray {
   const out: JsonArray = [];
   for (const t of tools) {
@@ -66,6 +76,7 @@ export function toolsFromAgentTools(tools: AgentTool[]): JsonArray {
   return out;
 }
 
+/** 从 usage 对象尽力提取 input/output token 数 */
 function roughUsage(u: unknown): Usage | undefined {
   if (!u || typeof u !== 'object') return undefined;
   const o = u as Record<string, unknown>;
@@ -75,6 +86,7 @@ function roughUsage(u: unknown): Usage | undefined {
   return { inputTokens: input, outputTokens: output };
 }
 
+/** 解析非流式完整响应 JSON，抽出文本块与 tool_use */
 export function parseAnthropicMessageJson(raw: unknown): AnthropicTurnSnapshot {
   const empty: AnthropicTurnSnapshot = {
     stopReason: null,
@@ -122,6 +134,7 @@ export function parseAnthropicMessageJson(raw: unknown): AnthropicTurnSnapshot {
   return snap;
 }
 
+/** 将多次工具执行结果拼成 user 侧 content 块数组 */
 export function toolResultBlocks(results: Array<{ toolCallId: string; ok: boolean; output: JsonValue; error?: string }>): JsonArray {
   return results.map((r) => {
     const payload = r.ok ? r.output : { error: r.error ?? 'Tool failed' };

@@ -1,5 +1,9 @@
+/**
+ * `StorageAdapter` 实现：进程内 Map 与带命名空间的浏览器 localStorage（JSON 序列化）。
+ */
 import type { StorageAdapter } from '../types/index.js';
 
+/** 内存键值存储 */
 export class InMemoryStorageAdapter implements StorageAdapter {
   private readonly store = new Map<string, unknown>();
 
@@ -20,6 +24,7 @@ export class InMemoryStorageAdapter implements StorageAdapter {
   }
 }
 
+/** 使用 localStorage/sessionStorage + 可选 key 前缀 */
 export class BrowserLocalStorageAdapter implements StorageAdapter {
   constructor(private readonly storage: Storage = localStorage, private readonly namespace = 'claude-core:') {}
 
