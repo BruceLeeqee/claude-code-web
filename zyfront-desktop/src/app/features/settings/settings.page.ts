@@ -5,6 +5,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AsyncPipe } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { AppSettingsService, type AppTheme } from '../../core/app-settings.service';
 import { AdvancedArchitectureService } from '../../core/advanced-architecture.service';
 import { LocalBridgeService } from '../../core/local-bridge.service';
@@ -15,7 +16,7 @@ type CheckState = 'idle' | 'checking' | 'ok' | 'error';
 @Component({
   selector: 'app-settings-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, AsyncPipe],
+  imports: [CommonModule, ReactiveFormsModule, AsyncPipe, RouterLink],
   templateUrl: './settings.page.html',
   styleUrl: './settings.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -1,0 +1,16 @@
+<div class="agents-grid">
+  <nz-card *ngFor="let agent of facade.agents()" class="block" [nzTitle]="agent.name">
+    <p>{{ agent.role }} · {{ agent.id }}</p>
+    <nz-progress [nzPercent]="agent.progress" nzSize="small"></nz-progress>
+    <p>状态：{{ agent.status }}</p>
+
+    <div class="actions">
+      <button nz-button (click)="facade.toggleAgent(agent.id)">暂停/恢复</button>
+      <button nz-button nzType="primary" (click)="facade.advanceAgent(agent.id)">推进进度</button>
+    </div>
+
+    <div class="actions" style="display:block; margin-top: 8px">
+      <div *ngFor="let line of agent.logs">- {{ line }}</div>
+    </div>
+  </nz-card>
+</div>

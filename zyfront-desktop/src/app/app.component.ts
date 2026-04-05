@@ -1,15 +1,19 @@
-/**
- * 根组件：仅负责布局壳与 `<router-outlet>`，具体页面由路由懒加载。
- */
-import { ChangeDetectionStrategy, Component } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
+import { ClaudeAgentService } from './core/claude-agent.service';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class AppComponent {}
+export class AppComponent {
+  /**
+   * 必须尽早构造，以便订阅 AppSettingsService 并把 API Key 写入 ClaudeClient。
+   * 仅打开工作台时若未注入本服务，会导致请求始终无 Key（401）。
+   */
+  private readonly _agentSettingsBridge = inject(ClaudeAgentService);
+}

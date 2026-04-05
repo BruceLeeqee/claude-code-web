@@ -1,9 +1,38 @@
 // @ts-nocheck
-const { app, BrowserWindow, ipcMain } = require('electron')
+const electronModule = require('electron')
 const path = require('path')
 const fs = require('fs/promises')
 const { existsSync } = require('fs')
-const { exec } = require('child_process')
+const { exec, spawn } = require('child_process')
+const pty = require('node-pty')
+
+if (typeof electronModule === 'string') {
+  const relaunchEnv = { ...process.env }
+  delete relaunchEnv.ELECTRON_RUN_AS_NODE
+  const child = spawn(electronModule, [path.resolve(__dirname, 'main.js'), ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: relaunchEnv,
+    windowsHide: false,
+  })
+  child.on('close', (code) => process.exit(code ?? 0))
+  child.on('error', (err) => {
+    console.error('[bootstrap] Failed to relaunch with Electron:', err)
+    process.exit(1)
+  })
+  // In plain Node runtime, stop executing the rest of this file.
+  process.exit(0)
+}
+
+if (!electronModule?.app || typeof electronModule.app.whenReady !== 'function') {
+  console.error(
+    '[zyfront-desktop] require("electron") did not expose app (main process API missing).\n' +
+      'Use: npm run electron:dev  or  npx electron .   (do not run: node main.js without Electron)\n' +
+      'If ELECTRON_RUN_AS_NODE is set in your environment, clear it for this app or rely on the bootstrap relaunch.'
+  )
+  process.exit(1)
+}
+
+const { app, BrowserWindow, ipcMain } = electronModule
 
 let win
 
@@ -11,12 +40,90 @@ const workspaceRoot = process.env.ZYTRADER_WORKSPACE
   ? path.resolve(process.env.ZYTRADER_WORKSPACE)
   : path.resolve(__dirname, '..')
 
+const ptySessions = new Map()
+
 function resolveSafePath(relativePath = '.') {
   const target = path.resolve(workspaceRoot, relativePath)
   if (!target.startsWith(workspaceRoot)) {
     throw new Error('Path escapes workspace root')
   }
   return target
+}
+
+function emitTerminalData(payload) {
+  if (!win || win.isDestroyed()) return
+  win.webContents.send('zytrader:terminal:data', payload)
+}
+
+function emitTerminalExit(payload) {
+  if (!win || win.isDestroyed()) return
+  win.webContents.send('zytrader:terminal:exit', payload)
+}
+
+function resolveWinShell(shell) {
+  const normalized = String(shell || 'git-bash').toLowerCase()
+
+  if (normalized === 'powershell') {
+    return { cmd: 'powershell.exe', args: ['-NoLogo', '-NoProfile'] }
+  }
+
+  if (normalized === 'cmd') {
+    return { cmd: 'cmd.exe', args: [] }
+  }
+
+  // 默认与 ClaudeCode 内置终端体验对齐：优先 Git Bash
+  const gitBashCandidates = [
+    process.env.GIT_BASH_PATH,
+    'C:/Program Files/Git/bin/bash.exe',
+    'C:/Program Files/Git/usr/bin/bash.exe',
+    'C:/Program Files (x86)/Git/bin/bash.exe',
+    'C:/Program Files (x86)/Git/usr/bin/bash.exe',
+  ].filter(Boolean)
+
+  for (const p of gitBashCandidates) {
+    if (existsSync(p)) {
+      return { cmd: p, args: ['--login', '-i'] }
+    }
+  }
+
+  // Git Bash 不可用时回退到 PowerShell
+  return { cmd: 'powershell.exe', args: ['-NoLogo', '-NoProfile'] }
+}
+
+function resolveShellCommand(shell) {
+  if (process.platform === 'win32') {
+    return resolveWinShell(shell)
+  }
+
+  const normalized = String(shell || '').toLowerCase()
+  if (normalized === 'zsh') return { cmd: 'zsh', args: ['-i'] }
+  if (normalized === 'bash') return { cmd: 'bash', args: ['-i'] }
+  return { cmd: process.env.SHELL || 'bash', args: ['-i'] }
+}
+
+function createPtySession({ id, cwd = '.', cols = 120, rows = 36, shell = 'git-bash' }) {
+  const absCwd = resolveSafePath(cwd)
+  const { cmd, args } = resolveShellCommand(shell)
+
+  const proc = pty.spawn(cmd, args, {
+    name: 'xterm-256color',
+    cols: Math.max(40, Number(cols) || 120),
+    rows: Math.max(12, Number(rows) || 36),
+    cwd: absCwd,
+    env: process.env,
+  })
+
+  proc.onData((data) => {
+    emitTerminalData({ id, data })
+  })
+
+  proc.onExit((ev) => {
+    ptySessions.delete(id)
+    emitTerminalExit({ id, exitCode: ev.exitCode, signal: ev.signal })
+  })
+
+  ptySessions.set(id, proc)
+  return { ok: true, id }
 }
 
 function registerIpcHandlers() {
@@ -57,6 +164,50 @@ function registerIpcHandlers() {
         resolve({ ok: !error, command, cwd, code, stdout: stdout ?? '', stderr: stderr ?? '' })
       })
     })
+  })
+
+  ipcMain.handle('zytrader:terminal:create', async (_event, payload) => {
+    const id = String(payload?.id || '')
+    if (!id) return { ok: false, error: 'id required' }
+    const existing = ptySessions.get(id)
+    if (existing) {
+      try { existing.kill() } catch {}
+      ptySessions.delete(id)
+    }
+
+    try {
+      return createPtySession(payload)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('zytrader:terminal:write', async (_event, payload) => {
+    const id = String(payload?.id || '')
+    const data = String(payload?.data || '')
+    const proc = ptySessions.get(id)
+    if (!proc) return { ok: false, error: 'session not found' }
+    proc.write(data)
+    return { ok: true }
+  })
+
+  ipcMain.handle('zytrader:terminal:resize', async (_event, payload) => {
+    const id = String(payload?.id || '')
+    const cols = Math.max(40, Number(payload?.cols) || 120)
+    const rows = Math.max(12, Number(payload?.rows) || 36)
+    const proc = ptySessions.get(id)
+    if (!proc) return { ok: false, error: 'session not found' }
+    proc.resize(cols, rows)
+    return { ok: true }
+  })
+
+  ipcMain.handle('zytrader:terminal:kill', async (_event, payload) => {
+    const id = String(payload?.id || '')
+    const proc = ptySessions.get(id)
+    if (!proc) return { ok: false, error: 'session not found' }
+    try { proc.kill() } catch {}
+    ptySessions.delete(id)
+    return { ok: true }
   })
 
   ipcMain.handle('zytrader:model:test', async (_event, payload) => {
@@ -120,4 +271,10 @@ app.whenReady().then(() => {
   createWindow()
 })
 
-app.on('window-all-closed', () => app.quit())
+app.on('window-all-closed', () => {
+  for (const [, proc] of ptySessions) {
+    try { proc.kill() } catch {}
+  }
+  ptySessions.clear()
+  app.quit()
+})

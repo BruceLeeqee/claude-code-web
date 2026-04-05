@@ -1,0 +1,10 @@
+<div class="cards-grid">
+  <nz-card *ngFor="let plugin of facade.plugins()" class="block" [nzTitle]="plugin.name">
+    <p>{{ plugin.desc }}</p>
+    <div class="actions">
+      <button nz-button [nzType]="plugin.installed ? 'default' : 'primary'" (click)="facade.togglePlugin(plugin.id)">
+        {{ plugin.installed ? '已安装（点击卸载）' : '安装' }}
+      </button>
+    </div>
+  </nz-card>
+</div>

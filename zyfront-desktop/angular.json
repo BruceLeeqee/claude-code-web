@@ -41,6 +41,10 @@
               "src/styles.scss"
             ],
             "scripts": [],
+            "allowedCommonJsDependencies": [
+              "xterm",
+              "xterm-addon-fit"
+            ],
             "namedChunks": false,
             "extractLicenses": true,
             "sourceMap": false,

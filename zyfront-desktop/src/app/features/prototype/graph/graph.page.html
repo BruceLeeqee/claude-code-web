@@ -1,0 +1,20 @@
+<div class="graph-layout">
+  <nz-card nzTitle="知识图谱" class="block full">
+    <div class="graph-placeholder">
+      <button nz-button *ngFor="let node of facade.nodes()" (click)="facade.selectNode(node.id)">
+        {{ node.name }}
+      </button>
+    </div>
+  </nz-card>
+  <nz-card nzTitle="节点详情" class="block side">
+    <ng-container *ngIf="facade.selectedNode() as node; else empty">
+      <p>实体：{{ node.name }}</p>
+      <p>类型：{{ node.group }}</p>
+      <p>关联：{{ node.links.join('、') }}</p>
+      <button nz-button nzType="primary">定位对话上下文</button>
+    </ng-container>
+    <ng-template #empty>
+      <p>请选择一个节点。</p>
+    </ng-template>
+  </nz-card>
+</div>

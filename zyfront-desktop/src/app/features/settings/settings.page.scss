@@ -6,6 +6,21 @@
   gap: 16px;
 }
 
+.settings-back {
+  grid-column: 1 / -1;
+  margin: 0;
+
+  a {
+    color: var(--primary-color, #6366f1);
+    font-size: 13px;
+    text-decoration: none;
+  }
+
+  a:hover {
+    text-decoration: underline;
+  }
+}
+
 .sidebar {
   height: fit-content;
   position: sticky;

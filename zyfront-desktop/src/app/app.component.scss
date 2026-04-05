@@ -1,40 +1,4 @@
-.topbar-wrap {
-  width: min(1200px, calc(100% - 32px));
-  margin: 14px auto 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  background: linear-gradient(180deg, #101826, #0f1420);
-}
-
-.brand {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: #e2e8f0;
-  text-transform: uppercase;
-}
-
-.topbar {
-  display: flex;
-  gap: 8px;
-
-  a {
-    text-decoration: none;
-    padding: 8px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--border-color);
-    color: var(--text-color);
-    background: var(--card-bg);
-
-    &.active {
-      background: #0ea5e9;
-      border-color: #0ea5e9;
-      color: #fff;
-    }
-  }
+:host {
+  display: block;
+  height: 100%;
 }

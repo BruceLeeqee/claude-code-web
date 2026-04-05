@@ -1,0 +1,11 @@
+<div class="cards-grid">
+  <nz-card *ngFor="let skill of facade.skills()" class="block" [nzTitle]="skill.name">
+    <p>{{ skill.desc }}</p>
+    <div class="actions">
+      <nz-tag [nzColor]="skill.active ? 'green' : 'default'">{{ skill.active ? '已启用' : '未启用' }}</nz-tag>
+      <button nz-button nzType="primary" (click)="facade.toggleSkill(skill.id)">
+        {{ skill.active ? '停用' : '启用' }}
+      </button>
+    </div>
+  </nz-card>
+</div>

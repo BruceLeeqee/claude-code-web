@@ -1,0 +1,25 @@
+<div class="page-grid">
+  <nz-card nzTitle="模型配置" class="block">
+    <p>当前模型：<strong>{{ facade.activeModel() }}</strong></p>
+    <p>Token 使用：{{ facade.tokenUsed() }} / {{ facade.tokenMax() }}</p>
+    <p>累计消耗：${{ facade.estimatedCostUsd() }}</p>
+    <nz-progress [nzPercent]="facade.modelUsagePercent()" nzStrokeColor="#a855f7"></nz-progress>
+    <div class="actions">
+      <button nz-button nzType="primary">添加自定义模型</button>
+      <button nz-button>配置参数</button>
+    </div>
+  </nz-card>
+
+  <nz-card nzTitle="默认 API 设置" class="block">
+    <label>模型</label>
+    <input nz-input [ngModel]="model()" (ngModelChange)="model.set($event)" />
+
+    <label>最大 Token 生成限制（占位）</label>
+    <input nz-input [ngModel]="maxTokens()" (ngModelChange)="maxTokens.set($event)" />
+
+    <div class="actions">
+      <button nz-button (click)="reset()">重置默认</button>
+      <button nz-button nzType="primary" (click)="save()">保存配置</button>
+    </div>
+  </nz-card>
+</div>

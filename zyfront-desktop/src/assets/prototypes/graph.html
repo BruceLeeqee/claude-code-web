@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<!-- saved from url=(0153)https://modao.cc/agent-py/workspace/69d1e63cb97578b53dfe5fb0/ClaudeCode%E6%A1%8C%E9%9D%A2%E7%89%88%E5%8E%9F%E5%9E%8B_v10.html/graph.html?render_html=true -->
+<html lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>ClaudeCode Desktop - Knowledge Graph</title>
+<script src="./ClaudeCode Desktop - Knowledge Graph_files/tailwindcss.3.4.3.js.下载"></script>
+<script src="./ClaudeCode Desktop - Knowledge Graph_files/iconify-icon.min.1.0.7.js.下载"></script>
+<script src="./ClaudeCode Desktop - Knowledge Graph_files/echarts.min.5.4.3.js.下载"></script>
+<style>
+        .drag-region { -webkit-app-region: drag; }
+        .no-drag { -webkit-app-region: no-drag; }
+    </style>
+<style>/* ! tailwindcss v3.4.3 | MIT License | https://tailwindcss.com */*,::after,::before{box-sizing:border-box;border-width:0;border-style:solid;border-color:#e5e7eb}::after,::before{--tw-content:''}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;tab-size:4;font-family:ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0;padding:0}legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}*, ::before, ::after{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgb(59 130 246 / 0.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgb(59 130 246 / 0.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }.absolute{position:absolute}.relative{position:relative}.left-6{left:1.5rem}.top-6{top:1.5rem}.bottom-6{bottom:1.5rem}.right-6{right:1.5rem}.z-10{z-index:10}.mx-1{margin-left:0.25rem;margin-right:0.25rem}.ml-4{margin-left:1rem}.mb-6{margin-bottom:1.5rem}.mb-2{margin-bottom:0.5rem}.mb-3{margin-bottom:0.75rem}.mt-auto{margin-top:auto}.flex{display:flex}.grid{display:grid}.h-screen{height:100vh}.h-10{height:2.5rem}.h-3{height:0.75rem}.w-16{width:4rem}.w-3{width:0.75rem}.w-px{width:1px}.w-24{width:6rem}.w-72{width:18rem}.w-full{width:100%}.flex-1{flex:1 1 0%}.grid-cols-2{grid-template-columns:repeat(2, minmax(0, 1fr))}.flex-col{flex-direction:column}.items-center{align-items:center}.justify-between{justify-content:space-between}.gap-1\.5{gap:0.375rem}.gap-2{gap:0.5rem}.gap-6{gap:1.5rem}.gap-1{gap:0.25rem}.gap-3{gap:0.75rem}.gap-4{gap:1rem}.space-y-6 > :not([hidden]) ~ :not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1.5rem * calc(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1.5rem * var(--tw-space-y-reverse))}.overflow-hidden{overflow:hidden}.overflow-y-auto{overflow-y:auto}.rounded-full{border-radius:9999px}.rounded-lg{border-radius:0.5rem}.rounded-md{border-radius:0.375rem}.rounded-2xl{border-radius:1rem}.rounded-xl{border-radius:0.75rem}.border{border-width:1px}.border-b{border-bottom-width:1px}.border-r{border-right-width:1px}.border-t{border-top-width:1px}.border-zinc-800{--tw-border-opacity:1;border-color:rgb(39 39 42 / var(--tw-border-opacity))}.border-zinc-700\/50{border-color:rgb(63 63 70 / 0.5)}.bg-\[\#09090b\]{--tw-bg-opacity:1;background-color:rgb(9 9 11 / var(--tw-bg-opacity))}.bg-\[\#18181b\]{--tw-bg-opacity:1;background-color:rgb(24 24 27 / var(--tw-bg-opacity))}.bg-\[\#27c93f\]{--tw-bg-opacity:1;background-color:rgb(39 201 63 / var(--tw-bg-opacity))}.bg-\[\#ff5f56\]{--tw-bg-opacity:1;background-color:rgb(255 95 86 / var(--tw-bg-opacity))}.bg-\[\#ffbd2e\]{--tw-bg-opacity:1;background-color:rgb(255 189 46 / var(--tw-bg-opacity))}.bg-zinc-800{--tw-bg-opacity:1;background-color:rgb(39 39 42 / var(--tw-bg-opacity))}.bg-zinc-900\/80{background-color:rgb(24 24 27 / 0.8)}.bg-purple-500\/20{background-color:rgb(168 85 247 / 0.2)}.bg-\[\#050505\]{--tw-bg-opacity:1;background-color:rgb(5 5 5 / var(--tw-bg-opacity))}.bg-zinc-900\/90{background-color:rgb(24 24 27 / 0.9)}.bg-zinc-800\/50{background-color:rgb(39 39 42 / 0.5)}.p-2{padding:0.5rem}.p-1{padding:0.25rem}.p-1\.5{padding:0.375rem}.p-5{padding:1.25rem}.p-3{padding:0.75rem}.px-4{padding-left:1rem;padding-right:1rem}.py-4{padding-top:1rem;padding-bottom:1rem}.px-3{padding-left:0.75rem;padding-right:0.75rem}.py-12{padding-top:3rem;padding-bottom:3rem}.pt-6{padding-top:1.5rem}.text-center{text-align:center}.font-sans{font-family:ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"}.text-xs{font-size:0.75rem;line-height:1rem}.text-2xl{font-size:1.5rem;line-height:2rem}.text-\[10px\]{font-size:10px}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-4xl{font-size:2.25rem;line-height:2.5rem}.font-medium{font-weight:500}.font-bold{font-weight:700}.uppercase{text-transform:uppercase}.tracking-widest{letter-spacing:0.1em}.tracking-tighter{letter-spacing:-0.05em}.text-zinc-300{--tw-text-opacity:1;color:rgb(212 212 216 / var(--tw-text-opacity))}.text-zinc-500{--tw-text-opacity:1;color:rgb(113 113 122 / var(--tw-text-opacity))}.text-white{--tw-text-opacity:1;color:rgb(255 255 255 / var(--tw-text-opacity))}.text-zinc-400{--tw-text-opacity:1;color:rgb(161 161 170 / var(--tw-text-opacity))}.text-purple-400{--tw-text-opacity:1;color:rgb(192 132 252 / var(--tw-text-opacity))}.text-zinc-600{--tw-text-opacity:1;color:rgb(82 82 91 / var(--tw-text-opacity))}.accent-purple-500{accent-color:#a855f7}.shadow-xl{--tw-shadow:0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);--tw-shadow-colored:0 20px 25px -5px var(--tw-shadow-color), 0 8px 10px -6px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.shadow-2xl{--tw-shadow:0 25px 50px -12px rgb(0 0 0 / 0.25);--tw-shadow-colored:0 25px 50px -12px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow)}.backdrop-blur{--tw-backdrop-blur:blur(8px);-webkit-backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia)}.transition-colors{transition-property:color, background-color, border-color, fill, stroke, -webkit-text-decoration-color;transition-property:color, background-color, border-color, text-decoration-color, fill, stroke;transition-property:color, background-color, border-color, text-decoration-color, fill, stroke, -webkit-text-decoration-color;transition-timing-function:cubic-bezier(0.4, 0, 0.2, 1);transition-duration:150ms}.hover\:bg-zinc-800:hover{--tw-bg-opacity:1;background-color:rgb(39 39 42 / var(--tw-bg-opacity))}.hover\:text-white:hover{--tw-text-opacity:1;color:rgb(255 255 255 / var(--tw-text-opacity))}</style></head>
+<body class="bg-[#09090b] text-zinc-300 font-sans h-screen flex flex-col overflow-hidden">
+<header class="h-10 bg-[#18181b] flex items-center justify-between px-4 border-b border-zinc-800 drag-region">
+<div class="flex items-center gap-2">
+<div class="flex gap-1.5 no-drag">
+<div class="w-3 h-3 rounded-full bg-[#ff5f56]"></div>
+<div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
+<div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
+</div>
+<div class="ml-4 text-xs text-zinc-500 font-medium">类 Obsidian 记忆系统可视化</div>
+</div>
+</header>
+<div class="flex-1 flex overflow-hidden">
+<!-- 侧边导航栏 -->
+<nav class="w-16 bg-[#18181b] flex flex-col items-center py-4 border-r border-zinc-800 gap-6">
+<a class="p-2 rounded-lg text-zinc-500 hover:text-white transition-colors" href="https://modao.cc/agent-py/workspace/69d1e63cb97578b53dfe5fb0/ClaudeCode%E6%A1%8C%E9%9D%A2%E7%89%88%E5%8E%9F%E5%9E%8B_v10.html/index.html?render_html=true" title="工作区">
+<iconify-icon class="text-2xl" icon="mdi:terminal-box"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style></template></iconify-icon>
+</a>
+<a class="p-2 rounded-lg text-zinc-500 hover:text-white transition-colors" href="https://modao.cc/agent-py/workspace/69d1e63cb97578b53dfe5fb0/ClaudeCode%E6%A1%8C%E9%9D%A2%E7%89%88%E5%8E%9F%E5%9E%8B_v10.html/models.html?render_html=true" title="模型管理">
+<iconify-icon class="text-2xl" icon="mdi:robot-outline"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M17.5 15.5c0 1.11-.89 2-2 2s-2-.89-2-2s.9-2 2-2s2 .9 2 2m-9-2c-1.1 0-2 .9-2 2s.9 2 2 2s2-.89 2-2s-.89-2-2-2M23 15v3c0 .55-.45 1-1 1h-1v1c0 1.11-.89 2-2 2H5a2 2 0 0 1-2-2v-1H2c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1h1c0-3.87 3.13-7 7-7h1V5.73c-.6-.34-1-.99-1-1.73c0-1.1.9-2 2-2s2 .9 2 2c0 .74-.4 1.39-1 1.73V7h1c3.87 0 7 3.13 7 7h1c.55 0 1 .45 1 1m-2 1h-2v-2c0-2.76-2.24-5-5-5h-4c-2.76 0-5 2.24-5 5v2H3v1h2v3h14v-3h2z"></path></svg></template></iconify-icon>
+</a>
+<a class="p-2 rounded-lg bg-zinc-800 text-white" href="https://modao.cc/agent-py/workspace/69d1e63cb97578b53dfe5fb0/ClaudeCode%E6%A1%8C%E9%9D%A2%E7%89%88%E5%8E%9F%E5%9E%8B_v10.html/graph.html?render_html=true" title="知识图谱">
+<iconify-icon class="text-2xl" icon="mdi:graph-outline"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M19.5 17c-.14 0-.26 0-.39.04L17.5 13.8c.45-.45.75-1.09.75-1.8a2.5 2.5 0 0 0-2.5-2.5c-.14 0-.25 0-.4.04L13.74 6.3c.47-.46.76-1.09.76-1.8a2.5 2.5 0 0 0-5 0c0 .7.29 1.34.76 1.79L8.65 9.54c-.15-.04-.26-.04-.4-.04a2.5 2.5 0 0 0-2.5 2.5c0 .71.29 1.34.75 1.79l-1.61 3.25C4.76 17 4.64 17 4.5 17a2.5 2.5 0 0 0 0 5A2.5 2.5 0 0 0 7 19.5c0-.7-.29-1.34-.76-1.79l1.62-3.25c.14.04.26.04.39.04s.25 0 .38-.04l1.63 3.25c-.47.45-.76 1.09-.76 1.79a2.5 2.5 0 0 0 5 0A2.5 2.5 0 0 0 12 17c-.13 0-.26 0-.39.04L10 13.8c.45-.45.75-1.09.75-1.8c0-.7-.29-1.33-.75-1.79l1.61-3.25c.13.04.26.04.39.04s.26 0 .39-.04L14 10.21a2.5 2.5 0 0 0 1.75 4.29c.13 0 .25 0 .38-.04l1.63 3.25c-.47.45-.76 1.09-.76 1.79a2.5 2.5 0 0 0 5 0a2.5 2.5 0 0 0-2.5-2.5m-15 3.5c-.55 0-1-.45-1-1s.45-1 1-1s1 .45 1 1s-.45 1-1 1m8.5-1c0 .55-.45 1-1 1s-1-.45-1-1s.45-1 1-1s1 .45 1 1M7.25 12c0-.55.45-1 1-1s1 .45 1 1s-.45 1-1 1s-1-.45-1-1M11 4.5c0-.55.45-1 1-1s1 .45 1 1s-.45 1-1 1s-1-.45-1-1m3.75 7.5c0-.55.45-1 1-1s1 .45 1 1s-.45 1-1 1s-1-.45-1-1m4.75 8.5c-.55 0-1-.45-1-1s.45-1 1-1s1 .45 1 1s-.45 1-1 1"></path></svg></template></iconify-icon>
+</a>
+<a class="p-2 rounded-lg text-zinc-500 hover:text-white transition-colors" href="https://modao.cc/agent-py/workspace/69d1e63cb97578b53dfe5fb0/ClaudeCode%E6%A1%8C%E9%9D%A2%E7%89%88%E5%8E%9F%E5%9E%8B_v10.html/collaboration.html?render_html=true" title="多Agent协作">
+<iconify-icon class="text-2xl" icon="mdi:account-group-outline"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M12 5a3.5 3.5 0 0 0-3.5 3.5A3.5 3.5 0 0 0 12 12a3.5 3.5 0 0 0 3.5-3.5A3.5 3.5 0 0 0 12 5m0 2a1.5 1.5 0 0 1 1.5 1.5A1.5 1.5 0 0 1 12 10a1.5 1.5 0 0 1-1.5-1.5A1.5 1.5 0 0 1 12 7M5.5 8A2.5 2.5 0 0 0 3 10.5c0 .94.53 1.75 1.29 2.18c.36.2.77.32 1.21.32s.85-.12 1.21-.32c.37-.21.68-.51.91-.87A5.42 5.42 0 0 1 6.5 8.5v-.28c-.3-.14-.64-.22-1-.22m13 0c-.36 0-.7.08-1 .22v.28c0 1.2-.39 2.36-1.12 3.31c.12.19.25.34.4.49a2.48 2.48 0 0 0 1.72.7c.44 0 .85-.12 1.21-.32c.76-.43 1.29-1.24 1.29-2.18A2.5 2.5 0 0 0 18.5 8M12 14c-2.34 0-7 1.17-7 3.5V19h14v-1.5c0-2.33-4.66-3.5-7-3.5m-7.29.55C2.78 14.78 0 15.76 0 17.5V19h3v-1.93c0-1.01.69-1.85 1.71-2.52m14.58 0c1.02.67 1.71 1.51 1.71 2.52V19h3v-1.5c0-1.74-2.78-2.72-4.71-2.95M12 16c1.53 0 3.24.5 4.23 1H7.77c.99-.5 2.7-1 4.23-1"></path></svg></template></iconify-icon>
+</a>
+<a class="p-2 rounded-lg text-zinc-500 hover:text-white transition-colors" href="https://modao.cc/agent-py/workspace/69d1e63cb97578b53dfe5fb0/ClaudeCode%E6%A1%8C%E9%9D%A2%E7%89%88%E5%8E%9F%E5%9E%8B_v10.html/skills.html?render_html=true" title="技能库">
+<iconify-icon class="text-2xl" icon="mdi:flash-outline"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M7 2h10l-3.5 7H17l-7 13v-8H7zm2 2v8h3v2.66L14 11h-3.76l3.52-7z"></path></svg></template></iconify-icon>
+</a>
+<a class="p-2 rounded-lg text-zinc-500 hover:text-white transition-colors" href="https://modao.cc/agent-py/workspace/69d1e63cb97578b53dfe5fb0/ClaudeCode%E6%A1%8C%E9%9D%A2%E7%89%88%E5%8E%9F%E5%9E%8B_v10.html/plugins.html?render_html=true" title="插件市场">
+<iconify-icon class="text-2xl" icon="mdi:puzzle-outline"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M22 13.5c0 1.76-1.3 3.22-3 3.46V20a2 2 0 0 1-2 2h-3.8v-.3a2.7 2.7 0 0 0-2.7-2.7c-1.5 0-2.7 1.21-2.7 2.7v.3H4a2 2 0 0 1-2-2v-3.8h.3C3.79 16.2 5 15 5 13.5s-1.21-2.7-2.7-2.7H2V7a2 2 0 0 1 2-2h3.04c.24-1.7 1.7-3 3.46-3s3.22 1.3 3.46 3H17a2 2 0 0 1 2 2v3.04c1.7.24 3 1.7 3 3.46M17 15h1.5a1.5 1.5 0 0 0 1.5-1.5a1.5 1.5 0 0 0-1.5-1.5H17V7h-5V5.5A1.5 1.5 0 0 0 10.5 4A1.5 1.5 0 0 0 9 5.5V7H4v2.12c1.76.68 3 2.38 3 4.38s-1.25 3.7-3 4.38V20h2.12a4.7 4.7 0 0 1 4.38-3c2 0 3.7 1.25 4.38 3H17z"></path></svg></template></iconify-icon>
+</a>
+</nav>
+<main class="flex-1 flex flex-col relative">
+<!-- 图谱工具栏 -->
+<div class="absolute top-6 left-6 z-10 flex gap-2">
+<div class="bg-zinc-900/80 backdrop-blur border border-zinc-800 p-1 rounded-lg shadow-xl flex gap-1">
+<button class="p-2 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white" title="缩放至适合大小"><iconify-icon icon="mdi:fullscreen-exit"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M14 14h5v2h-3v3h-2zm-9 0h5v5H8v-3H5zm3-9h2v5H5V8h3zm11 3v2h-5V5h2v3z"></path></svg></template></iconify-icon></button>
+<button class="p-2 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white" title="强制布局刷新"><iconify-icon icon="mdi:refresh"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 0 0-8 8a8 8 0 0 0 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18a6 6 0 0 1-6-6a6 6 0 0 1 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"></path></svg></template></iconify-icon></button>
+<div class="w-px bg-zinc-800 mx-1"></div>
+<button class="p-2 bg-purple-500/20 text-purple-400 rounded-md" title="节点标签"><iconify-icon icon="mdi:label-outline"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M16 17H5V7h11l3.55 5m-1.92-6.16C17.27 5.33 16.67 5 16 5H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h11c.67 0 1.27-.34 1.63-.85L22 12z"></path></svg></template></iconify-icon></button>
+<button class="p-2 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white" title="关系连线"><iconify-icon icon="mdi:vector-line"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3v4.59L7.59 15H3v6h6v-4.58L16.42 9H21V3m-4 2h2v2h-2M5 17h2v2H5"></path></svg></template></iconify-icon></button>
+</div>
+<div class="bg-zinc-900/80 backdrop-blur border border-zinc-800 p-1.5 px-3 rounded-lg shadow-xl flex items-center gap-3">
+<span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">物理模拟力</span>
+<input class="w-24 accent-purple-500" type="range">
+</div>
+</div>
+<!-- 核心图谱容器 -->
+<div class="flex-1 w-full bg-[#050505]" id="graphContainer" _echarts_instance_="ec_1775370295039" style="user-select: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); position: relative;"><div style="position: relative; width: 1376px; height: 785px; padding: 0px; margin: 0px; border-width: 0px; cursor: default;"><canvas data-zr-dom-id="zr_0" width="2064" height="1177" style="position: absolute; left: 0px; top: 0px; width: 1376px; height: 785px; user-select: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); padding: 0px; margin: 0px; border-width: 0px;"></canvas></div><div class="" style="position: absolute; display: block; border-style: solid; white-space: nowrap; z-index: 9999999; box-shadow: rgba(0, 0, 0, 0.2) 1px 2px 10px; background-color: rgb(255, 255, 255); border-width: 1px; border-radius: 4px; color: rgb(102, 102, 102); font: 14px / 21px &quot;Microsoft YaHei&quot;; padding: 10px; top: 0px; left: 0px; transform: translate3d(537px, 370px, 0px); border-color: rgb(245, 158, 11); pointer-events: none; visibility: hidden; opacity: 0;"><div style="margin: 0px 0 0;line-height:1;"><div style="margin: 0px 0 0;line-height:1;"><span style="display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:#f59e0b;"></span><span style="font-size:14px;color:#666;font-weight:400;margin-left:2px">Project A</span><span style="float:right;margin-left:20px;font-size:14px;color:#666;font-weight:900">50</span><div style="clear:both"></div></div><div style="clear:both"></div></div></div></div>
+<!-- 右侧详情抽屉 -->
+<div class="absolute right-6 top-6 bottom-6 w-72 bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-2xl shadow-2xl flex flex-col p-5 overflow-y-auto">
+<h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-6 flex items-center gap-2">
+<iconify-icon class="text-lg text-purple-400" icon="mdi:information-outline"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M11 9h2V7h-2m1 13c-4.41 0-8-3.59-8-8s3.59-8 8-8s8 3.59 8 8s-3.59 8-8 8m0-18A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2m-1 15h2v-6h-2z"></path></svg></template></iconify-icon>
+                    节点详情
+                </h3>
+<div class="space-y-6" id="nodeDetails">
+<div class="text-center py-12 text-zinc-600">
+<iconify-icon class="text-4xl mb-2" icon="mdi:mouse-left-click"><template shadowrootmode="open"><style data-style="data-style">:host{display:inline-block;vertical-align:0}span,svg{display:block}</style><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><path fill="currentColor" d="M13 9V1.07c3.94.49 7 3.85 7 7.93zM6.34 20.66A8 8 0 0 1 4 15v-4h16v4c0 2.12-.84 4.16-2.34 5.66A8 8 0 0 1 12 23c-2.12 0-4.16-.84-5.66-2.34M11 9V1.07A8.01 8.01 0 0 0 4.25 7C4.09 7.64 4 8.31 4 9zM6.34 7C6.82 5.65 7.78 4.5 9 3.81V7z"></path></svg></template></iconify-icon>
+<p class="text-xs">点击图谱中的节点<br>查看关联深度分析</p>
+</div>
+</div>
+<div class="mt-auto pt-6 border-t border-zinc-800">
+<div class="text-[10px] text-zinc-500 mb-3 uppercase font-bold tracking-tighter">当前记忆库统计</div>
+<div class="grid grid-cols-2 gap-4">
+<div class="bg-zinc-800/50 p-3 rounded-xl border border-zinc-700/50">
+<div class="text-lg font-bold text-white">128</div>
+<div class="text-[10px] text-zinc-500">知识实体</div>
+</div>
+<div class="bg-zinc-800/50 p-3 rounded-xl border border-zinc-700/50">
+<div class="text-lg font-bold text-white">452</div>
+<div class="text-[10px] text-zinc-500">语义关联</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+<script>
+        const chart = echarts.init(document.getElementById('graphContainer'));
+        
+        const data = [
+            { name: 'Auth Module', value: 40, category: 0, draggable: true },
+            { name: 'User Dashboard', value: 30, category: 0, draggable: true },
+            { name: 'SQLite Sync', value: 25, category: 1, draggable: true },
+            { name: 'Token Counter', value: 20, category: 1, draggable: true },
+            { name: 'Electron IPC', value: 35, category: 2, draggable: true },
+            { name: 'React UI', value: 45, category: 2, draggable: true },
+            { name: 'State Mgmt', value: 28, category: 2, draggable: true },
+            { name: 'Project A', value: 50, category: 3, draggable: true },
+            { name: 'Bug: Memory Leak', value: 15, category: 4, draggable: true },
+            { name: 'Refactor Plan', value: 22, category: 4, draggable: true },
+        ];
+
+        const links = [
+            { source: 'Project A', target: 'Auth Module' },
+            { source: 'Project A', target: 'User Dashboard' },
+            { source: 'Auth Module', target: 'SQLite Sync' },
+            { source: 'User Dashboard', target: 'React UI' },
+            { source: 'React UI', target: 'State Mgmt' },
+            { source: 'React UI', target: 'Electron IPC' },
+            { source: 'SQLite Sync', target: 'Electron IPC' },
+            { source: 'Token Counter', target: 'Electron IPC' },
+            { source: 'Project A', target: 'Bug: Memory Leak' },
+            { source: 'Project A', target: 'Refactor Plan' },
+            { source: 'State Mgmt', target: 'User Dashboard' },
+        ];
+
+        const option = {
+            backgroundColor: 'transparent',
+            tooltip: {},
+            animationDurationUpdate: 1500,
+            animationEasingUpdate: 'quinticInOut',
+            series: [{
+                type: 'graph',
+                layout: 'force',
+                data: data.map(node => ({
+                    ...node,
+                    symbolSize: node.value,
+                    itemStyle: {
+                        color: ['#a855f7', '#3b82f6', '#10b981', '#f59e0b', '#ef4444'][node.category],
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderWidth: 2,
+                        shadowBlur: 10,
+                        shadowColor: 'rgba(0,0,0,0.5)'
+                    }
+                })),
+                links: links.map(link => ({
+                    ...link,
+                    lineStyle: {
+                        color: '#3f3f46',
+                        width: 1,
+                        curveness: 0.1
+                    }
+                })),
+                categories: [{ name: 'Logic' }, { name: 'Data' }, { name: 'View' }, { name: 'Project' }, { name: 'Issue' }],
+                roam: true,
+                label: {
+                    show: true,
+                    position: 'right',
+                    formatter: '{b}',
+                    fontSize: 10,
+                    color: '#a1a1aa'
+                },
+                force: {
+                    repulsion: 1000,
+                    edgeLength: 150,
+                    gravity: 0.1
+                },
+                emphasis: {
+                    focus: 'adjacency',
+                    lineStyle: { width: 3, color: '#a855f7' }
+                }
+            }]
+        };
+
+        chart.setOption(option);
+
+        chart.on('click', (params) => {
+            if (params.dataType === 'node') {
+                const nodeDetails = document.getElementById('nodeDetails');
+                nodeDetails.innerHTML = `
+                    <div class="space-y-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full flex items-center justify-center text-xl" style="background-color: ${params.color}20; color: ${params.color}">
+                                <iconify-icon icon="mdi:vector-point"></iconify-icon>
+                            </div>
+                            <div>
+                                <h4 class="text-white font-bold">${params.name}</h4>
+                                <span class="text-[10px] px-2 py-0.5 rounded border" style="border-color: ${params.color}40; color: ${params.color}">ENTITY</span>
+                            </div>
+                        </div>
+                        <p class="text-xs text-zinc-400 leading-relaxed bg-zinc-800/40 p-3 rounded-lg">
+                            这是在 2026-04-05 的会话中识别的关键知识实体。它与项目架构中的多个模块存在强耦合关系。
+                        </p>
+                        <div>
+                            <div class="text-[10px] text-zinc-500 font-bold uppercase mb-2">直接关联点 (6)</div>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="px-2 py-1 bg-zinc-800 rounded text-[10px] text-zinc-400">Project Core</span>
+                                <span class="px-2 py-1 bg-zinc-800 rounded text-[10px] text-zinc-400">IPC Bridge</span>
+                                <span class="px-2 py-1 bg-zinc-800 rounded text-[10px] text-zinc-400">Auth Flow</span>
+                            </div>
+                        </div>
+                        <button class="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs mt-4 transition-colors font-bold">定位对话上下文</button>
+                    </div>
+                `;
+            }
+        });
+
+        window.addEventListener('resize', () => chart.resize());
+    </script>
+
+</body></html>

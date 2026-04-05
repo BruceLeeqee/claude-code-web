@@ -1,0 +1,144 @@
+<div class="wb-shell">
+  <header class="wb-topbar">
+    <div class="brand">ClaudeCode Desktop v1.2.0-stable</div>
+    <div class="top-actions">
+      <span [class.api-bad]="!apiKeyConfigured()" [class.api-ok]="apiKeyConfigured()">
+        {{ apiKeyConfigured() ? 'API 已配置' : 'API 未配置' }}
+      </span>
+      <a nz-button nzSize="small" nzType="primary" routerLink="/settings">API 设置</a>
+      <button nz-button nzSize="small">任务面板</button>
+      <span nz-icon nzType="search"></span>
+    </div>
+  </header>
+
+  <div class="wb-main">
+    <aside class="wb-activity-rail">
+      <a nz-button nzType="text" nzShape="circle" routerLink="/workbench" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="工作台">
+        <span nz-icon nzType="code"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/models" routerLinkActive="wb-rail-active" title="模型">
+        <span nz-icon nzType="robot"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/graph" routerLinkActive="wb-rail-active" title="图谱">
+        <span nz-icon nzType="deployment-unit"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/collaboration" routerLinkActive="wb-rail-active" title="协作">
+        <span nz-icon nzType="team"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/skills" routerLinkActive="wb-rail-active" title="技能">
+        <span nz-icon nzType="thunderbolt"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/plugins" routerLinkActive="wb-rail-active" title="插件">
+        <span nz-icon nzType="appstore"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/settings" routerLinkActive="wb-rail-active" title="设置">
+        <span nz-icon nzType="setting"></span>
+      </a>
+    </aside>
+
+    <section class="wb-left-panel">
+      <div class="left-header">
+        <div>
+          <div class="panel-title">资源管理器</div>
+          <div class="panel-sub vscode-breadcrumb">{{ workspaceRoot() }}</div>
+        </div>
+        <button nz-button nzSize="small">+ 新建</button>
+      </div>
+
+      <div class="tree-scroll vscode-tree">
+        <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: tree(), depth: 0 }"></ng-container>
+      </div>
+
+      <ng-template #treeTpl let-nodes let-depth="depth">
+        <ng-container *ngFor="let node of nodes">
+          <div
+            class="vscode-tree-row"
+            [class.is-dir]="node.type === 'dir'"
+            [style.paddingLeft.px]="depth * 12 + 6"
+            (click)="node.type === 'dir' ? toggleDir(node) : openFile(node)"
+          >
+            <span class="vscode-chevron" *ngIf="node.type === 'dir'">{{ node.expanded ? '▼' : '▶' }}</span>
+            <span class="vscode-chevron-placeholder" *ngIf="node.type === 'file'"></span>
+            <span class="vscode-tree-icon" nz-icon [nzType]="treeIcon(node)"></span>
+            <span class="vscode-tree-label">{{ node.name }}</span>
+          </div>
+
+          <ng-container *ngIf="node.type === 'dir' && node.expanded && node.children?.length">
+            <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: node.children, depth: depth + 1 }"></ng-container>
+          </ng-container>
+        </ng-container>
+      </ng-template>
+
+      <div class="left-activity">
+        <div class="panel-title">最近会话</div>
+        <p class="activity-hint" *ngIf="recentTurns().length === 0">在主终端发送对话后会记录在此，点击可回填到当前输入行。</p>
+        <button type="button" class="activity-row" *ngFor="let r of recentTurns()" (click)="replayRecent(r)">
+          <span class="activity-title">{{ r.title }}</span>
+          <span class="activity-meta">{{ formatRecentTime(r.at) }}</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="wb-center-panel">
+      <div class="wb-center-tabs">
+        <button *ngFor="let tab of tabs()" nz-button nzType="text" [class.active]="activeTab() === tab" (click)="setTab(tab)">
+          {{ tab }}
+        </button>
+      </div>
+
+      <div class="wb-center-scroll">
+        <div class="terminal-meta">
+          <span>主终端 · {{ workspaceRoot() }}</span>
+        </div>
+
+        <div class="terminal-body" *ngIf="activeTab() === 'Terminal - Main'">
+          <div #xtermHost class="xterm-host"></div>
+        </div>
+
+        <pre class="file-preview" *ngIf="activeTab() !== 'Terminal - Main'">{{ selectedContent() }}</pre>
+      </div>
+    </section>
+
+    <aside class="wb-right-panel">
+      <div class="right-header">
+        <div class="panel-title">AI 任务分解</div>
+        <div class="panel-sub">mode={{ coordinatorMode() }}</div>
+      </div>
+
+      <div class="plan-steps-section">
+        <div class="section-label">计划步骤</div>
+        <p class="plan-empty" *ngIf="planSteps().length === 0">暂无步骤。点击「同步计划」粘贴多行任务（每行一步），或使用指令 /mode plan。</p>
+        <div class="plan-step-row" *ngFor="let s of planSteps()" [attr.data-status]="s.status">
+          <span class="step-title">{{ s.title }}</span>
+          <span class="step-badge">{{ statusLabel(s.status) }}</span>
+        </div>
+      </div>
+
+      <nz-card
+        *ngFor="let card of taskCards()"
+        class="task-card"
+        [class.done]="card.status === 'success'"
+        [class.active]="card.status === 'active'"
+        [class.fail]="card.status === 'exception'"
+        [nzTitle]="card.title"
+      >
+        <p>{{ card.detail }}</p>
+        <nz-progress [nzPercent]="card.percent" [nzStatus]="card.status"></nz-progress>
+        <div class="task-actions">
+          <nz-tag [nzColor]="card.status === 'success' ? 'green' : card.status === 'active' ? 'blue' : 'red'">{{ card.tag }}</nz-tag>
+        </div>
+      </nz-card>
+
+      <div class="right-footer-actions">
+        <button nz-button (click)="refreshPlanPanel()">刷新状态</button>
+        <button nz-button nzType="primary" (click)="syncPlanFromPrompt()">同步计划</button>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="wb-footer">
+    <span>2026-04-05 unknown</span>
+    <span>第 1 行，列 1 · UTF-8</span>
+    <span>toolCalls {{ toolCallCount() }} · cost ${{ sessionCostUsd().toFixed(4) }}</span>
+  </footer>
+</div>
