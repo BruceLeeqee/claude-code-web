@@ -47,7 +47,8 @@ export interface AssistantChatInput extends Omit<ChatRequest, 'messages'> {
   contextValues?: JsonObject;
 }
 
-const MAX_TOOL_ROUNDS = 16;
+/** 多轮工具调用上限；复杂任务易超过 16 轮导致「Tool round limit exceeded」 */
+const MAX_TOOL_ROUNDS = 48;
 
 export class AssistantRuntime {
   /** 会话上下文持久化（与 history 分离存储键空间） */

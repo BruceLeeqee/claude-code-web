@@ -1,9 +1,20 @@
+:host {
+  display: block;
+  height: 100vh;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
 .page {
-  width: min(1200px, 100% - 32px);
-  margin: 20px auto 40px;
+  width: min(1200px, calc(100% - 32px));
+  max-height: 100vh;
+  margin: 0 auto;
+  padding: 16px 0 16px;
   display: grid;
   grid-template-columns: 260px 1fr;
   gap: 16px;
+  box-sizing: border-box;
+  align-content: start;
 }
 
 .settings-back {
@@ -52,8 +63,14 @@
 }
 
 .content {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 16px;
+  min-height: 0;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
 }
 
 .card {
