@@ -24,6 +24,9 @@ declare global {
       workspace: {
         info: () => Promise<{ ok: boolean; root: string; exists: boolean }>;
       };
+      host: {
+        openPath: (targetPath: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+      };
     };
   }
 }

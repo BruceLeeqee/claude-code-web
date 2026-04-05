@@ -1,6 +1,7 @@
 // @ts-nocheck
 const electronModule = require('electron')
 const path = require('path')
+const os = require('os')
 const fs = require('fs/promises')
 const { existsSync } = require('fs')
 const { exec, spawn } = require('child_process')
@@ -32,7 +33,7 @@ if (!electronModule?.app || typeof electronModule.app.whenReady !== 'function') 
   process.exit(1)
 }
 
-const { app, BrowserWindow, ipcMain } = electronModule
+const { app, BrowserWindow, ipcMain, shell } = electronModule
 
 let win
 
@@ -48,6 +49,24 @@ function resolveSafePath(relativePath = '.') {
     throw new Error('Path escapes workspace root')
   }
   return target
+}
+
+/** 供 shell.openPath：工作区相对路径，或用户主目录/工作区下的绝对路径 */
+function resolveHostOpenPath(inputPath) {
+  const raw = String(inputPath ?? '').trim()
+  if (!raw) throw new Error('path is required')
+  if (path.isAbsolute(raw)) {
+    const abs = path.normalize(raw)
+    const home = path.normalize(os.homedir())
+    const wr = path.normalize(workspaceRoot)
+    const under =
+      process.platform === 'win32'
+        ? abs.toLowerCase().startsWith(wr.toLowerCase()) || abs.toLowerCase().startsWith(home.toLowerCase())
+        : abs.startsWith(wr) || abs.startsWith(home)
+    if (under) return abs
+    throw new Error('absolute path must be under workspace or user home directory')
+  }
+  return resolveSafePath(raw)
 }
 
 function emitTerminalData(payload) {
@@ -235,6 +254,16 @@ function registerIpcHandlers() {
       return { ok: resp.ok, status: resp.status, body: body.slice(0, 1000) }
     } catch (e) {
       return { ok: false, status: 500, body: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('zytrader:host:openPath', async (_event, inputPath) => {
+    try {
+      const abs = resolveHostOpenPath(inputPath)
+      const err = await shell.openPath(abs)
+      return { ok: !err, path: abs, error: err || undefined }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   })
 

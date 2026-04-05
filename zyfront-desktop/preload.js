@@ -45,6 +45,9 @@ contextBridge.exposeInMainWorld('zytrader', {
   workspace: {
     info: () => ipcRenderer.invoke('zytrader:workspace:info'),
   },
+  host: {
+    openPath: (targetPath) => ipcRenderer.invoke('zytrader:host:openPath', targetPath),
+  },
 })
 
 window.addEventListener('DOMContentLoaded', () => {

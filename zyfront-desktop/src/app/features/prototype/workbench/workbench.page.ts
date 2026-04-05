@@ -188,6 +188,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private xterm?: Terminal;
   private fitAddon?: FitAddon;
   private resizeObserver?: ResizeObserver;
+  /** ??? Backspace?????????? xterm/?? IME ? onData ????? */
+  private xtermBackspaceKeydown?: (e: Event) => void;
+  /** ? onData ? \\b ????????? */
+  private backspaceHandledTs = 0;
 
   private mainLineBuffer = '';
   private mainEscSkip = false;
@@ -222,6 +226,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.xtermBackspaceKeydown) {
+      window.removeEventListener('keydown', this.xtermBackspaceKeydown, true);
+      this.xtermBackspaceKeydown = undefined;
+    }
     this.resizeObserver?.disconnect();
     this.xterm?.dispose();
 
@@ -603,6 +611,20 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.feedMainTerminalInput(data);
     });
 
+    this.xtermBackspaceKeydown = (e: Event) => {
+      const ke = e as KeyboardEvent;
+      const t = ke.target;
+      if (!(t instanceof Node) || !host.contains(t)) return;
+      if (this.terminalBusy()) return;
+      if (ke.key !== 'Backspace') return;
+      if (this.mainLineBuffer.length === 0) return;
+      ke.preventDefault();
+      this.backspaceHandledTs = performance.now();
+      this.mainLineBuffer = this.popLastUserGrapheme(this.mainLineBuffer);
+      this.redrawInputLine();
+    };
+    window.addEventListener('keydown', this.xtermBackspaceKeydown, true);
+
     host.addEventListener('keydown', (e) => {
       if (e.shiftKey && e.code === 'Tab') {
         e.preventDefault();
@@ -706,10 +728,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         continue;
       }
       if (ch === '\x7f' || ch === '\b') {
+        if (performance.now() - this.backspaceHandledTs < 45) continue;
         if (this.mainLineBuffer.length > 0) {
-          this.mainLineBuffer = this.mainLineBuffer.slice(0, -1);
-          this.xterm?.write('\b \b');
-          this.syncSlashCompletionRow();
+          this.backspaceHandledTs = performance.now();
+          this.mainLineBuffer = this.popLastUserGrapheme(this.mainLineBuffer);
+          this.redrawInputLine();
         }
         continue;
       }
@@ -727,6 +750,20 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     if (!this.slashHintRowActive) return;
     this.xterm?.write('\x1b[s\r\n\x1b[2K\x1b[u');
     this.slashHintRowActive = false;
+  }
+
+  /** ?????????????emoji????????? xterm ???? */
+  private popLastUserGrapheme(s: string): string {
+    if (!s) return s;
+    try {
+      const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+      const parts = [...seg.segment(s)];
+      if (parts.length === 0) return '';
+      parts.pop();
+      return parts.map((p) => p.segment).join('');
+    } catch {
+      return s.slice(0, -1);
+    }
   }
 
   /** 输入 `/` 前缀时：在下一行实时刷新「同前缀指令」，不追加多行说明 */

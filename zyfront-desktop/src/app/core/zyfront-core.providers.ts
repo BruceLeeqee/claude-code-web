@@ -90,7 +90,8 @@ function buildLocalTools(): AgentTool[] {
     },
     {
       name: 'terminal.exec',
-      description: 'Run shell command in workspace root.',
+      description:
+        'Run shell command in workspace root. On Windows you can start apps: e.g. `notepad`, `notepad C:\\\\Users\\\\Name\\\\Desktop\\\\x.txt`, `start msedge https://...`.',
       inputSchema: {
         type: 'object',
         properties: { command: { type: 'string' }, cwd: { type: 'string' } },
@@ -99,6 +100,17 @@ function buildLocalTools(): AgentTool[] {
       async run(input) {
         const o = (input as Record<string, unknown>) ?? {};
         return (await window.zytrader.terminal.exec(String(o['command'] ?? ''), String(o['cwd'] ?? '.'))) as unknown as JsonValue;
+      },
+    },
+    {
+      name: 'host.open_path',
+      description:
+        'Open a file or folder with the OS default application (Explorer for folders, Notepad/default app for files). Use workspace-relative paths, or an absolute path under the user home directory (e.g. Desktop). Example: open a notebook file on Desktop.',
+      inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      async run(input) {
+        const p = String((input as Record<string, unknown> | undefined)?.['path'] ?? '').trim();
+        if (!p) throw new Error('host.open_path: path is required.');
+        return (await window.zytrader.host.openPath(p)) as unknown as JsonValue;
       },
     },
   ];

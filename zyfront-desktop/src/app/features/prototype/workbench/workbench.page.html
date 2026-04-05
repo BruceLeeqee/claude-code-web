@@ -22,16 +22,6 @@
       <a nz-button nzType="text" nzShape="circle" routerLink="/settings" routerLinkActive="wb-rail-active" title="设置">
         <span nz-icon nzType="setting"></span>
       </a>
-      <button
-        type="button"
-        nz-button
-        nzType="text"
-        nzShape="circle"
-        [title]="rightPanelVisible() ? '隐藏右侧任务面板' : '显示右侧任务面板'"
-        (click)="toggleRightPanel()"
-      >
-        <span nz-icon [nzType]="rightPanelVisible() ? 'menu-fold' : 'menu-unfold'"></span>
-      </button>
     </aside>
 
     <section class="wb-left-panel">
@@ -103,6 +93,9 @@
       <div class="wb-center-scroll">
         <div class="terminal-meta">
           <span>主终端 · {{ workspaceRoot() }}</span>
+          <button type="button" class="terminal-meta-btn" (click)="toggleRightPanel()">
+            {{ rightPanelVisible() ? '隐藏右侧面板' : '显示右侧面板' }}
+          </button>
         </div>
 
         <div class="terminal-body" *ngIf="activeTab() === 'Terminal - Main'">

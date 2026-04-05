@@ -1,6 +1,6 @@
 /**
- * One-shot: fix mojibake / ??? placeholders in workbench.page.ts (UTF-8).
- * Run: node scripts/fix-workbench-utf8.mjs
+ * @deprecated 维护请用 apply-workbench-zh.mjs（片段与当前源码易不一致，易 MISSING 退出）。
+ * 一次性修复 workbench.page.ts 中 ??? 占位：node scripts/apply-workbench-zh.mjs
  */
 import fs from 'node:fs';
 import path from 'node:url';

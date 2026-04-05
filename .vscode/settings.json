@@ -1,4 +1,7 @@
 {
+  "files.encoding": "utf8",
+  "files.autoGuessEncoding": false,
+  "editor.unicodeHighlight.ambiguousCharacters": true,
   "files.watcherExclude": {
     "**/zyfront-core/dist/**": true,
     "**/angular-web/dist/**": true,
