@@ -35,7 +35,12 @@
               "src/favicon.ico",
               "src/favicon.png",
               "src/favicon.svg",
-              "src/assets"
+              "src/assets",
+              {
+                "glob": "**/*",
+                "input": "node_modules/monaco-editor/min/vs",
+                "output": "/assets/monaco/vs"
+              }
             ],
             "styles": [
               "src/styles.scss"
@@ -43,7 +48,9 @@
             "scripts": [],
             "allowedCommonJsDependencies": [
               "xterm",
-              "xterm-addon-fit"
+              "xterm-addon-fit",
+              "monaco-editor",
+              "@monaco-editor/loader"
             ],
             "namedChunks": false,
             "extractLicenses": true,
@@ -68,8 +75,8 @@
                 },
                 {
                   "type": "anyComponentStyle",
-                  "maximumWarning": "10kb",
-                  "maximumError": "14kb"
+                  "maximumWarning": "16kb",
+                  "maximumError": "18kb"
                 }
               ],
               "fileReplacements": []

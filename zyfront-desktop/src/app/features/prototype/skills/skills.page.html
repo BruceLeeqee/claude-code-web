@@ -3,7 +3,7 @@
     <aside class="skills-left">
       <div class="left-head">
         <h3>技能库</h3>
-        <button nz-button nzType="primary" nzSize="small">+ 新建技能</button>
+        <button nz-button nzType="primary" nzSize="small" (click)="openCreateWizard()">+ 新建技能</button>
       </div>
 
       <div class="left-section-title">已安装技能</div>
@@ -37,6 +37,12 @@
     </aside>
 
     <main class="skills-main">
+      @if (createMode()) {
+        <app-skill-create-wizard
+          (cancel)="closeCreateWizard()"
+          (complete)="completeCreateWizard($event)"
+        />
+      } @else {
       <div class="main-breadcrumb">技能库 / {{ activeSkill().name }}</div>
 
       <article class="hero-card">
@@ -87,6 +93,7 @@ Analyzing parser.ts...
 Found 3 potential improvements.
 Applying rule: simplify-conditionals...</pre>
       </article>
+      }
     </main>
 
     <aside class="skills-right">

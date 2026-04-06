@@ -18,8 +18,29 @@ body {
   color: #d4d4d8;
 }
 
+app-root {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+app-prototype-shell,
+app-workbench-page {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
 body {
   overflow: hidden;
+  /* 避免 Electron / xterm 组合下系统鼠标指针偶发不可见 */
+  cursor: auto;
+}
+
+/* xterm 画布区域显式使用文本光标，避免继承异常样式 */
+.xterm .xterm-viewport,
+.xterm .xterm-screen {
+  cursor: text !important;
 }
 
 ::-webkit-scrollbar {

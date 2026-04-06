@@ -1,144 +1,193 @@
-<main class="settings-page" *ngIf="settings$ | async as settings">
-  <section class="settings-hero card">
+@if (settings(); as st) {
+<main class="models-hub">
+  <header class="models-hub-header">
     <div>
-      <h1>模型管理中心</h1>
-      <p>管理 API / 模型、上下文压缩策略与当前生效配置。</p>
+      <h1 class="hub-title">模型配置</h1>
+      <p class="hub-sub">管理你的本地及云端 AI 核心；用量趋势来自本机真实对话记录。</p>
     </div>
-    <div class="hero-actions">
-      <a routerLink="/workbench" class="back-link">返回工作台</a>
-      <button type="button" (click)="testConnection()" [disabled]="testStatus() === 'testing'">
-        {{ testStatus() === 'testing' ? '测试中...' : '测试连接' }}
-      </button>
-      <button type="button" (click)="save()">保存配置</button>
+    <button type="button" class="hub-add-btn" (click)="openAddCustom()">+ 添加自定义模型</button>
+  </header>
+
+  <section class="card-active" [class.card-active--ok]="connectionUi() === 'ok'">
+    <div class="card-active-bg" aria-hidden="true"></div>
+    <div class="card-active-inner">
+      <div class="card-active-icon" aria-hidden="true">◈</div>
+      <div class="card-active-main">
+        <div class="card-active-title-row">
+          <h2 class="card-active-name">{{ activeCatalogEntry().name }}</h2>
+          @if (connectionUi() === 'ok') {
+            <span class="badge-active">ACTIVE</span>
+          } @else if (connectionUi() === 'testing') {
+            <span class="badge-testing">测试中</span>
+          } @else if (connectionUi() === 'error') {
+            <span class="badge-error">异常</span>
+          } @else {
+            <span class="badge-idle">未验证</span>
+          }
+        </div>
+        <p class="card-active-desc">{{ activeCatalogEntry().description }}</p>
+        <div class="card-active-stats">
+          <div class="stat-block">
+            <span class="stat-label">上下文使用率</span>
+            <strong class="stat-value">{{ usageLedger.lastTurnTokens().sum | number }} / {{ activeCatalogEntry().maxContextTokens | number }}</strong>
+            <span class="stat-hint">最近一次 API 返回 input+output tokens / 目录典型窗口</span>
+          </div>
+          <div class="stat-block">
+            <span class="stat-label">平均响应时间</span>
+            <strong class="stat-value">{{ formatLatency() }}</strong>
+            <span class="stat-hint">基于工作台与聊天流式请求的本机平均值</span>
+          </div>
+          <div class="stat-block">
+            <span class="stat-label">累计消耗（估算）</span>
+            <strong class="stat-value">{{ formatUsd(usageLedger.lifetimeCostUsd()) }}</strong>
+            <span class="stat-hint">按目录单价对历史 token 估算，非官方账单</span>
+          </div>
+        </div>
+      </div>
+      <div class="card-active-side">
+        <button type="button" class="side-btn" (click)="testConnection()" [disabled]="testStatus() === 'testing'">
+          {{ testStatus() === 'testing' ? '测试中…' : '测试连接' }}
+        </button>
+        <button type="button" class="side-btn" (click)="save()">保存配置</button>
+        <button type="button" class="side-btn" (click)="resetDefaults()">恢复默认</button>
+      </div>
     </div>
   </section>
 
-  <section class="settings-grid">
-    <aside class="card side-nav">
-      <h2>配置导航</h2>
-      <ul>
-        <li>API / 模型</li>
-        <li>上下文压缩策略</li>
-        <li>代理与成本</li>
-        <li>当前生效配置</li>
-      </ul>
-    </aside>
+  @if (saveFeedback() === 'saved') {
+    <p class="hub-toast hub-toast--ok">配置已保存到本地</p>
+  }
+  @if (validationMessage()) {
+    <p class="hub-toast hub-toast--warn">{{ validationMessage() }}</p>
+  }
 
-    <div class="settings-content">
-      <form class="card form" [formGroup]="form" (ngSubmit)="save()">
-        <h2>API / 模型</h2>
-        <div class="form-grid">
-          <label>
-            <span>API Key</span>
-            <input type="password" formControlName="apiKey" placeholder="sk-..." />
-          </label>
-          <label>
-            <span>模型供应商</span>
-            <select formControlName="modelProvider">
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-              <option value="minimax">MiniMax</option>
-              <option value="custom">Custom</option>
-            </select>
-          </label>
-          <label>
-            <span>模型</span>
-            <select formControlName="model">
-              <option value="MiniMax-M2.7">MiniMax-M2.7</option>
-              <option value="abab6.5s-chat">MiniMax abab6.5s-chat</option>
-              <option value="abab6.5g-chat">MiniMax abab6.5g-chat</option>
-              <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
-              <option value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</option>
-              <option value="claude-3-opus-latest">Claude 3 Opus</option>
-            </select>
-          </label>
-          <label>
-            <span>主题</span>
-            <select formControlName="theme">
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-            </select>
-          </label>
-        </div>
-
-        <h2>上下文压缩策略</h2>
-        <label class="check-row">
-          <input type="checkbox" formControlName="compressionEnabled" />
-          <span>启用自动压缩</span>
-        </label>
-        <div class="form-grid">
-          <label>
-            <span>触发阈值（消息条数）</span>
-            <input type="number" formControlName="maxMessagesBeforeCompact" />
-          </label>
-          <label>
-            <span>压缩后保留条数</span>
-            <input type="number" formControlName="compactToMessages" />
-          </label>
-        </div>
-
-        <h2>代理与成本</h2>
-        <label class="check-row">
-          <input type="checkbox" formControlName="proxyEnabled" />
-          <span>启用代理</span>
-        </label>
-        <div class="form-grid">
-          <label>
-            <span>代理地址</span>
-            <input type="text" formControlName="proxyBaseUrl" placeholder="https://proxy.example.com" />
-          </label>
-          <label>
-            <span>代理 Token</span>
-            <input type="password" formControlName="proxyAuthToken" placeholder="token" />
-          </label>
-          <label>
-            <span>会话成本上限（USD）</span>
-            <input type="number" step="0.1" formControlName="maxSessionCostUsd" />
-          </label>
-          <label>
-            <span>预警阈值（USD）</span>
-            <input type="number" step="0.1" formControlName="warnThresholdUsd" />
-          </label>
-        </div>
-
-        <div class="actions">
-          <button type="submit">保存配置</button>
-          <button type="button" (click)="runSelfCheck()">运行自检</button>
-          <button type="button" class="secondary" (click)="reset()">恢复默认</button>
-        </div>
-
-        @if (testMessage()) {
-          <p
-            class="test-msg"
-            [style.color]="testStatus() === 'ok' ? '#22c55e' : testStatus() === 'error' ? '#ef4444' : '#94a3b8'"
+  <section class="card-panel conn-panel">
+    <h3 class="panel-title">连接参数</h3>
+    <div class="conn-grid">
+      <label class="conn-field">
+        <span>API Key</span>
+        <input
+          type="password"
+          [value]="st.apiKey"
+          (input)="onApiKeyInput($any($event.target).value)"
+          placeholder="sk-..."
+        />
+      </label>
+      <label class="conn-field">
+        <span>请求类型</span>
+        <select [value]="requestType()" (change)="applyRequestType($any($event.target).value)">
+          <option value="anthropic">Anthropic 兼容（含 MiniMax 等）</option>
+          <option value="openai">OpenAI</option>
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+      <div class="conn-field conn-field--endpoint">
+        <span>请求地址</span>
+        <div class="endpoint-row">
+          <select
+            class="endpoint-preset"
+            aria-label="常用地址"
+            (change)="onEndpointPresetSelect($event)"
           >
-            {{ testMessage() }}
-          </p>
-        }
-      </form>
-
-      <section class="card runtime-card">
-        <h2>运行环境自检</h2>
-        <div class="status-grid">
-          <div class="status-item">
-            <span>{{ badge(runtimeState()) }}</span><strong>本地运行环境</strong><small>{{ runtimeState() }}</small>
-          </div>
-          <div class="status-item">
-            <span>{{ badge(permissionState()) }}</span><strong>本地权限</strong><small>{{ permissionState() }}</small>
-          </div>
-          <div class="status-item">
-            <span>{{ badge(upstreamState()) }}</span><strong>Upstream 模型</strong><small>{{ upstreamState() }}</small>
-          </div>
+            <option value="">常用地址…</option>
+            @for (op of requestAddressOptions(); track op.id) {
+              <option [value]="op.url">{{ op.label }}</option>
+            }
+          </select>
+          <input
+            type="text"
+            [value]="endpointInput()"
+            (input)="endpointInput.set($any($event.target).value)"
+            placeholder="https://api.minimaxi.com/anthropic"
+          />
         </div>
-        @if (selfCheckDetail()) {
-          <pre class="detail">{{ selfCheckDetail() }}</pre>
-        }
-      </section>
-
-      <section class="card preview-card">
-        <h2>当前生效配置</h2>
-        <pre>{{ settings | json }}</pre>
-      </section>
+      </div>
     </div>
+    <label class="conn-field conn-field--json">
+      <span>配置 JSON</span>
+      <textarea
+        [value]="requestConfigJson()"
+        (input)="requestConfigJson.set($any($event.target).value)"
+        placeholder='{"max_tokens":32,"temperature":0.2}'
+      ></textarea>
+    </label>
   </section>
+
+  <div class="models-hub-grid">
+    <section class="card-trend card-panel">
+      <h3 class="panel-title">TOKEN 消耗趋势（近 7 日）</h3>
+      <p class="panel-sub">每日累计所有助手请求的 input+output tokens</p>
+      <div class="trend-chart-wrap">
+        <svg class="trend-svg" viewBox="0 0 360 88" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="rgba(168, 85, 247, 0.35)" />
+              <stop offset="100%" stop-color="rgba(168, 85, 247, 0)" />
+            </linearGradient>
+          </defs>
+          <polygon class="trend-area" [attr.points]="chartAreaPoints()" fill="url(#trendFill)" />
+          <polyline class="trend-line" [attr.points]="chartLinePoints()" fill="none" stroke="#a855f7" stroke-width="2" vector-effect="non-scaling-stroke" />
+        </svg>
+        <div class="trend-x-labels">
+          @for (d of usageLedger.last7DaysSeries(); track d.key) {
+            <span>{{ d.label }}</span>
+          }
+        </div>
+      </div>
+    </section>
+
+    <section class="card-lib card-panel">
+      <h3 class="panel-title">可用模型库</h3>
+      <p class="panel-sub">切换会立刻生效；自定义模型可删除</p>
+      <ul class="model-lib-list">
+        @for (row of modelLibraryRows(); track row.id) {
+          <li class="model-lib-item">
+            <div class="model-lib-icon" [attr.data-kind]="row.kind">{{ row.kind === 'local' ? '💻' : '☁' }}</div>
+            <div class="model-lib-text">
+              <div class="model-lib-name">{{ row.name }}</div>
+              <div class="model-lib-desc">{{ row.description }}</div>
+              <div class="model-lib-meta">{{ row.providerLabel }} · 窗口 {{ row.maxContextTokens | number }}</div>
+            </div>
+            <div class="model-lib-actions">
+              @if (st.model === row.id) {
+                <span class="model-lib-current">当前</span>
+              } @else {
+                <button type="button" class="model-lib-switch" (click)="switchModel(row.id)">切换</button>
+              }
+              @if (isCustomModel(row.id)) {
+                <button type="button" class="model-lib-delete" (click)="removeCustomModel(row.id)">删除</button>
+              }
+            </div>
+          </li>
+        }
+      </ul>
+    </section>
+  </div>
+
+  @if (testMessage()) {
+    <p class="test-msg" [style.color]="testStatus() === 'ok' ? '#22c55e' : testStatus() === 'error' ? '#ef4444' : '#94a3b8'">
+      {{ testMessage() }}
+    </p>
+  }
 </main>
+}
+
+@if (showAddCustomDialog()) {
+<div class="modal-backdrop" (click)="cancelAddCustom()">
+  <div class="modal-box" (click)="$event.stopPropagation()">
+    <h3>添加自定义模型</h3>
+    <p class="modal-hint">输入模型 id（例如 provider/model-name），会加入模型库并立即切换。</p>
+    <input
+      class="modal-input"
+      type="text"
+      [value]="customModelInput()"
+      (input)="customModelInput.set($any($event.target).value)"
+      placeholder="my-org/model-name"
+    />
+    <div class="modal-actions">
+      <button type="button" class="secondary" (click)="cancelAddCustom()">取消</button>
+      <button type="button" (click)="confirmAddCustom()">添加并切换</button>
+    </div>
+  </div>
+</div>
+}

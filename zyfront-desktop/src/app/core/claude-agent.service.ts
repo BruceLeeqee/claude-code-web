@@ -15,6 +15,7 @@ import {
 } from 'claude-core';
 import { CLAUDE_CORE_CONFIG, CLAUDE_RUNTIME, type ClaudeCoreRuntime } from './zyfront-core.providers';
 import { AppSettingsService } from './app-settings.service';
+import { ModelUsageLedgerService } from './model-usage-ledger.service';
 
 /** 当前对话请求生命周期状态 */
 export type AgentStatus = 'idle' | 'streaming' | 'error';
@@ -127,6 +128,7 @@ export class ClaudeAgentService {
     @Inject(CLAUDE_RUNTIME) private readonly runtime: ClaudeCoreRuntime,
     @Inject(CLAUDE_CORE_CONFIG) private readonly config: { defaultSessionId?: string },
     private readonly appSettings: AppSettingsService,
+    private readonly usageLedger: ModelUsageLedgerService,
   ) {
     this.sessionId = config.defaultSessionId ?? 'default';
     this.toolsSubject.next(this.runtime.tools.list().map((t: AgentTool) => t.name));
@@ -556,6 +558,14 @@ export class ClaudeAgentService {
             timestamp: Date.now(),
           },
         ]);
+      }
+      return;
+    }
+
+    if (chunk.type === 'done') {
+      if (chunk.usage) {
+        this.appendCost(chunk.usage.inputTokens, chunk.usage.outputTokens);
+        this.usageLedger.record(chunk.usage, this.runtime.client.getModel().model);
       }
       return;
     }

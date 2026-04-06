@@ -1,0 +1,95 @@
+<section class="wizard-wrap">
+  <header class="wizard-head">
+    <div class="crumb">技能库 / 创建新技能</div>
+    <button type="button" class="x-btn" (click)="close()">×</button>
+  </header>
+
+  <ol class="wizard-steps">
+    <li *ngFor="let s of steps" [attr.data-state]="stepClass(s.id)">
+      <span class="num">{{ stepClass(s.id) === 'done' ? '✓' : s.id }}</span>
+      <span class="txt">{{ s.title }}</span>
+    </li>
+  </ol>
+
+  <article class="wizard-card" *ngIf="step() === 1">
+    <h2>技能基本信息</h2>
+    <p>定义技能名称、描述以及在库中显示的图标。</p>
+    <label>
+      <span>技能名称</span>
+      <input [ngModel]="skillName()" (ngModelChange)="skillName.set($event)" placeholder="例如：自动化代码审阅" />
+    </label>
+    <label>
+      <span>技能描述</span>
+      <textarea [ngModel]="skillDesc()" (ngModelChange)="skillDesc.set($event)" placeholder="简要描述该技能的能力和用途..."></textarea>
+    </label>
+    <div class="type-row">
+      <span>选择图标</span>
+      <button type="button" class="icon-btn" [class.active]="skillType() === 'code'" (click)="skillType.set('code')">⚡</button>
+      <button type="button" class="icon-btn" [class.active]="skillType() === 'test'" (click)="skillType.set('test')">🤖</button>
+      <button type="button" class="icon-btn" [class.active]="skillType() === 'api'" (click)="skillType.set('api')">&lt;/&gt;</button>
+      <button type="button" class="icon-btn" [class.active]="skillType() === 'security'" (click)="skillType.set('security')">🛡</button>
+      <button type="button" class="icon-btn" [class.active]="skillType() === 'data'" (click)="skillType.set('data')">🗄</button>
+    </div>
+  </article>
+
+  <article class="wizard-card" *ngIf="step() === 2">
+    <h2>选择可用工具</h2>
+    <p>为该技能关联一个或多个预定义工具或 API。</p>
+    <button type="button" class="tool-row" *ngFor="let t of tools()" (click)="toggleTool(t.id)" [class.active]="t.selected">
+      <div class="tool-name">{{ t.name }}</div>
+      <div class="tool-desc">{{ t.desc }}</div>
+      <span class="check">{{ t.selected ? '✓' : '' }}</span>
+    </button>
+  </article>
+
+  <article class="wizard-card" *ngIf="step() === 3">
+    <h2>参数详细配置</h2>
+    <p>配置选定工具的默认参数和运行变量。</p>
+    <div class="param-grid">
+      <label>
+        <span>搜索深度</span>
+        <select [ngModel]="depth()" (ngModelChange)="depth.set($event)">
+          <option>Deep (Comprehensive)</option>
+          <option>Light</option>
+        </select>
+      </label>
+      <label>
+        <span>最大重试数</span>
+        <input type="number" min="1" max="20" [ngModel]="maxRetries()" (ngModelChange)="maxRetries.set(+$event || 1)" />
+      </label>
+    </div>
+    <div class="hint">提示：参数可以在用技能时通过命令行覆写。</div>
+  </article>
+
+  <article class="wizard-card" *ngIf="step() === 4">
+    <h2>测试与验证</h2>
+    <p>在发布前进行小规模模拟运行，验证技能效果。</p>
+    <pre class="logs">{{ testLogs().join('\n') }}</pre>
+    <button nz-button nzType="default" (click)="runTest()">重新运行测试</button>
+    <div class="ok-box">
+      <strong>验证成功</strong>
+      <span>所有接口均响应正常，技能可以安全发布。</span>
+    </div>
+  </article>
+
+  <article class="wizard-card" *ngIf="step() === 5">
+    <h2>准备结束</h2>
+    <p>你的新技能已自动化配置完成，点击下方按钮将其保存到技能库。</p>
+    <label class="switch-row">
+      <span>设为公开技能</span>
+      <input type="checkbox" [ngModel]="reviewAfterPublish()" (ngModelChange)="reviewAfterPublish.set($event)" />
+    </label>
+    <label class="switch-row">
+      <span>开启版本控制</span>
+      <input type="checkbox" [ngModel]="enableVersionControl()" (ngModelChange)="enableVersionControl.set($event)" />
+    </label>
+  </article>
+
+  <footer class="wizard-foot">
+    <button type="button" class="ghost" (click)="prev()" [disabled]="step() <= 1">上一步</button>
+    <button type="button" class="ghost" (click)="close()">取消</button>
+    <button type="button" class="primary" *ngIf="step() < maxStep" [disabled]="!canNext()" (click)="next()">下一步</button>
+    <button type="button" class="primary" *ngIf="step() === maxStep" (click)="saveAndCreate()">确认并保存</button>
+  </footer>
+</section>
+

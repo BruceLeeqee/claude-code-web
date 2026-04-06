@@ -1,250 +1,409 @@
-/**
- * 模型管理中心（配置整合页）：
- * 迁移原「模型配置中心」的表单与自检逻辑到此页面。
- */
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { AsyncPipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { AppSettingsService, type AppTheme } from '../../../core/app-settings.service';
-import { AdvancedArchitectureService } from '../../../core/advanced-architecture.service';
 import { LocalBridgeService } from '../../../core/local-bridge.service';
+import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
+import { MODEL_CATALOG, defaultCatalogEntry, findCatalogEntry, type ModelCatalogEntry, type ModelProvider } from '../../../core/model-catalog';
+import type { AppSettings } from '../../../core/app-settings.service';
 
-/** 设置页内联自检状态 */
-type CheckState = 'idle' | 'checking' | 'ok' | 'error';
+/** 连接「请求类型」仅三种：Anthropic 兼容（含 MiniMax 等）、OpenAI、Custom；不再单独出现 MiniMax */
+export type UiRequestKind = 'anthropic' | 'openai' | 'custom';
+
+const LAST_MODEL_TEST_KEY = 'claude-web:last-model-test';
+const CUSTOM_MODELS_KEY = 'zyfront:custom-model-ids';
+const REQUEST_CFG_JSON_KEY = 'zyfront:model-request-config-json';
+
+export type ConnectionIndicator = 'untested' | 'testing' | 'ok' | 'error';
 
 @Component({
   selector: 'app-models-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, AsyncPipe, RouterLink],
+  imports: [CommonModule, RouterLink],
   templateUrl: './models.page.html',
   styleUrl: './models.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ModelsPrototypePageComponent {
   private readonly settingsService = inject(AppSettingsService);
-  private readonly architecture = inject(AdvancedArchitectureService);
   private readonly bridge = inject(LocalBridgeService);
-  private readonly fb = inject(FormBuilder);
+  protected readonly usageLedger = inject(ModelUsageLedgerService);
+  private readonly cdr = inject(ChangeDetectorRef);
 
-  readonly settings$ = this.settingsService.settings$;
+  readonly settings = toSignal(this.settingsService.settings$, {
+    initialValue: this.settingsService.value,
+  });
+
   readonly testStatus = signal<'idle' | 'testing' | 'ok' | 'error'>('idle');
   readonly testMessage = signal('');
+  readonly saveFeedback = signal<'idle' | 'saved'>('idle');
+  readonly validationMessage = signal('');
 
-  readonly runtimeState = signal<CheckState>('idle');
-  readonly permissionState = signal<CheckState>('idle');
-  readonly upstreamState = signal<CheckState>('idle');
-  readonly selfCheckDetail = signal('');
+  private readonly persistedConnection = signal<Exclude<ConnectionIndicator, 'testing'>>('untested');
+  protected readonly customModelIds = signal<string[]>(this.loadCustomModelIds());
 
-  readonly voiceState$ = this.architecture.voiceState$;
-  readonly vimState$ = this.architecture.vimState$;
-  readonly memFiles$ = this.architecture.memFiles$;
-  readonly transportKind$ = this.architecture.transportKind$;
-  readonly transportLog$ = this.architecture.transportLog$;
-  readonly analytics$ = this.architecture.analytics$;
+  protected readonly activeCatalogEntry = computed(() => {
+    const modelId = this.settings().model;
+    return findCatalogEntry(modelId) ?? this.fallbackEntryForId(modelId, this.settings().modelProvider);
+  });
 
-  readonly form = this.fb.group({
-    apiKey: [''],
-    modelProvider: ['minimax', Validators.required],
-    model: ['abab6.5s-chat', Validators.required],
-    proxyEnabled: [false],
-    proxyBaseUrl: [''],
-    proxyAuthToken: [''],
-    compressionEnabled: [true],
-    maxMessagesBeforeCompact: [50, [Validators.required, Validators.min(1)]],
-    compactToMessages: [20, [Validators.required, Validators.min(1)]],
-    maxSessionCostUsd: [5, [Validators.required, Validators.min(0)]],
-    warnThresholdUsd: [3, [Validators.required, Validators.min(0)]],
-    theme: ['dark' as AppTheme, Validators.required],
+  protected readonly modelLibraryRows = computed((): ModelCatalogEntry[] => {
+    const custom = this.customModelIds().map((id) => this.fallbackEntryForId(id, 'custom'));
+    const extras = custom.filter((m) => !MODEL_CATALOG.some((x) => x.id === m.id));
+    return [...MODEL_CATALOG, ...extras];
+  });
+
+  protected readonly chartMaxTokens = computed(() => {
+    const s = this.usageLedger.last7DaysSeries();
+    return Math.max(1, ...s.map((x) => x.tokens));
+  });
+
+  readonly connectionUi = computed<ConnectionIndicator>(() => {
+    const t = this.testStatus();
+    if (t === 'testing') return 'testing';
+    if (t === 'ok') return 'ok';
+    if (t === 'error') return 'error';
+    return this.persistedConnection();
+  });
+
+  readonly connectionUiLabel = computed(() => {
+    const u = this.connectionUi();
+    if (u === 'testing') return '正在测试连接…';
+    if (u === 'ok') return '大模型连接正常';
+    if (u === 'error') return '大模型连接异常';
+    return '尚未测试连接';
+  });
+
+  protected showAddCustomDialog = signal(false);
+  protected customModelInput = signal('');
+  protected requestType = signal<UiRequestKind>('anthropic');
+  protected endpointInput = signal('');
+  protected requestConfigJson = signal<string>('{}');
+
+  protected readonly requestAddressOptions = computed(() => {
+    const p = this.requestType();
+    if (p === 'anthropic') {
+      return [
+        { id: 'minimax-anth', label: 'MiniMax（Anthropic 兼容）', url: 'https://api.minimaxi.com/anthropic' },
+        { id: 'anthropic-official', label: 'Anthropic 官方', url: 'https://api.anthropic.com' },
+      ];
+    }
+    if (p === 'openai') return [{ id: 'openai-default', label: 'OpenAI 官方', url: 'https://api.openai.com' }];
+    return [];
   });
 
   constructor() {
-    // 设置流与表单双向同步（避免 patch 时触发 valueChanges 循环）
-    this.settings$.subscribe((settings) => {
-      this.form.patchValue(
-        {
-          apiKey: settings.apiKey,
-          modelProvider: settings.modelProvider,
-          model: settings.model,
-          proxyEnabled: settings.proxy.enabled,
-          proxyBaseUrl: settings.proxy.baseUrl,
-          proxyAuthToken: settings.proxy.authToken,
-          compressionEnabled: settings.compression.enabled,
-          maxMessagesBeforeCompact: settings.compression.maxMessagesBeforeCompact,
-          compactToMessages: settings.compression.compactToMessages,
-          maxSessionCostUsd: settings.cost.maxSessionCostUsd,
-          warnThresholdUsd: settings.cost.warnThresholdUsd,
-          theme: settings.theme,
-        },
-        { emitEvent: false },
-      );
-    });
+    try {
+      const raw = localStorage.getItem(LAST_MODEL_TEST_KEY);
+      if (raw) {
+        const j = JSON.parse(raw) as { ok?: boolean };
+        this.persistedConnection.set(j.ok === true ? 'ok' : j.ok === false ? 'error' : 'untested');
+      }
+    } catch {
+      /* ignore */
+    }
+    const cfg = this.settingsService.value;
+    const uiKind = this.mapSettingsProviderToUi(cfg.modelProvider);
+    this.requestType.set(uiKind);
+    this.endpointInput.set(cfg.proxy.baseUrl || this.defaultBaseUrlForUi(uiKind));
+    try {
+      const raw = localStorage.getItem(REQUEST_CFG_JSON_KEY);
+      this.requestConfigJson.set(raw?.trim() ? raw : this.defaultRequestJsonForUi(uiKind));
+    } catch {
+      this.requestConfigJson.set(this.defaultRequestJsonForUi(uiKind));
+    }
   }
 
-  /** 校验表单并写回 `AppSettingsService` */
-  save(): void {
-    if (this.form.invalid) {
-      this.form.markAllAsTouched();
-      return;
-    }
-
-    const value = this.form.getRawValue();
+  protected switchModel(modelId: string): void {
+    const next = findCatalogEntry(modelId) ?? this.fallbackEntryForId(modelId, 'custom');
+    const storedProvider: AppSettings['modelProvider'] =
+      next.provider === 'minimax' ? 'anthropic' : next.provider;
     this.settingsService.update({
-      apiKey: value.apiKey ?? '',
-      modelProvider: (value.modelProvider ?? 'minimax') as 'anthropic' | 'openai' | 'minimax' | 'custom',
-      model: value.model ?? 'MiniMax-M2.7',
-      proxy: {
-        enabled: Boolean(value.proxyEnabled),
-        baseUrl: value.proxyBaseUrl ?? '',
-        authToken: value.proxyAuthToken ?? '',
-      },
-      compression: {
-        enabled: Boolean(value.compressionEnabled),
-        maxMessagesBeforeCompact: Number(value.maxMessagesBeforeCompact ?? 50),
-        compactToMessages: Number(value.compactToMessages ?? 20),
-      },
-      cost: {
-        maxSessionCostUsd: Number(value.maxSessionCostUsd ?? 5),
-        warnThresholdUsd: Number(value.warnThresholdUsd ?? 3),
-      },
-      theme: (value.theme ?? 'dark') as AppTheme,
+      model: next.id,
+      modelProvider: storedProvider,
     });
+    this.requestType.set(this.mapSettingsProviderToUi(next.provider));
+    this.cdr.markForCheck();
   }
 
-  /** 经本地 Bridge 探测上游模型 HTTP 是否成功 */
-  async testConnection(): Promise<void> {
-    if (this.form.invalid) {
-      this.form.markAllAsTouched();
-      return;
+  protected save(): void {
+    this.validationMessage.set('');
+    const cur = this.activeCatalogEntry();
+    const provider = this.requestType() as AppSettings['modelProvider'];
+    const endpoint = this.endpointInput().trim();
+    const parsedCfg = this.parseRequestJsonOrSetError();
+    if (!parsedCfg) return;
+    const effectiveModel = typeof parsedCfg['model'] === 'string' && parsedCfg['model'].trim() ? String(parsedCfg['model']).trim() : cur.id;
+    this.settingsService.update({
+      apiKey: this.settings().apiKey,
+      model: effectiveModel,
+      modelProvider: provider,
+      proxy: {
+        enabled: endpoint.length > 0,
+        baseUrl: endpoint,
+        authToken: this.settings().proxy.authToken ?? '',
+      },
+      theme: (this.settings().theme ?? 'dark') as AppTheme,
+    });
+    try {
+      localStorage.setItem(REQUEST_CFG_JSON_KEY, this.requestConfigJson());
+    } catch {
+      /* ignore */
     }
+    this.saveFeedback.set('saved');
+    this.cdr.markForCheck();
+    window.setTimeout(() => {
+      this.saveFeedback.set('idle');
+      this.cdr.markForCheck();
+    }, 2000);
+  }
 
-    const value = this.form.getRawValue();
+  protected resetDefaults(): void {
+    this.settingsService.reset();
+    const ui: UiRequestKind = 'anthropic';
+    this.requestType.set(ui);
+    this.endpointInput.set(this.defaultBaseUrlForUi(ui));
+    this.requestConfigJson.set(this.defaultRequestJsonForUi(ui));
+    this.validationMessage.set('');
+    this.testStatus.set('idle');
+    this.testMessage.set('已恢复默认配置');
+    this.cdr.markForCheck();
+  }
+
+  protected async testConnection(): Promise<void> {
+    this.validationMessage.set('');
     this.testStatus.set('testing');
     this.testMessage.set('正在连接模型...');
+    this.cdr.markForCheck();
+
+    const cfg = this.settingsService.value;
+    const apiKey = cfg.apiKey?.trim();
+    if (!apiKey) {
+      this.testStatus.set('error');
+      this.testMessage.set('请先在模型配置中填写 API Key');
+      this.cdr.markForCheck();
+      return;
+    }
+
+    const parsedCfg = this.parseRequestJsonOrSetError();
+    if (!parsedCfg) {
+      this.testStatus.set('error');
+      this.cdr.markForCheck();
+      return;
+    }
+    const baseUrl =
+      (typeof parsedCfg['baseUrl'] === 'string' ? String(parsedCfg['baseUrl']) : this.endpointInput()).trim() ||
+      this.defaultBaseUrlForUi(this.requestType());
+    const model = (typeof parsedCfg['model'] === 'string' ? String(parsedCfg['model']) : this.activeCatalogEntry().id).trim();
+    const ipcProvider = this.requestType() === 'openai' ? 'openai' : 'anthropic';
 
     try {
-      const apiKey = value.apiKey ?? '';
-      if (!apiKey.trim()) {
-        throw new Error('请先填写 API Key');
-      }
-
-      const baseUrl = value.proxyEnabled && value.proxyBaseUrl ? value.proxyBaseUrl : 'https://api.minimaxi.com/anthropic';
-
       const result = await this.bridge.testModelConnection({
         baseUrl,
         apiKey,
-        model: value.model ?? 'abab6.5s-chat',
-        provider: value.modelProvider ?? 'minimax',
+        model,
+        provider: ipcProvider,
       });
-
       if (!result.ok) {
         throw new Error(`HTTP ${result.status}: ${result.body?.slice(0, 220) ?? 'unknown error'}`);
       }
-
       this.testStatus.set('ok');
-      this.testMessage.set('连接成功：大模型可用');
+      this.testMessage.set(`连接成功：${model}`);
+      this.persistedConnection.set('ok');
+      try {
+        localStorage.setItem(LAST_MODEL_TEST_KEY, JSON.stringify({ ok: true, at: Date.now() }));
+      } catch {
+        /* ignore */
+      }
     } catch (error) {
       this.testStatus.set('error');
       this.testMessage.set(`连接失败：${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  /** 恢复默认设置 */
-  reset(): void {
-    this.settingsService.reset();
-  }
-
-  /** 在设置页执行完整自检（bridge/token/upstream） */
-  async runSelfCheck(): Promise<void> {
-    this.runtimeState.set('checking');
-    this.permissionState.set('checking');
-    this.upstreamState.set('checking');
-    this.selfCheckDetail.set('');
-
-    try {
-      const health = await this.bridge.health();
-      this.runtimeState.set(health.ok ? 'ok' : 'error');
-      this.permissionState.set(health.ok ? 'ok' : 'error');
-
-      const cfg = this.settingsService.value;
-      const result = await this.bridge.testModelConnection({
-        baseUrl: cfg.proxy.enabled && cfg.proxy.baseUrl ? cfg.proxy.baseUrl : 'https://api.minimaxi.com/anthropic',
-        apiKey: cfg.apiKey,
-        model: cfg.model,
-        provider: cfg.modelProvider,
-      });
-
-      if (result.ok) {
-        this.upstreamState.set('ok');
-        this.selfCheckDetail.set(`本地运行环境正常，工作区：${health.root}`);
-      } else {
-        this.upstreamState.set('error');
-        this.selfCheckDetail.set(`上游失败 HTTP ${result.status}: ${result.body?.slice(0, 200) ?? ''}`);
+      this.persistedConnection.set('error');
+      try {
+        localStorage.setItem(LAST_MODEL_TEST_KEY, JSON.stringify({ ok: false, at: Date.now() }));
+      } catch {
+        /* ignore */
       }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.runtimeState.set('error');
-      this.permissionState.set('error');
-      this.upstreamState.set('error');
-      this.selfCheckDetail.set(msg);
+    } finally {
+      this.cdr.markForCheck();
     }
   }
 
-  /** 将状态映射为展示用颜色标签 */
-  badge(state: CheckState): string {
-    if (state === 'ok') return 'GREEN';
-    if (state === 'error') return 'RED';
-    if (state === 'checking') return 'YELLOW';
-    return 'GRAY';
+  protected openAddCustom(): void {
+    this.customModelInput.set('');
+    this.showAddCustomDialog.set(true);
   }
 
-  /** 以下为 AdvancedArchitectureService 的演示接口（设置页模板未直接使用，但保留以不破坏功能演示） */
-  setTransport(kind: 'remoteIO' | 'sse' | 'websocket'): void {
-    this.architecture.setTransport(kind);
+  protected cancelAddCustom(): void {
+    this.showAddCustomDialog.set(false);
   }
 
-  async connectTransport(): Promise<void> {
-    await this.architecture.connectTransport();
+  protected confirmAddCustom(): void {
+    const id = this.customModelInput().trim();
+    if (!id) return;
+    const next = [...new Set([...this.customModelIds(), id])];
+    this.customModelIds.set(next);
+    try {
+      localStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+    this.showAddCustomDialog.set(false);
+    this.switchModel(id);
   }
 
-  async disconnectTransport(): Promise<void> {
-    await this.architecture.disconnectTransport();
+  protected removeCustomModel(id: string): void {
+    const next = this.customModelIds().filter((x) => x !== id);
+    this.customModelIds.set(next);
+    try {
+      localStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+    if (this.settings().model === id) {
+      this.switchModel(defaultCatalogEntry().id);
+    }
+    this.cdr.markForCheck();
   }
 
-  async pingTransport(): Promise<void> {
-    await this.architecture.sendTransportMessage('ping', { source: 'settings-page' });
+  protected isCustomModel(id: string): boolean {
+    return this.customModelIds().includes(id) && !MODEL_CATALOG.some((m) => m.id === id);
   }
 
-  startVoice(): void {
-    this.architecture.startListening();
+  protected chartLinePoints(): string {
+    const series = this.usageLedger.last7DaysSeries();
+    const max = this.chartMaxTokens();
+    const w = 360;
+    const chartH = 72;
+    const pad = 8;
+    if (series.length === 0) return '';
+    return series
+      .map((p, i) => {
+        const x = pad + (i / Math.max(1, series.length - 1)) * (w - 2 * pad);
+        const t = max > 0 ? p.tokens / max : 0;
+        const y = pad + (1 - t) * chartH;
+        return `${x},${y}`;
+      })
+      .join(' ');
   }
 
-  speakVoice(): void {
-    this.architecture.startSpeaking();
+  protected chartAreaPoints(): string {
+    const line = this.chartLinePoints();
+    if (!line) return '';
+    const pad = 8;
+    const chartH = 72;
+    return `${line} ${360 - pad},${pad + chartH} ${pad},${pad + chartH}`;
   }
 
-  stopVoice(): void {
-    this.architecture.stopVoice();
+  protected formatUsd(n: number): string {
+    return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 });
   }
 
-  vimKey(key: string): void {
-    this.architecture.sendVimKey(key);
+  protected formatLatency(): string {
+    const ms = this.usageLedger.avgLatencyMs();
+    if (ms === null) return '—';
+    return `${(ms / 1000).toFixed(2)}s`;
   }
 
-  writeMemFile(): void {
-    this.architecture.writeFile('/demo/notes.md', '# Demo\nThis is a browser memory file.');
+  private defaultBaseUrlForUi(kind: UiRequestKind): string {
+    if (kind === 'anthropic') return 'https://api.minimaxi.com/anthropic';
+    if (kind === 'openai') return 'https://api.openai.com';
+    return '';
   }
 
-  removeMemFile(): void {
-    this.architecture.removeFile('/demo/notes.md');
+  protected applyRequestType(kind: string): void {
+    const k = kind as UiRequestKind;
+    if (k !== 'anthropic' && k !== 'openai' && k !== 'custom') return;
+    this.requestType.set(k);
+    if (!this.endpointInput().trim()) {
+      this.endpointInput.set(this.defaultBaseUrlForUi(k));
+    }
+    this.requestConfigJson.set(this.defaultRequestJsonForUi(k));
+    this.cdr.markForCheck();
   }
 
-  encodeSample(): string {
-    return this.architecture.encodeBase64('zyfront-core-browser');
+  /** 下拉「常用地址」选择后写入输入框，并复位下拉框 */
+  protected onEndpointPresetSelect(ev: Event): void {
+    const sel = ev.target as HTMLSelectElement;
+    const v = sel.value?.trim();
+    if (v) {
+      this.endpointInput.set(v);
+    }
+    sel.selectedIndex = 0;
+    this.cdr.markForCheck();
   }
 
-  decodeSample(value: string): string {
-    return this.architecture.decodeBase64(value);
+  private mapSettingsProviderToUi(p: ModelProvider): UiRequestKind {
+    if (p === 'minimax') return 'anthropic';
+    if (p === 'anthropic' || p === 'openai' || p === 'custom') return p;
+    return 'custom';
+  }
+
+  private defaultRequestJsonForUi(kind: UiRequestKind): string {
+    if (kind === 'openai') {
+      return JSON.stringify(
+        {
+          provider: 'openai',
+          max_tokens: 32,
+          temperature: 0.2,
+        },
+        null,
+        2,
+      );
+    }
+    return JSON.stringify(
+      {
+        provider: 'anthropic',
+        max_tokens: 32,
+        temperature: 0.2,
+      },
+      null,
+      2,
+    );
+  }
+
+  protected onApiKeyInput(value: string): void {
+    this.settingsService.update({ apiKey: value });
+  }
+
+  private loadCustomModelIds(): string[] {
+    try {
+      const raw = localStorage.getItem(CUSTOM_MODELS_KEY);
+      if (!raw) return [];
+      const p = JSON.parse(raw) as unknown;
+      return Array.isArray(p) ? p.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private parseRequestJsonOrSetError(): Record<string, unknown> | null {
+    const raw = this.requestConfigJson().trim();
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        this.validationMessage.set('配置 JSON 必须是对象，例如 {"max_tokens":32}');
+        return null;
+      }
+      return parsed as Record<string, unknown>;
+    } catch {
+      this.validationMessage.set('配置 JSON 不是合法 JSON，请先修正。');
+      return null;
+    }
+  }
+
+  private fallbackEntryForId(id: string, provider: ModelProvider): ModelCatalogEntry {
+    const d = defaultCatalogEntry();
+    return {
+      ...d,
+      id,
+      name: id,
+      shortName: id.length > 16 ? `${id.slice(0, 14)}…` : id,
+      provider,
+      providerLabel: provider === 'anthropic' ? 'Anthropic' : provider === 'openai' ? 'OpenAI' : provider === 'minimax' ? 'MiniMax' : 'Custom',
+      description: '自定义模型标识；价格估算沿用默认目录单价。',
+    };
   }
 }

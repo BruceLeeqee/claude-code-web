@@ -1,72 +1,131 @@
 <section class="proto-page graph-proto">
   <div class="graph-shell">
     <header class="graph-header">
-      <div>
+      <div class="graph-header-titles">
         <h1>知识图谱</h1>
-        <p>类 Obsidian 记忆系统可视化，查看核心实体关系。</p>
+        <p>类 Obsidian 记忆系统可视化；节点来自工作台主终端对话与工具调用记忆。</p>
       </div>
     </header>
 
     <div class="graph-body">
       <div class="graph-toolbar">
-        <div class="tool-group">
-          <button type="button" class="tool-btn" title="缩放至适合大小">适配</button>
-          <button type="button" class="tool-btn" title="强制布局刷新">刷新</button>
+        <div class="toolbar-spacer" aria-hidden="true"></div>
+        <div class="tool-group tool-group--center">
+          <button type="button" class="tool-btn tool-btn--icon" title="缩放适配" (click)="fitView()">
+            <span nz-icon nzType="border" nzTheme="outline"></span>
+          </button>
+          <button type="button" class="tool-btn tool-btn--icon" title="重新布局" (click)="refreshLayout()">
+            <span nz-icon nzType="reload" nzTheme="outline"></span>
+          </button>
+          <span class="tool-brand" title="记忆源：主终端">D</span>
+          <button type="button" class="tool-btn tool-btn--icon" title="记忆增强（占位）">
+            <span nz-icon nzType="thunderbolt" nzTheme="outline"></span>
+          </button>
           <div class="tool-divider"></div>
-          <button type="button" class="tool-btn active" title="节点标签">标签</button>
-          <button type="button" class="tool-btn" title="关系连线">连线</button>
+          <button
+            type="button"
+            class="tool-btn"
+            [class.active]="showLabels()"
+            title="节点标签"
+            (click)="toggleLabels()"
+          >
+            标签
+          </button>
+          <button
+            type="button"
+            class="tool-btn"
+            [class.active]="showEdges()"
+            title="关系连线"
+            (click)="toggleEdges()"
+          >
+            连线
+          </button>
         </div>
         <div class="force-slider">
-          <span>物理模拟力</span>
-          <input type="range" />
+          <span>物理模拟阻力</span>
+          <input type="range" min="0" max="100" [ngModel]="physicsDrag() * 100" (ngModelChange)="onPhysicsChange($event)" />
         </div>
       </div>
 
       <div class="graph-main">
-        <div class="graph-canvas">
-          <div class="graph-placeholder">
-            <div class="placeholder-title">Graph View</div>
-            <div class="node-list">
-              <button
-                type="button"
-                class="node-pill"
-                *ngFor="let node of facade.nodes()"
-                (click)="facade.selectNode(node.id)"
+        <div class="graph-canvas" #graphHost>
+          <svg class="graph-svg" [attr.viewBox]="viewBox()" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <linearGradient id="edge-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color: #6366f1; stop-opacity: 0.35" />
+                <stop offset="100%" style="stop-color: #a78bfa; stop-opacity: 0.55" />
+              </linearGradient>
+            </defs>
+            <g class="graph-edges" *ngIf="showEdges()">
+              <line
+                *ngFor="let ln of displayLines()"
+                class="graph-edge"
+                [attr.x1]="ln.x1"
+                [attr.y1]="ln.y1"
+                [attr.x2]="ln.x2"
+                [attr.y2]="ln.y2"
+              />
+            </g>
+            <g class="graph-nodes">
+              <g
+                *ngFor="let n of simNodes()"
+                class="graph-node"
+                [class.selected]="selectedId() === n.id"
+                (click)="onSelectNode(n.id); $event.stopPropagation()"
               >
-                {{ node.name }}
-              </button>
-            </div>
+                <circle [attr.cx]="n.x" [attr.cy]="n.y" [attr.r]="n.r" [attr.fill]="n.fill" [attr.stroke]="selectedId() === n.id ? '#e9d5ff' : '#27272a'" [attr.stroke-width]="selectedId() === n.id ? 2 : 1" />
+                <text
+                  *ngIf="showLabels()"
+                  class="graph-label"
+                  [attr.x]="n.x + n.r + 6"
+                  [attr.y]="n.y + 4"
+                >
+                  {{ n.name }}
+                </text>
+              </g>
+            </g>
+          </svg>
+          <div class="graph-empty-hint" *ngIf="simNodes().length === 0">
+            <p>暂无图谱数据。请在工作台主终端对话或触发工具调用后返回本页。</p>
           </div>
         </div>
 
         <aside class="graph-side">
-          <h3>节点详情</h3>
-          <ng-container *ngIf="facade.selectedNode() as node; else empty">
+          <h3>
+            <span nz-icon nzType="deployment-unit" nzTheme="outline"></span>
+            节点详情
+          </h3>
+          <ng-container *ngIf="selectedDetail() as d; else empty">
             <div class="node-summary">
-              <div class="node-badge">ENTITY</div>
-              <h4>{{ node.name }}</h4>
-              <p class="muted">类型：{{ node.group }}</p>
+              <div class="node-badge" *ngIf="d.node.kind !== 'hub' && d.node.kind !== 'facade'">MEMORY</div>
+              <div class="node-badge node-badge--hub" *ngIf="d.node.kind === 'hub'">HUB</div>
+              <div class="node-badge node-badge--demo" *ngIf="d.node.kind === 'facade'">DEMO</div>
+              <h4>{{ d.node.name }}</h4>
+              <p class="muted" *ngIf="d.node.kind !== 'hub'">类型：{{ d.node.kind === 'facade' ? (d.node.group ?? 'entity') : d.node.kind }}</p>
+              <p class="snippet" *ngIf="d.node.snippet">{{ d.node.snippet }}</p>
+              <p class="muted small" *ngIf="d.node.at">时间：{{ formatAt(d.node.at) }}</p>
             </div>
-            <div class="node-links">
-              <div class="label">直接关联</div>
+            <div class="node-links" *ngIf="d.neighbors.length">
+              <div class="label">关联</div>
               <div class="chips">
-                <span class="chip" *ngFor="let link of node.links">{{ link }}</span>
+                <span class="chip" *ngFor="let t of d.neighbors">{{ t }}</span>
               </div>
             </div>
-            <button nz-button nzType="primary" class="primary-btn">定位对话上下文</button>
           </ng-container>
           <ng-template #empty>
             <div class="empty-state">
-              <p>点击图谱中的节点查看详情</p>
+              <span nz-icon nzType="search" nzTheme="outline" class="empty-ico"></span>
+              <p>点击图谱中的节点，查看关联与终端记忆摘要。</p>
             </div>
           </ng-template>
+
           <div class="graph-stats">
             <div>
-              <div class="stat-value">128</div>
+              <div class="stat-value">{{ stats().entities }}</div>
               <div class="stat-label">知识实体</div>
             </div>
             <div>
-              <div class="stat-value">452</div>
+              <div class="stat-value">{{ stats().links }}</div>
               <div class="stat-label">语义关联</div>
             </div>
           </div>

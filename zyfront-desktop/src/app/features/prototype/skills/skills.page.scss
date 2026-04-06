@@ -1,17 +1,22 @@
 .skills-page {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 .skills-layout {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr) 300px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 0;
   background: #0b0b0f;
 }
 
 .skills-left,
 .skills-right {
+  min-height: 0;
+  overflow: auto;
   background: #0f1015;
   border-right: 1px solid #23242c;
   padding: 12px;
@@ -122,9 +127,20 @@
 }
 
 .skills-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
   padding: 14px;
   overflow: auto;
   background: #0b0b0f;
+}
+
+.skills-main > app-skill-create-wizard {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
 }
 
 .main-breadcrumb {

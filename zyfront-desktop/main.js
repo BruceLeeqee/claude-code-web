@@ -181,7 +181,9 @@ function registerIpcHandlers() {
       cwd: absCwd,
       windowsHide: true,
       timeout: 120000,
-      ...(process.platform === 'win32' ? { shell: 'powershell.exe' } : {}),
+      // 勿用 PowerShell 作为 exec 的 shell：渲染进程大量下发 `cmd.exe /c git ...`，
+      // 经 PowerShell 中转会导致重定向/管道与退出码异常，Git 分支名等读不到。
+      ...(process.platform === 'win32' ? { shell: process.env.ComSpec || 'cmd.exe' } : {}),
     }
     return await new Promise((resolve) => {
       exec(command, execOptions, (error, stdout, stderr) => {
@@ -241,21 +243,42 @@ function registerIpcHandlers() {
       return { ok: false, status: 400, body: 'baseUrl/apiKey/model required' }
     }
 
-    const url = String(baseUrl).replace(/\/$/, '') + '/v1/messages'
+    const normalizedProvider = String(provider || 'custom').toLowerCase()
+    const root = String(baseUrl).replace(/\/$/, '')
     try {
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 32,
-          messages: [{ role: 'user', content: `ping from ${provider ?? 'custom'}` }],
-        }),
-      })
+      let resp
+      if (normalizedProvider === 'openai') {
+        const url = root.endsWith('/v1') ? `${root}/chat/completions` : `${root}/v1/chat/completions`
+        resp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: 32,
+            messages: [{ role: 'user', content: `ping from ${normalizedProvider}` }],
+          }),
+        })
+      } else {
+        // Anthropic 兼容（含 MiniMax 等）：与 zyfront-web bridge 一致，同时带 Bearer 与 x-api-key
+        const url = root.endsWith('/v1') ? `${root}/messages` : `${root}/v1/messages`
+        resp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${apiKey}`,
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: 32,
+            messages: [{ role: 'user', content: `ping from ${normalizedProvider}` }],
+          }),
+        })
+      }
       const body = await resp.text()
       return { ok: resp.ok, status: resp.status, body: body.slice(0, 1000) }
     } catch (e) {

@@ -23,7 +23,7 @@
           [class.active]="explorerVisible"
           title="显示/隐藏项目目录"
         >
-          <span nz-icon nzType="folder"></span>
+          <span nz-icon nzType="step-backward" nzTheme="outline"></span>
         </button>
         <button
           type="button"
@@ -33,16 +33,8 @@
           [class.active]="terminalMenuVisible"
           title="显示/隐藏终端面板"
         >
-          <span nz-icon nzType="code"></span>
+          <span nz-icon nzType="code" nzTheme="outline"></span>
         </button>
-        <a
-          *ngIf="showSettingsToggle"
-          class="ctrl-btn link-btn"
-          routerLink="/prototype/models"
-          title="打开配置"
-        >
-          <span nz-icon nzType="setting"></span>
-        </a>
         <button
           type="button"
           class="ctrl-btn"
@@ -51,12 +43,20 @@
           [class.active]="rightPanelVisible"
           title="显示/隐藏右侧边栏"
         >
-          <span nz-icon nzType="profile"></span>
+          <span nz-icon nzType="step-forward" nzTheme="outline"></span>
         </button>
+        <a
+          *ngIf="showSettingsToggle"
+          class="ctrl-btn ctrl-btn--link"
+          routerLink="/prototype/models"
+          title="打开配置"
+        >
+          <span nz-icon nzType="setting" nzTheme="outline"></span>
+        </a>
       </div>
-      <span class="menu-win-icon" nz-icon nzType="minus"></span>
-      <span class="menu-win-icon" nz-icon nzType="border"></span>
-      <span class="menu-win-icon close" nz-icon nzType="close"></span>
+      <span class="menu-win-icon" nz-icon nzType="minus" nzTheme="outline"></span>
+      <span class="menu-win-icon" nz-icon nzType="border" nzTheme="outline"></span>
+      <span class="menu-win-icon close" nz-icon nzType="close" nzTheme="outline"></span>
     </div>
   </header>
 
@@ -68,9 +68,6 @@
       <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/skills" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="技能">
         <span nz-icon nzType="thunderbolt"></span>
       </a>
-      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/models" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="模型配置">
-        <span nz-icon nzType="robot"></span>
-      </a>
       <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/plugins" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="插件管理">
         <span nz-icon nzType="appstore"></span>
       </a>
@@ -79,6 +76,9 @@
       </a>
       <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/collaboration" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="协作">
         <span nz-icon nzType="team"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/models" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="模型配置">
+        <span nz-icon nzType="setting"></span>
       </a>
     </aside>
 

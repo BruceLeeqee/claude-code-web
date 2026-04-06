@@ -1,4 +1,12 @@
+.plugins-proto {
+  flex: 1;
+  min-height: 0;
+}
+
 .plugins-shell {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   padding: 14px;
   display: flex;
   flex-direction: column;

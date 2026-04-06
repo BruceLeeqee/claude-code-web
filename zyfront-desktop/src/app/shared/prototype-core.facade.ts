@@ -4,13 +4,26 @@ import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../core/zyfront-core.pro
 
 export type AgentStatus = 'preparing' | 'executing' | 'waiting' | 'completed' | 'error' | 'paused';
 
+export type AgentCardIconKey = 'code' | 'security' | 'architecture' | 'doc';
+
+export interface AgentLogLine {
+  time: string;
+  text: string;
+}
+
 export interface UiAgent {
   id: string;
   name: string;
   role: string;
   status: AgentStatus;
   progress: number;
-  logs: string[];
+  /** 原型：卡片左侧图标类型 */
+  iconKey: AgentCardIconKey;
+  /** 原型：任务摘要引语 */
+  taskHint: string;
+  /** 原型：预计剩余秒数（展示用） */
+  etaSec: number;
+  logs: AgentLogLine[];
 }
 
 export interface UiNode {
@@ -43,10 +56,62 @@ export class PrototypeCoreFacade {
   readonly selectedNodeId = signal<string | null>(null);
 
   readonly agents = signal<UiAgent[]>([
-    { id: 'AG-01', name: '代码审查专家 #100', role: '代码审查专家', status: 'executing', progress: 21, logs: ['Agent 启动成功', '连接至协同网络...'] },
-    { id: 'AG-02', name: '安全审计员 #101', role: '安全审计员', status: 'executing', progress: 26, logs: ['Agent 启动成功', '扫描依赖中...'] },
-    { id: 'AG-03', name: '架构分析师 #102', role: '架构分析师', status: 'waiting', progress: 36, logs: ['建立上下文', '等待上游结果'] },
-    { id: 'AG-04', name: '文档生成器 #103', role: '文档生成器', status: 'paused', progress: 12, logs: ['已载入模板', '人工暂停'] },
+    {
+      id: 'AG-01',
+      name: '代码审查专家 #100',
+      role: '代码审查专家',
+      status: 'executing',
+      progress: 21,
+      iconKey: 'code',
+      taskHint: '执行任务核心逻辑：审查 PR 与静态分析结果对齐…',
+      etaSec: 46,
+      logs: [
+        { time: '17:11:33', text: 'Agent 启动成功' },
+        { time: '17:11:35', text: '连接至协同网络...' },
+      ],
+    },
+    {
+      id: 'AG-02',
+      name: '安全审计员 #101',
+      role: '安全审计员',
+      status: 'executing',
+      progress: 26,
+      iconKey: 'security',
+      taskHint: '扫描依赖与许可证风险，生成审计条目…',
+      etaSec: 38,
+      logs: [
+        { time: '17:12:01', text: 'Agent 启动成功' },
+        { time: '17:12:04', text: '扫描依赖中...' },
+      ],
+    },
+    {
+      id: 'AG-03',
+      name: '架构分析师 #102',
+      role: '架构分析师',
+      status: 'waiting',
+      progress: 36,
+      iconKey: 'architecture',
+      taskHint: '等待上游代码审查结论以继续分层评估…',
+      etaSec: 120,
+      logs: [
+        { time: '17:10:22', text: '建立上下文' },
+        { time: '17:10:58', text: '等待上游结果' },
+      ],
+    },
+    {
+      id: 'AG-04',
+      name: '文档生成器 #103',
+      role: '文档生成器',
+      status: 'paused',
+      progress: 12,
+      iconKey: 'doc',
+      taskHint: '根据当前变更生成变更说明与 API 摘要…',
+      etaSec: 0,
+      logs: [
+        { time: '17:09:10', text: '已载入模板' },
+        { time: '17:09:45', text: '人工暂停' },
+      ],
+    },
   ]);
 
   readonly skills = signal([
@@ -85,6 +150,10 @@ export class PrototypeCoreFacade {
   }
 
   toggleAgent(id: string): void {
+    const line = (text: string): AgentLogLine => ({
+      time: PrototypeCoreFacade.logTimeNow(),
+      text,
+    });
     this.agents.update((list) =>
       list.map((a) =>
         a.id !== id
@@ -92,13 +161,17 @@ export class PrototypeCoreFacade {
           : {
               ...a,
               status: a.status === 'paused' ? 'executing' : 'paused',
-              logs: [...a.logs, a.status === 'paused' ? '任务已恢复执行' : '任务已手动暂停'],
+              logs: [...a.logs, line(a.status === 'paused' ? '任务已恢复执行' : '任务已手动暂停')],
             },
       ),
     );
   }
 
   advanceAgent(id: string): void {
+    const line = (text: string): AgentLogLine => ({
+      time: PrototypeCoreFacade.logTimeNow(),
+      text,
+    });
     this.agents.update((list) =>
       list.map((a) => {
         if (a.id !== id) return a;
@@ -107,15 +180,29 @@ export class PrototypeCoreFacade {
           ...a,
           progress: next,
           status: next >= 100 ? 'completed' : 'executing',
-          logs: [...a.logs, `进度更新到 ${next}%`],
+          etaSec: next >= 100 ? 0 : Math.max(5, (a.etaSec * 0.7) | 0),
+          logs: [...a.logs, line(`进度更新到 ${next}%`)],
         };
       }),
     );
   }
 
+  private static logTimeNow(): string {
+    const d = new Date();
+    const p = (n: number) => n.toString().padStart(2, '0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
   toggleSkill(id: string): void {
     // 技能页为单选激活：点击某个技能后，仅该技能保持 active=true
     this.skills.update((items) => items.map((it) => ({ ...it, active: it.id === id })));
+  }
+
+  addSkill(payload: { name: string; desc: string }): void {
+    const base = payload.name.trim() || '新技能';
+    const id = `skill.custom.${Date.now().toString(36)}`;
+    const desc = payload.desc.trim() || '由向导创建';
+    this.skills.update((items) => [{ id, name: base, desc, active: true }, ...items.map((it) => ({ ...it, active: false }))]);
   }
 
   togglePlugin(id: string): void {

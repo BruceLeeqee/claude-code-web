@@ -2,54 +2,130 @@
   <div class="collab-shell">
     <header class="collab-toolbar">
       <div class="title-wrap">
-        <h1>多Agent协作实时看板</h1>
+        <h1>多Agent 协作实时看板</h1>
         <span class="badge">实时更新中</span>
       </div>
       <div class="toolbar-actions">
-        <label>
-          Agent 数量
-          <select nz-select>
-            <option>4个</option>
-            <option>6个</option>
-            <option>8个</option>
-          </select>
-        </label>
-        <button nz-button nzType="primary">添加新 Agent</button>
+        <div class="toolbar-field">
+          <span class="field-label">Agent 数量</span>
+          <nz-select [(ngModel)]="agentCount" nzSize="small" class="collab-count-select" nzPlaceHolder="选择数量">
+            <nz-option nzValue="4" nzLabel="4个"></nz-option>
+            <nz-option nzValue="6" nzLabel="6个"></nz-option>
+            <nz-option nzValue="8" nzLabel="8个"></nz-option>
+          </nz-select>
+        </div>
+        <button nz-button nzType="primary" class="btn-add-agent" type="button">
+          <span nz-icon nzType="plus" nzTheme="outline"></span>
+          添加新 Agent
+        </button>
+        <button nz-button nzType="default" class="btn-refresh" type="button" (click)="refreshDashboard()" title="刷新">
+          <span nz-icon nzType="reload" nzTheme="outline"></span>
+        </button>
       </div>
     </header>
 
     <div class="agent-grid">
       <article class="agent-card" *ngFor="let agent of facade.agents()" [attr.data-status]="agent.status">
         <div class="agent-head">
-          <div>
-            <h3>{{ agent.name }}</h3>
-            <p>{{ agent.role }} · {{ agent.id }}</p>
+          <div class="agent-head-left">
+            <div class="agent-avatar" [attr.data-icon]="agent.iconKey">
+              <span nz-icon [nzType]="cardIconType(agent.iconKey)" nzTheme="outline"></span>
+            </div>
+            <div class="agent-titles">
+              <h3>{{ agent.name }}</h3>
+              <p class="agent-sub">{{ agent.role }}</p>
+            </div>
           </div>
-          <span class="status">{{ agent.status }}</span>
+          <div class="agent-head-right">
+            <span class="status-pill" [ngClass]="statusPill(agent).mod">
+              <span
+                nz-icon
+                [nzType]="statusPill(agent).icon"
+                nzTheme="outline"
+                [nzSpin]="statusPill(agent).spin === true"
+              ></span>
+              {{ statusPill(agent).label }}
+            </span>
+            <span class="agent-id-badge">ID: {{ agent.id }}</span>
+          </div>
         </div>
 
+        <p class="task-hint">「{{ agent.taskHint }}」</p>
+
         <div class="agent-progress">
-          <div class="meta">
-            <span>执行进度</span>
-            <strong>{{ agent.progress }}%</strong>
+          <div class="progress-row">
+            <div class="progress-track" aria-hidden="true">
+              <div class="progress-fill" [style.width.%]="agent.progress"></div>
+            </div>
+            <span class="progress-pct">{{ agent.progress }}%</span>
           </div>
-          <nz-progress [nzPercent]="agent.progress" nzSize="small"></nz-progress>
+          <div class="progress-foot">
+            <span class="eta" *ngIf="agent.etaSec > 0">
+              <span nz-icon nzType="clock-circle" nzTheme="outline"></span>
+              预计剩余: {{ agent.etaSec }}s
+            </span>
+            <span class="eta eta--muted" *ngIf="agent.etaSec <= 0">—</span>
+            <span class="agent-date">{{ dashboardSyncedAt().slice(0, 10) }}</span>
+          </div>
         </div>
 
         <div class="agent-log">
-          <div class="line" *ngFor="let line of agent.logs">{{ line }}</div>
+          <div class="log-line" *ngFor="let row of agent.logs">
+            <span class="log-time">{{ row.time }}</span>
+            <span class="log-text">{{ row.text }}</span>
+          </div>
         </div>
 
         <div class="actions">
-          <button nz-button (click)="facade.toggleAgent(agent.id)">暂停/恢复</button>
-          <button nz-button nzType="default" (click)="facade.advanceAgent(agent.id)">推进</button>
+          <button nz-button nzType="default" class="action-btn" type="button" (click)="facade.toggleAgent(agent.id)">
+            <span nz-icon nzType="pause" nzTheme="outline"></span>
+            {{ agent.status === 'paused' ? '恢复' : '暂停' }}
+          </button>
+          <button nz-button nzType="default" class="action-btn" type="button" (click)="facade.advanceAgent(agent.id)">
+            <span nz-icon nzType="reload" nzTheme="outline"></span>
+            推进
+          </button>
         </div>
       </article>
     </div>
 
     <footer class="collab-footer">
-      <span>在线 Agent: {{ facade.agents().length }}</span>
-      <span>Orchestrator v2.4.0</span>
+      <div class="footer-row footer-row--main">
+        <div class="footer-left">
+          <span class="stat-dot stat-dot--ok">
+            <i></i> {{ agentStats().online }} 在线
+          </span>
+          <span class="stat-dot stat-dot--run">
+            <i></i> {{ agentStats().executing }} 执行中
+          </span>
+          <span class="stat-dot stat-dot--wait">
+            <i></i> {{ agentStats().waiting }} 等待响应
+          </span>
+          <span class="git-branch" *ngIf="gitBranch()">
+            <span nz-icon nzType="branches" nzTheme="outline"></span>
+            {{ gitBranch() }}
+          </span>
+          <span class="git-branch git-branch--empty" *ngIf="!gitBranch()">
+            <span nz-icon nzType="branches" nzTheme="outline"></span>
+            未检出分支
+          </span>
+        </div>
+        <div class="footer-right">
+          <span>系统 CPU: {{ mockCpu }}%</span>
+          <span>内存占用: {{ mockMemGb }}GB / {{ mockMemTotalGb }}GB</span>
+          <span class="orch-ver">Orchestrator v2.4.0</span>
+        </div>
+      </div>
+      <div class="footer-row footer-row--sync">
+        <div class="sync-left">
+          <span nz-icon nzType="clock-circle" nzTheme="outline"></span>
+          Dashboard 已同步: {{ dashboardSyncedAt() }}
+        </div>
+        <div class="sync-right">
+          <span><span nz-icon nzType="safety" nzTheme="outline"></span> 隐私协议: 已启用</span>
+          <span><span nz-icon nzType="clock-circle" nzTheme="outline"></span> 运行时长: {{ mockUptime }}</span>
+        </div>
+      </div>
     </footer>
   </div>
 </section>

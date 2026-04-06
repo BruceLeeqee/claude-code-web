@@ -1,7 +1,9 @@
 @import './activity-rail.shared';
 
 .global-shell-frame {
-  height: 100vh;
+  /* 与 html/body 链一致，避免 Electron 下 100vh 与窗口客户区不一致出现底部空隙 */
+  height: 100%;
+  min-height: 0;
   background: #0a0b10;
   color: #d4d4d8;
   display: flex;
@@ -58,13 +60,24 @@
   align-items: center;
   gap: 2px;
   color: #e4e4e4;
+  flex-shrink: 0;
+  padding-left: 8px;
 }
 
 .menu-controls {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-right: 10px;
+  /* 与最小化/最大化/关闭拉开距离，避免「设置」被挤到系统按钮下 */
+  margin-right: 28px;
+  padding-right: 4px;
+
+  .ctrl-btn span[nz-icon],
+  .ctrl-btn [nz-icon] {
+    font-size: 14px;
+    line-height: 1;
+    display: inline-flex;
+  }
 }
 
 .menu-win-icon {
@@ -74,8 +87,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 13px;
   color: #d9d9d9;
+
+  &[nz-icon],
+  span[nz-icon] {
+    font-size: 12px;
+    line-height: 1;
+  }
 
   &:hover {
     background: rgba(255, 255, 255, 0.14);
@@ -117,8 +136,9 @@
 }
 
 .ctrl-btn {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
+  box-sizing: border-box;
   border-radius: 4px;
   border: 1px solid #3f3f46;
   background: #24262f;
@@ -128,6 +148,7 @@
   justify-content: center;
   padding: 0;
   cursor: pointer;
+  flex-shrink: 0;
 
   &:hover {
     background: #2f3342;
@@ -138,6 +159,10 @@
     border-color: #5a5f70;
     color: #f3f4f6;
     background: #3a3f4d;
+  }
+
+  &.ctrl-btn--link {
+    text-decoration: none;
   }
 }
 
@@ -173,10 +198,31 @@
   min-height: 0;
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr);
+  /* 单行需占满剩余高度，否则内容区高度随内容收缩，底部会露出 body 背景 */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .global-shell-content {
   min-height: 0;
+  height: 100%;
   overflow: hidden;
   background: #1e1e1e;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 原型壳：路由出口撑满内容区，子页面根节点再 flex:1 */
+.global-shell-content > router-outlet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 工作台等：ng-content 投影的根节点（如 .wb-shell）撑满 */
+.global-shell-content > :not(router-outlet) {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
 }

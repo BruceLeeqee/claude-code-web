@@ -76,13 +76,22 @@ export class LocalBridgeService {
     throw new Error(`Unsupported tool: ${tool}`);
   }
 
-  /** 模型连通性测试（IPC） */
+  /** 模型连通性测试（IPC；仅 Electron preload 注入 `zytrader` 时可用） */
   async testModelConnection(payload: {
     baseUrl: string;
     apiKey: string;
     model: string;
     provider?: string;
   }): Promise<{ ok: boolean; status: number; body: string }> {
-    return window.zytrader.model.test(payload);
+    type TestFn = (p: typeof payload) => Promise<{ ok: boolean; status: number; body: string }>;
+    const fn = (window as unknown as { zytrader?: { model?: { test: TestFn } } }).zytrader?.model?.test;
+    if (!fn) {
+      return {
+        ok: false,
+        status: 503,
+        body: '当前页面未运行在 Electron 桌面壳中，无法通过 IPC 测试模型连接。请使用 npm run dev / electron 启动桌面版。',
+      };
+    }
+    return fn(payload);
   }
 }

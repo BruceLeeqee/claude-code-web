@@ -42,7 +42,7 @@ const STORAGE_KEY = 'claude-web:settings:v1';
 
 const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
-  modelProvider: 'minimax',
+  modelProvider: 'anthropic',
   model: 'MiniMax-M2.7',
   proxy: {
     enabled: false,

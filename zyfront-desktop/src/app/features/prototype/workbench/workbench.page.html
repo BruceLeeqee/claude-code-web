@@ -15,85 +15,234 @@
     <div class="wb-main" [style.gridTemplateColumns]="mainGridTemplate()">
 
       <section class="wb-left-panel" *ngIf="leftPanelVisible()" [style.width.px]="leftPanelWidth()">
-        <div class="left-header">
-          <div>
-            <div class="panel-title vscode-section-title">资源管理器</div>
-            <div class="panel-sub vscode-breadcrumb" [title]="workspaceRoot()">{{ workspaceRoot() }}</div>
+        <div class="wb-sidebar-column">
+          <div class="left-header">
+            <div class="left-title-row">
+              <nav class="view-toolbar" aria-label="视图切换">
+                <button
+                  type="button"
+                  class="vt-btn"
+                  [class.active]="sidebarView() === 'explorer'"
+                  (click)="setSidebarView('explorer')"
+                  title="资源管理器"
+                >
+                  <span nz-icon nzType="folder"></span>
+                </button>
+                <button
+                  type="button"
+                  class="vt-btn"
+                  [class.active]="sidebarView() === 'search'"
+                  (click)="setSidebarView('search')"
+                  title="在文件中搜索"
+                >
+                  <span nz-icon nzType="search"></span>
+                </button>
+                <button
+                  type="button"
+                  class="vt-btn"
+                  [class.active]="sidebarView() === 'git'"
+                  (click)="setSidebarView('git')"
+                  title="源代码管理"
+                >
+                  <span nz-icon nzType="branches"></span>
+                </button>
+                <button
+                  type="button"
+                  class="vt-btn"
+                  [class.active]="sidebarView() === 'plugins'"
+                  (click)="setSidebarView('plugins')"
+                  title="插件（内置能力，非 VS Code 市场）"
+                >
+                  <span nz-icon nzType="appstore"></span>
+                </button>
+              </nav>
+            </div>
           </div>
-        </div>
 
-        <div class="tree-scroll vscode-tree">
-          <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: tree(), depth: 0 }"></ng-container>
-        </div>
+          <div class="wb-sidebar-body">
+            <ng-container *ngIf="sidebarView() === 'explorer'">
+              <div class="tree-scroll vscode-tree">
+                <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: tree(), depth: 0 }"></ng-container>
+              </div>
 
-        <ng-template #treeTpl let-nodes let-depth="depth">
-          <ng-container *ngFor="let node of nodes">
-            <div
-              class="vscode-tree-row"
-              [class.is-dir]="node.type === 'dir'"
-              [class.is-selected]="node.type === 'file' && selectedPath() === node.path"
-              [style.paddingLeft.px]="depth * 16 + 8"
-              (click)="node.type === 'dir' ? toggleDir(node) : openFile(node)"
-            >
-              <span class="vscode-chevron" *ngIf="node.type === 'dir'">{{ node.expanded ? '▾' : '▸' }}</span>
-              <span class="vscode-chevron-placeholder" *ngIf="node.type === 'file'"></span>
-              <span class="vscode-tree-icon" nz-icon [nzType]="treeIcon(node)"></span>
-              <span class="vscode-tree-label">{{ node.name }}</span>
+              <ng-template #treeTpl let-nodes let-depth="depth">
+                <ng-container *ngFor="let node of nodes">
+                  <div
+                    class="vscode-tree-row"
+                    [class.is-dir]="node.type === 'dir'"
+                    [class.is-selected]="node.type === 'file' && selectedPath() === node.path"
+                    [style.paddingLeft.px]="depth * 16 + 8"
+                    (click)="node.type === 'dir' ? toggleDir(node) : openFile(node)"
+                  >
+                    <span class="vscode-chevron" *ngIf="node.type === 'dir'">{{ node.expanded ? '▾' : '▸' }}</span>
+                    <span class="vscode-chevron-placeholder" *ngIf="node.type === 'file'"></span>
+                    <span class="vscode-tree-icon" nz-icon [nzType]="treeIcon(node)"></span>
+                    <span class="vscode-tree-label">{{ node.name }}</span>
+                  </div>
+
+                  <ng-container *ngIf="node.type === 'dir' && node.expanded && node.children?.length">
+                    <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: node.children, depth: depth + 1 }"></ng-container>
+                  </ng-container>
+                </ng-container>
+              </ng-template>
+
+              <div class="left-activity">
+                <div class="panel-title vscode-section-title">最近会话</div>
+                <div class="recent-scroll">
+                  <p class="activity-hint" *ngIf="recentTurns().length === 0">在主终端用自然语言提问并成功回复后，会出现在此；点击可将内容填回输入行。</p>
+                  <button type="button" class="recent-item" *ngFor="let r of recentTurns()" (click)="replayRecent(r)">
+                    <span class="recent-item-title">{{ r.title }}</span>
+                    <span class="recent-item-meta">{{ formatRecentTime(r.at) }}</span>
+                  </button>
+                </div>
+              </div>
+            </ng-container>
+
+            <div class="wb-search-panel" *ngIf="sidebarView() === 'search'">
+              <div class="search-row">
+                <input
+                  class="search-input"
+                  type="text"
+                  placeholder="输入关键字（git grep，需 Git 仓库）"
+                  [value]="searchQuery()"
+                  (input)="searchQuery.set($any($event.target).value)"
+                  (keydown.enter)="runFileSearch()"
+                />
+                <button type="button" class="search-run" [disabled]="searchBusy()" (click)="runFileSearch()">
+                  {{ searchBusy() ? '…' : '搜索' }}
+                </button>
+              </div>
+              <p class="search-msg" *ngIf="searchMessage()">{{ searchMessage() }}</p>
+              <div class="search-results">
+                <button type="button" class="search-hit" *ngFor="let h of searchHits()" (click)="openSearchHit(h)">
+                  <span class="search-hit-path">{{ h.path }}:{{ h.line }}</span>
+                  <span class="search-hit-text">{{ h.text }}</span>
+                </button>
+              </div>
             </div>
 
-            <ng-container *ngIf="node.type === 'dir' && node.expanded && node.children?.length">
-              <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: node.children, depth: depth + 1 }"></ng-container>
-            </ng-container>
-          </ng-container>
-        </ng-template>
+            <div class="wb-git-panel" *ngIf="sidebarView() === 'git'">
+              <div class="git-section-label">更改</div>
+              <div class="git-changes-scroll">
+                <button
+                  type="button"
+                  class="git-file-one-line"
+                  *ngFor="let f of gitChangedFiles()"
+                  (click)="openGitDiffFile(f.path)"
+                >
+                  <span class="git-st">{{ f.status }}</span>
+                  <span class="git-path">{{ f.path }}</span>
+                </button>
+                <p class="git-hint" *ngIf="!gitChangedFiles().length && !gitBusy()">没有检测到更改。</p>
+              </div>
+              <div class="git-section-label">Git 历史</div>
+              <div class="git-timeline">
+                <div class="git-tl-item" *ngFor="let c of gitCommits()" (click)="openCommitDetail(c.hash)">
+                  <div class="git-tl-rail"><span class="git-tl-dot"></span></div>
+                  <div class="git-tl-card">
+                    <div class="git-tl-subj">{{ c.subject }}</div>
+                    <div class="git-tl-meta">{{ c.hash }} · {{ c.author }} · {{ c.date }}</div>
+                  </div>
+                </div>
+                <p class="git-hint" *ngIf="!gitCommits().length && !gitBusy()">无法读取历史（可能不是 Git 仓库）。</p>
+              </div>
+            </div>
 
-        <div class="left-activity">
-          <div class="panel-title vscode-section-title">最近会话</div>
-          <div class="recent-scroll">
-            <p class="activity-hint" *ngIf="recentTurns().length === 0">在主终端用自然语言提问并成功回复后，会出现在此；点击可将内容填回输入行。</p>
-            <button type="button" class="recent-item" *ngFor="let r of recentTurns()" (click)="replayRecent(r)">
-              <span class="recent-item-title">{{ r.title }}</span>
-              <span class="recent-item-meta">{{ formatRecentTime(r.at) }}</span>
+            <div class="wb-plugins-panel" *ngIf="sidebarView() === 'plugins'">
+              <a routerLink="/prototype/plugins" class="plugins-link">打开插件管理页</a>
+              <div class="plugin-list">
+                <div class="plugin-row" *ngFor="let p of prototypeFacade.plugins()">
+                  <span class="plugin-name">{{ p.name }}</span>
+                  <span class="plugin-meta" [class.on]="p.installed">{{ p.installed ? '已安装' : '未安装' }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="left-branch-bar">
+            <div class="branch-dropdown branch-dropdown--left" *ngIf="branchMenuOpen()">
+              <button type="button" class="branch-opt" *ngFor="let br of gitBranchRefs()" (click)="checkoutBranch(br.ref)">
+                {{ br.label }}
+              </button>
+              <p class="branch-empty" *ngIf="!gitBranchRefs().length">暂无分支</p>
+            </div>
+            <button type="button" class="lb-main" (click)="toggleBranchMenu()" title="切换分支">
+              <span nz-icon nzType="branches"></span>
+              <span class="lb-name">{{ gitBranch() || '（未检测到分支）' }}</span>
             </button>
+            <span class="lb-msg" *ngIf="gitUiMessage()">{{ gitUiMessage() }}</span>
           </div>
         </div>
       </section>
 
       <div class="panel-resizer vertical" *ngIf="leftPanelVisible()" (mousedown)="onLeftResizeStart($event)"></div>
 
-      <section class="wb-center-panel">
+      <section class="wb-center-panel" (click)="hideTabContextMenu()">
         <div class="wb-center-tabs">
-          <div
-            *ngFor="let tab of tabs()"
-            class="editor-tab"
-            [class.active]="activeTab() === tab"
-          >
-            <button type="button" class="tab-label-btn" (click)="setTab(tab)">{{ tab }}</button>
-            <button
-              *ngIf="tab !== 'Terminal - Main'"
-              type="button"
-              class="tab-close"
-              title="关闭"
-              aria-label="关闭标签页"
-              (click)="closeEditorTab(tab, $event)"
+          <button type="button" class="tab-scroll-btn" title="向左滚动" (click)="scrollTabsBy(-220)">◀</button>
+          <div class="wb-center-tabs-scroll" #tabScrollHost>
+            <div
+              *ngFor="let tab of visibleTabs()"
+              class="editor-tab"
+              [class.active]="activeTab() === tab"
+              [title]="tabTooltip(tab)"
+              (contextmenu)="onTabContextMenu(tab, $event)"
             >
-              ×
-            </button>
+              <button type="button" class="tab-label-btn" (click)="setTab(tab)">{{ displayTabLabel(tab) }}</button>
+            </div>
           </div>
+          <button type="button" class="tab-scroll-btn" title="向右滚动" (click)="scrollTabsBy(220)">▶</button>
+        </div>
+        <div
+          class="tab-context-menu"
+          *ngIf="tabContextMenu() as ctx"
+          [style.left.px]="ctx.x"
+          [style.top.px]="ctx.y"
+          (click)="$event.stopPropagation()"
+        >
+          <button type="button" class="ctx-item" (click)="closeEditorTab(ctx.tab)">关闭</button>
+          <button type="button" class="ctx-item" (click)="closeOtherTabs(ctx.tab)">关闭其他</button>
+          <button type="button" class="ctx-item" (click)="closeTabsToLeft(ctx.tab)">关闭左侧</button>
+          <button type="button" class="ctx-item" (click)="closeTabsToRight(ctx.tab)">关闭右侧</button>
         </div>
 
         <div class="wb-center-scroll" [style.gridTemplateRows]="centerGridTemplateRows()">
-          <section class="terminal-panel" *ngIf="activeTab() === 'Terminal - Main'" (click)="focusAiTerminal()">
-            <div class="terminal-body">
-              <div #xtermHost class="xterm-host"></div>
-            </div>
-          </section>
+          <div class="wb-center-main-row">
+            <section class="terminal-panel" *ngIf="activeTab() === 'Terminal - Main'" (click)="focusAiTerminal()">
+              <div class="terminal-body">
+                <div #xtermHost class="xterm-host"></div>
+              </div>
+            </section>
 
-          <div class="panel-resizer horizontal" *ngIf="activeTab() === 'Terminal - Main' && terminalMenuVisible()" (mousedown)="onBottomResizeStart($event)"></div>
+            <div class="file-editor-stack" *ngIf="activeTab() !== 'Terminal - Main' && previewKind() === 'code'">
+              <app-workbench-monaco-editor
+                [value]="selectedContent()"
+                [language]="monacoLanguage()"
+                (valueChange)="onEditorContentChange($event)"
+                (saveRequested)="saveCurrentFile()"
+                (markersChange)="onEditorMarkersChange($event)"
+              />
+              <div class="editor-diagnostics" *ngIf="editorDiagnostics().length">
+                <div class="editor-diagnostics-head">问题（{{ editorDiagnostics().length }}）</div>
+                <div class="diag-row" *ngFor="let d of editorDiagnostics()" [attr.data-severity]="d.severity">
+                  <span class="diag-pos">{{ d.severity === 'error' ? '错误' : d.severity === 'warning' ? '警告' : '提示' }} · Ln {{ d.line }}, Col {{ d.column }}</span>
+                  <span class="diag-msg">{{ d.message }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="file-preview-wrap file-preview-diff"
+              *ngIf="activeTab() !== 'Terminal - Main' && previewKind() === 'diff'"
+              [innerHTML]="filePreviewHtml()"
+            ></div>
+          </div>
+
+          <div class="panel-resizer horizontal" *ngIf="terminalMenuVisible()" (mousedown)="onBottomResizeStart($event)"></div>
 
           <section
             class="powershell-panel"
-            *ngIf="activeTab() === 'Terminal - Main' && terminalMenuVisible()"
+            *ngIf="terminalMenuVisible()"
             (click)="focusPowerShellTerminal()"
           >
             <div class="powershell-head">
@@ -113,21 +262,15 @@
 
               <div class="ps-toolbar">
                 <button type="button" class="ps-btn plus-only" title="新建 PowerShell" (click)="createPsSession('powershell')">+</button>
-                <button type="button" class="ps-btn action" title="在主终端填入提示词并请求助手生成提交说明并推送到远程" (click)="runAutomation('commit')">自动提交</button>
                 <button type="button" class="ps-btn action" title="执行 npm run start" (click)="runAutomation('run')">自动运行</button>
                 <button type="button" class="ps-btn action" title="执行 npm run build" (click)="runAutomation('build')">自动构建</button>
+                <button type="button" class="ps-btn action" title="在主终端填入提示词并请求助手生成提交说明并推送到远程" (click)="runAutomation('commit')">自动提交</button>
               </div>
             </div>
             <div class="powershell-body">
               <div #psHost class="ps-xterm-host"></div>
             </div>
           </section>
-
-          <div
-            class="file-preview-wrap"
-            *ngIf="activeTab() !== 'Terminal - Main'"
-            [innerHTML]="filePreviewHtml()"
-          ></div>
         </div>
       </section>
 
@@ -185,6 +328,16 @@
           </div>
         </div>
       </aside>
+    </div>
+  </div>
+
+  <div class="git-commit-backdrop" *ngIf="gitCommitDetailOpen()" (click)="closeCommitDetailModal()">
+    <div class="git-commit-modal" (click)="$event.stopPropagation()">
+      <div class="git-commit-head">
+        <span>提交详情</span>
+        <button type="button" class="git-commit-close" (click)="closeCommitDetailModal()">×</button>
+      </div>
+      <pre class="git-commit-body">{{ gitCommitDetailText() }}</pre>
     </div>
   </div>
 </app-global-shell-frame>

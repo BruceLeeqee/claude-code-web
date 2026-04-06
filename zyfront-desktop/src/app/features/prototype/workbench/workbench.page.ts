@@ -1,6 +1,7 @@
 import {
   AfterViewInit,
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
   ElementRef,
   OnDestroy,
@@ -14,28 +15,25 @@ import { NgFor, NgIf, NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
+import { RouterLink } from '@angular/router';
 import { GlobalShellFrameComponent } from '../../../shared/global-shell-frame.component';
+import { PrototypeCoreFacade } from '../../../shared/prototype-core.facade';
+import {
+  WorkbenchMonacoEditorComponent,
+  type WorkbenchEditorDiagnosticRow,
+} from './workbench-monaco-editor.component';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { AppSettingsService } from '../../../core/app-settings.service';
+import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import type { CoordinationMode, CoordinationStep, StreamChunk } from 'zyfront-core';
 import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../../../core/zyfront-core.providers';
+import { TerminalMemoryGraphService } from '../../../core/terminal-memory-graph.service';
 import { CommandRouterService } from './command-router.service';
 import { DIRECTIVE_REGISTRY, isCoordinationMode, parseDirective, type DirectiveDefinition } from './directive-registry';
-import Prism from 'prismjs';
 import { Subscription } from 'rxjs';
-import 'prismjs/components/prism-typescript';
-import 'prismjs/components/prism-javascript';
-import 'prismjs/components/prism-json';
-import 'prismjs/components/prism-css';
-import 'prismjs/components/prism-scss';
-import 'prismjs/components/prism-markdown';
-import 'prismjs/components/prism-bash';
-import 'prismjs/components/prism-python';
-import 'prismjs/components/prism-yaml';
-import 'prismjs/components/prism-markup';
 
 /** 自动提交：主终端发给助手的固定提示（中文以走自然语言路由） */
 const AUTO_COMMIT_PROMPT =
@@ -89,6 +87,48 @@ interface PsSessionVm {
   exited: boolean;
 }
 
+/** 每个编辑器标签页缓存的内容（切换 Tab 时恢复，避免共用 selectedContent 导致串台） */
+interface TabEditorState {
+  relPath: string;
+  content: string;
+  previewKind: 'code' | 'diff';
+  dirty: boolean;
+}
+
+interface PendingAutoSave {
+  tab: string;
+  relPath: string;
+  content: string;
+}
+
+/** 左侧活动栏视图（对齐 VS Code） */
+type SidebarView = 'explorer' | 'search' | 'git' | 'plugins';
+
+/** git grep 单条结果 */
+interface SearchHit {
+  path: string;
+  line: number;
+  text: string;
+}
+
+/** 分支下拉：展示名 + 传给 git 的 ref */
+interface GitBranchRef {
+  label: string;
+  ref: string;
+}
+
+interface GitChangedFile {
+  path: string;
+  status: string;
+}
+
+interface GitCommitLine {
+  hash: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+
 /** 从助手正文中抽取计划步骤（编号列表、Markdown 列表、「步骤n：」） */
 function parsePlanStepsFromText(text: string): string[] {
   const lines = text.split(/\r?\n/);
@@ -127,6 +167,8 @@ function parsePlanStepsFromText(text: string): string[] {
     NzIconModule,
     NzInputModule,
     NzProgressModule,
+    RouterLink,
+    WorkbenchMonacoEditorComponent,
   ],
   templateUrl: './workbench.page.html',
   styleUrls: ['../prototype-page.scss', './workbench.page.scss'],
@@ -136,13 +178,23 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly runtime = inject<ClaudeCoreRuntime>(CLAUDE_RUNTIME);
   private readonly router = inject(CommandRouterService);
   private readonly appSettings = inject(AppSettingsService);
+  private readonly usageLedger = inject(ModelUsageLedgerService);
+  private readonly memoryGraph = inject(TerminalMemoryGraphService);
+  protected readonly prototypeFacade = inject(PrototypeCoreFacade);
   private readonly sanitizer = inject(DomSanitizer);
+  private readonly cdr = inject(ChangeDetectorRef);
+
+  /** 本轮流式请求开始时间，用于估算响应耗时并写入用量账本 */
+  private streamRequestStartMs = 0;
 
   @ViewChild('xtermHost', { static: false })
   private xtermHost?: ElementRef<HTMLDivElement>;
 
   @ViewChild('psHost', { static: false })
   private psHost?: ElementRef<HTMLDivElement>;
+
+  @ViewChild('tabScrollHost', { static: false })
+  private tabScrollHost?: ElementRef<HTMLDivElement>;
 
   protected readonly workspaceRoot = signal('workspace');
   protected readonly tree = signal<FileNode[]>([]);
@@ -152,6 +204,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly tabs = signal<string[]>(['Terminal - Main']);
   protected readonly activeTab = signal('Terminal - Main');
   protected readonly terminalBusy = signal(false);
+  protected readonly visibleTabs = computed(() =>
+    this.tabs().filter((tab) => tab === 'Terminal - Main' || tab === this.activeTab() || this.tabEditorState.get(tab)?.dirty),
+  );
 
   private readonly inputHistory = signal<string[]>([]);
 
@@ -176,29 +231,73 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly recentTurns = signal<RecentTurn[]>(this.loadRecentTurns());
   protected readonly llmAvailable = signal(this.hasLlmConfigured());
 
-  /** 非「主终端」标签：Prism 语法高亮预览 */
+  /** 左侧：资源管理器 / 搜索 / Git */
+  protected readonly sidebarView = signal<SidebarView>('explorer');
+  protected readonly gitBranch = signal('');
+  protected readonly gitBranchRefs = signal<GitBranchRef[]>([]);
+  protected readonly gitChangedFiles = signal<GitChangedFile[]>([]);
+  protected readonly gitCommits = signal<GitCommitLine[]>([]);
+  protected readonly gitBusy = signal(false);
+  protected readonly branchMenuOpen = signal(false);
+  protected readonly gitCommitDetailOpen = signal(false);
+  protected readonly gitCommitDetailText = signal('');
+  protected readonly gitUiMessage = signal('');
+  /** 中间编辑器：普通高亮 / diff 文本 */
+  protected readonly previewKind = signal<'code' | 'diff'>('code');
+  /** Monaco 编辑内容与磁盘是否一致 */
+  protected readonly editorDirty = signal(false);
+
+  /** 按标签页标题缓存的编辑器状态 */
+  private readonly tabEditorState = new Map<string, TabEditorState>();
+  /** 防抖自动保存（实时落盘） */
+  private autoSaveTimer?: ReturnType<typeof setTimeout>;
+  private pendingAutoSave?: PendingAutoSave;
+  /** Monaco TypeScript/JavaScript 诊断（当前活动代码页） */
+  protected readonly editorDiagnostics = signal<WorkbenchEditorDiagnosticRow[]>([]);
+  protected readonly tabContextMenu = signal<{ tab: string; x: number; y: number } | null>(null);
+
+  protected readonly searchQuery = signal('');
+  protected readonly searchBusy = signal(false);
+  protected readonly searchHits = signal<SearchHit[]>([]);
+  protected readonly searchMessage = signal('');
+
+  private gitPollTimer?: number;
+
+  /** Git diff 预览（普通源码由 Monaco 编辑） */
   protected readonly filePreviewHtml = computed<SafeHtml>(() => {
     const tab = this.activeTab();
     const code = this.selectedContent();
     if (tab === 'Terminal - Main') {
       return this.sanitizer.bypassSecurityTrustHtml('');
     }
-    const ext = tab.includes('.') ? (tab.split('.').pop() ?? '').toLowerCase() : '';
-    const lang = this.prismLangForExt(ext);
-    const L = Prism.languages as Record<string, Prism.Grammar | undefined>;
-    const grammar = L[lang] ?? L['markup'] ?? L['typescript'] ?? L['javascript'];
-    let html: string;
-    if (!grammar) {
-      html = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    } else {
-      try {
-        html = Prism.highlight(code, grammar, lang);
-      } catch {
-        html = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      }
+    if (this.previewKind() === 'diff') {
+      const escaped = code
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      const lines = escaped.split('\n');
+      const body = lines
+        .map((line) => {
+          let cls = 'diff-line';
+          if (line.startsWith('+') && !line.startsWith('+++')) cls += ' diff-add';
+          else if (line.startsWith('-') && !line.startsWith('---')) cls += ' diff-del';
+          else if (line.startsWith('@@')) cls += ' diff-hunk';
+          return `<span class="${cls}">${line}</span>`;
+        })
+        .join('\n');
+      return this.sanitizer.bypassSecurityTrustHtml(
+        `<div class="diff-preview-wrap"><pre class="diff-preview">${body}</pre></div>`,
+      );
     }
-    const safe = `<pre class="language-${lang} file-preview-pre"><code class="language-${lang}">${html}</code></pre>`;
-    return this.sanitizer.bypassSecurityTrustHtml(safe);
+    return this.sanitizer.bypassSecurityTrustHtml('');
+  });
+
+  /** Monaco 语言 id（由当前标签页文件名推断） */
+  protected readonly monacoLanguage = computed(() => {
+    const tab = this.activeTab();
+    if (tab === 'Terminal - Main') return 'plaintext';
+    const ext = tab.includes('.') ? (tab.split('.').pop() ?? '').toLowerCase() : '';
+    return this.monacoLangForExt(ext);
   });
 
   private xterm?: Terminal;
@@ -235,7 +334,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly terminalMenuVisible = signal(true);
   protected readonly rightPanelVisible = signal(true);
 
-  protected readonly leftPanelWidth = signal(220);
+  protected readonly leftPanelWidth = signal(260);
   protected readonly rightPanelWidth = signal(300);
   protected readonly bottomPanelHeight = signal(180);
 
@@ -247,10 +346,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return cols.join(' ');
   });
 
+  /** 主内容区 + 可选底部 PowerShell：编辑文件时仍可显示底部 PTY */
   protected readonly centerGridTemplateRows = computed(() => {
-    if (this.activeTab() !== 'Terminal - Main') return 'minmax(0, 1fr)';
     if (!this.terminalMenuVisible()) return 'minmax(0, 1fr)';
-    return `minmax(0, 1fr) 4px ${this.bottomPanelHeight()}px`;
+    return `minmax(0, 1fr) 4px minmax(120px, ${this.bottomPanelHeight()}px)`;
   });
 
   private syncTimer?: number;
@@ -269,6 +368,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.syncCoordinatorState();
       void this.rebuildMemoryPanel();
     }, 500);
+    this.gitPollTimer = window.setInterval(() => {
+      if (this.activeTab() === 'Terminal - Main') void this.refreshGitBranchOnly();
+    }, 25000);
   }
 
   async ngAfterViewInit(): Promise<void> {
@@ -280,6 +382,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.autoSaveTimer !== undefined) {
+      clearTimeout(this.autoSaveTimer);
+      this.autoSaveTimer = undefined;
+    }
+    this.pendingAutoSave = undefined;
     if (this.xtermBackspaceKeydown) {
       window.removeEventListener('keydown', this.xtermBackspaceKeydown, true);
       this.xtermBackspaceKeydown = undefined;
@@ -297,6 +404,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     this.settingsSub?.unsubscribe();
     if (this.syncTimer) window.clearInterval(this.syncTimer);
+    if (this.gitPollTimer) window.clearInterval(this.gitPollTimer);
   }
 
   private hasLlmConfigured(): boolean {
@@ -304,32 +412,168 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return Boolean(s.apiKey?.trim() && s.model?.trim());
   }
 
-  private prismLangForExt(ext: string): string {
+  /** Monaco 语言 id（由当前标签页扩展名推断） */
+  private monacoLangForExt(ext: string): string {
     const m: Record<string, string> = {
       ts: 'typescript',
       tsx: 'typescript',
+      mts: 'typescript',
+      cts: 'typescript',
       js: 'javascript',
       jsx: 'javascript',
       mjs: 'javascript',
       cjs: 'javascript',
       json: 'json',
       md: 'markdown',
+      markdown: 'markdown',
       css: 'css',
       scss: 'scss',
-      less: 'css',
-      html: 'markup',
-      htm: 'markup',
-      vue: 'markup',
-      xml: 'markup',
-      svg: 'markup',
+      less: 'less',
+      html: 'html',
+      htm: 'html',
+      vue: 'html',
+      xml: 'xml',
+      svg: 'xml',
       yml: 'yaml',
       yaml: 'yaml',
       py: 'python',
-      sh: 'bash',
-      bash: 'bash',
-      zsh: 'bash',
+      sh: 'shell',
+      bash: 'shell',
+      zsh: 'shell',
+      ps1: 'powershell',
+      psd1: 'powershell',
+      psm1: 'powershell',
+      rs: 'rust',
+      go: 'go',
+      java: 'java',
+      cs: 'csharp',
+      cpp: 'cpp',
+      cc: 'cpp',
+      cxx: 'cpp',
+      h: 'cpp',
+      hpp: 'cpp',
     };
-    return m[ext] ?? 'typescript';
+    return m[ext] ?? 'plaintext';
+  }
+
+  private persistTabState(tab: string): void {
+    if (tab === 'Terminal - Main') return;
+    this.tabEditorState.set(tab, {
+      relPath: this.selectedPath(),
+      content: this.selectedContent(),
+      previewKind: this.previewKind(),
+      dirty: this.editorDirty(),
+    });
+  }
+
+  private restoreTabState(tab: string): void {
+    const st = this.tabEditorState.get(tab);
+    if (!st) return;
+    this.selectedPath.set(st.relPath);
+    this.selectedContent.set(st.content);
+    this.previewKind.set(st.previewKind);
+    this.editorDirty.set(st.dirty);
+  }
+
+  private addTabIfMissing(label: string): void {
+    const cur = this.tabs();
+    if (!cur.includes(label)) {
+      this.tabs.set([...cur, label]);
+    }
+  }
+
+  protected displayTabLabel(tab: string): string {
+    if (tab === 'Terminal - Main') return tab;
+    const plain = tab.startsWith('↔ ') ? tab.slice(2).trim() : tab;
+    return plain.split('/').pop() ?? plain;
+  }
+
+  protected tabTooltip(tab: string): string {
+    if (tab === 'Terminal - Main') return tab;
+    if (tab.startsWith('↔ ')) return `Diff: ${tab.slice(2).trim()}`;
+    return tab;
+  }
+
+  protected scrollTabsBy(offsetPx: number): void {
+    this.tabScrollHost?.nativeElement.scrollBy({ left: offsetPx, behavior: 'smooth' });
+  }
+
+  protected onTabContextMenu(tab: string, event: MouseEvent): void {
+    event.preventDefault();
+    if (tab === 'Terminal - Main') return;
+    this.tabContextMenu.set({ tab, x: event.clientX, y: event.clientY });
+    this.cdr.markForCheck();
+  }
+
+  protected hideTabContextMenu(): void {
+    if (this.tabContextMenu()) {
+      this.tabContextMenu.set(null);
+      this.cdr.markForCheck();
+    }
+  }
+
+  protected onEditorContentChange(text: string): void {
+    this.selectedContent.set(text);
+    this.editorDirty.set(true);
+    const tab = this.activeTab();
+    if (tab !== 'Terminal - Main') {
+      const prev = this.tabEditorState.get(tab);
+      if (prev) {
+        this.tabEditorState.set(tab, { ...prev, content: text, dirty: true });
+      }
+    }
+    const relPath = this.selectedPath().trim();
+    if (tab !== 'Terminal - Main' && this.previewKind() === 'code' && relPath) {
+      this.pendingAutoSave = { tab, relPath, content: text };
+      if (this.autoSaveTimer !== undefined) {
+        clearTimeout(this.autoSaveTimer);
+      }
+      this.autoSaveTimer = setTimeout(() => {
+        const payload = this.pendingAutoSave;
+        this.autoSaveTimer = undefined;
+        this.pendingAutoSave = undefined;
+        if (payload) void this.flushAutoSaveToDisk(payload);
+      }, 720);
+    }
+    this.cdr.markForCheck();
+  }
+
+  /** 防抖落盘：默认「实时编译」由 Monaco TS/JS Worker 提供；此处保证磁盘与编辑器一致以便诊断与外部工具 */
+  private async flushAutoSaveToDisk(payload: PendingAutoSave): Promise<void> {
+    if (!payload.relPath) return;
+    try {
+      const r = await window.zytrader.fs.write(payload.relPath, payload.content);
+      if (!r.ok) return;
+      const prev = this.tabEditorState.get(payload.tab);
+      if (prev) {
+        this.tabEditorState.set(payload.tab, { ...prev, content: payload.content, dirty: false });
+        if (this.activeTab() === payload.tab) {
+          this.selectedContent.set(payload.content);
+          this.editorDirty.set(false);
+        }
+      }
+    } finally {
+      this.cdr.markForCheck();
+    }
+  }
+
+  protected onEditorMarkersChange(rows: WorkbenchEditorDiagnosticRow[]): void {
+    this.editorDiagnostics.set(rows);
+    this.cdr.markForCheck();
+  }
+
+  protected async saveCurrentFile(): Promise<void> {
+    const tab = this.activeTab();
+    const relPath = this.selectedPath().trim();
+    if (!relPath || tab === 'Terminal - Main' || this.previewKind() !== 'code') return;
+    if (this.autoSaveTimer !== undefined) {
+      clearTimeout(this.autoSaveTimer);
+      this.autoSaveTimer = undefined;
+    }
+    this.pendingAutoSave = { tab, relPath, content: this.selectedContent() };
+    const payload = this.pendingAutoSave;
+    this.pendingAutoSave = undefined;
+    await this.flushAutoSaveToDisk(payload);
   }
 
   private syncCoordinatorState(): void {
@@ -362,8 +606,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const tools = this.toolMemoryTrace();
       const merged = [...fromHist, ...tools].sort((a, b) => b.at - a.at).slice(0, 28);
       this.memoryItems.set(merged);
+      this.memoryGraph.syncFromMemoryVms(merged);
     } catch {
-      this.memoryItems.set([...this.toolMemoryTrace()].sort((a, b) => b.at - a.at).slice(0, 28));
+      const fallback = [...this.toolMemoryTrace()].sort((a, b) => b.at - a.at).slice(0, 28);
+      this.memoryItems.set(fallback);
+      this.memoryGraph.syncFromMemoryVms(fallback);
     }
   }
 
@@ -403,10 +650,344 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const info = await window.zytrader.workspace.info();
     if (info.ok) this.workspaceRoot.set(info.root);
     await this.loadDir('.');
+    void this.refreshGitState();
+  }
+
+  protected setSidebarView(v: SidebarView): void {
+    this.sidebarView.set(v);
+    if (v === 'git') void this.refreshGitState();
+    this.cdr.markForCheck();
+  }
+
+  private escapePsSingle(s: string): string {
+    return s.replace(/'/g, "''");
+  }
+
+  /** Windows cmd：路径/分支名安全引用 */
+  private quoteCmdArg(s: string): string {
+    if (!/[ \t"&<>|]/.test(s)) return s;
+    return `"${s.replace(/"/g, '\\"')}"`;
+  }
+
+  /** 仅刷新当前分支名（轻量）；兼容 detached HEAD、PowerShell/exec 差异 */
+  private async refreshGitBranchOnly(): Promise<void> {
+    const cwd = '.';
+    const firstLine = (out: string) => (out ?? '').trim().split(/\r?\n/)[0]?.trim() ?? '';
+    try {
+      let line = firstLine(
+        (await window.zytrader.terminal.exec('cmd.exe /c git branch --show-current 2>nul', cwd)).stdout ?? '',
+      );
+      if (!line) {
+        line = firstLine(
+          (await window.zytrader.terminal.exec('cmd.exe /c git rev-parse --abbrev-ref HEAD 2>nul', cwd)).stdout ?? '',
+        );
+      }
+      if (line === 'HEAD') {
+        const short = firstLine(
+          (await window.zytrader.terminal.exec('cmd.exe /c git rev-parse --short HEAD 2>nul', cwd)).stdout ?? '',
+        );
+        line = short ? `HEAD（分离于 ${short}）` : 'HEAD';
+      }
+      if (!line) {
+        const sb = (await window.zytrader.terminal.exec('cmd.exe /c git status -sb 2>nul', cwd)).stdout ?? '';
+        const m = sb.match(/^##\s+([^\s.]+)/m);
+        if (m?.[1]) line = m[1].trim();
+      }
+      this.gitBranch.set(line);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** 刷新分支、变更文件、时间线 */
+  protected async refreshGitState(): Promise<void> {
+    this.gitBusy.set(true);
+    this.gitUiMessage.set('');
+    try {
+      await this.refreshGitBranchOnly();
+
+      const br = await window.zytrader.terminal.exec('cmd.exe /c git branch -a --no-color 2>nul', '.');
+      const refs: GitBranchRef[] = [];
+      if (br.stdout) {
+        type Row = { raw: string; short: string; isRemote: boolean };
+        const rows: Row[] = [];
+        for (const line of br.stdout.split(/\r?\n/)) {
+          let t = line.trim();
+          if (!t) continue;
+          if (t.startsWith('*')) t = t.slice(1).trim();
+          const isRemote = /^remotes\//.test(t);
+          const short = t.replace(/^remotes\/[^/]+\//, '').trim();
+          if (!short || short === 'HEAD') continue;
+          rows.push({ raw: t, short, isRemote });
+        }
+        // 同一分支名只保留一条：本地优先于 remotes/origin/...，避免 feature/x 与 origin/feature/x 各一条
+        rows.sort((a, b) => {
+          if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1;
+          return a.short.localeCompare(b.short, undefined, { sensitivity: 'base' });
+        });
+        const byShort = new Map<string, GitBranchRef>();
+        for (const { raw, short } of rows) {
+          if (byShort.has(short)) continue;
+          byShort.set(short, { label: short, ref: raw });
+        }
+        refs.push(...byShort.values());
+      }
+      this.gitBranchRefs.set(refs.slice(0, 120));
+
+      const por = await window.zytrader.terminal.exec('cmd.exe /c git status --porcelain=1 -u 2>nul', '.');
+      const files: GitChangedFile[] = [];
+      if (por.stdout) {
+        for (const line of por.stdout.split(/\r?\n/)) {
+          const raw = line.trim();
+          if (!raw) continue;
+          const status = raw.slice(0, 2).trim();
+          const pathPart = raw.slice(3).trim();
+          const path = pathPart.includes(' -> ') ? pathPart.split(' -> ').pop()?.trim() ?? pathPart : pathPart;
+          if (path) files.push({ status: status || '?', path: path.replace(/\\/g, '/') });
+        }
+      }
+      this.gitChangedFiles.set(files);
+
+      const lg = await window.zytrader.terminal.exec(
+        'cmd.exe /c git log -n 28 --pretty=format:"%h\t%s\t%an\t%ad" --date=short 2>nul',
+        '.',
+      );
+      const commits: GitCommitLine[] = [];
+      if (lg.stdout) {
+        for (const line of lg.stdout.split(/\r?\n/)) {
+          const p = line.split('\t');
+          if (p.length >= 4) {
+            commits.push({
+              hash: p[0] ?? '',
+              subject: p[1] ?? '',
+              author: p[2] ?? '',
+              date: p[3] ?? '',
+            });
+          }
+        }
+      }
+      this.gitCommits.set(commits);
+    } finally {
+      this.gitBusy.set(false);
+      this.cdr.markForCheck();
+    }
+  }
+
+  protected toggleBranchMenu(): void {
+    this.branchMenuOpen.update((v) => !v);
+    if (this.branchMenuOpen()) void this.refreshGitState();
+  }
+
+  protected async checkoutBranch(ref: string): Promise<void> {
+    const rname = ref.trim();
+    if (!rname) return;
+    this.gitBusy.set(true);
+    this.gitUiMessage.set('');
+    try {
+      const arg = this.quoteCmdArg(rname);
+      let r = await window.zytrader.terminal.exec(`cmd.exe /c git switch ${arg} 2>&1`, '.');
+      let out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+      if (!this.isGitCheckoutOk(r, out)) {
+        r = await window.zytrader.terminal.exec(`cmd.exe /c git checkout ${arg} 2>&1`, '.');
+        out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+      }
+      this.branchMenuOpen.set(false);
+      if (this.isGitCheckoutOk(r, out)) {
+        await this.refreshGitState();
+        await this.loadDir('.');
+      } else {
+        this.gitUiMessage.set(out.trim().slice(0, 500) || '切换分支失败');
+      }
+    } finally {
+      this.gitBusy.set(false);
+      this.cdr.markForCheck();
+    }
+  }
+
+  private isGitCheckoutOk(
+    r: { ok: boolean; code: number; stdout?: string; stderr?: string },
+    combined: string,
+  ): boolean {
+    if (r.ok && r.code === 0) return true;
+    return /Switched to branch|Already on|Your branch is|branch.*set up to track|HEAD is now/i.test(combined);
+  }
+
+  /** 源代码管理：本地修改 diff */
+  protected async openGitDiffFile(relPath: string): Promise<void> {
+    const norm = relPath.replace(/\\/g, '/');
+    this.gitBusy.set(true);
+    try {
+      this.persistTabState(this.activeTab());
+      const arg = this.quoteCmdArg(norm);
+      const r = await window.zytrader.terminal.exec(`cmd.exe /c git diff --no-color -- ${arg} 2>&1`, '.');
+      let text = (r.stdout ?? '').trim();
+      if (!text && /fatal|not a git repository/i.test(r.stderr ?? '')) {
+        text = r.stderr ?? '无法生成 diff';
+      }
+      if (!text) {
+        const w = await window.zytrader.terminal.exec(`cmd.exe /c git diff --no-color --cached -- ${arg} 2>&1`, '.');
+        text = (w.stdout ?? '').trim() || '（无 diff：可能是未跟踪文件，或工作区与暂存区一致）';
+      }
+      const body = text.slice(0, 240000);
+      this.previewKind.set('diff');
+      this.selectedPath.set(norm);
+      this.selectedContent.set(body);
+      this.editorDirty.set(false);
+      const tabLabel = `↔ ${norm}`;
+      this.tabEditorState.set(tabLabel, { relPath: norm, content: body, previewKind: 'diff', dirty: false });
+      const all = this.tabs();
+      if (!all.includes(tabLabel)) {
+        this.tabs.set([...all, tabLabel]);
+      }
+      this.activeTab.set(tabLabel);
+      this.editorDiagnostics.set([]);
+      queueMicrotask(() => {
+        this.fitAddon?.fit();
+        this.psFitAddon?.fit();
+      });
+    } finally {
+      this.gitBusy.set(false);
+      this.cdr.markForCheck();
+    }
+  }
+
+  protected async openCommitDetail(hash: string): Promise<void> {
+    const h = hash.trim();
+    if (!h) return;
+    this.gitBusy.set(true);
+    try {
+      const arg = this.quoteCmdArg(h);
+      const r = await window.zytrader.terminal.exec(`cmd.exe /c git show --no-color --stat ${arg} 2>&1`, '.');
+      const body = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
+      this.gitCommitDetailText.set(body || '（无输出）');
+      this.gitCommitDetailOpen.set(true);
+    } finally {
+      this.gitBusy.set(false);
+      this.cdr.markForCheck();
+    }
+  }
+
+  protected closeCommitDetailModal(): void {
+    this.gitCommitDetailOpen.set(false);
+  }
+
+  protected async runFileSearch(): Promise<void> {
+    const q = this.searchQuery().trim();
+    if (!q) {
+      this.searchMessage.set('请输入要搜索的内容');
+      this.cdr.markForCheck();
+      return;
+    }
+    this.searchBusy.set(true);
+    this.searchMessage.set('搜索中…');
+    this.searchHits.set([]);
+    try {
+      const pattern = this.escapePsSingle(q);
+      const r = await window.zytrader.terminal.exec(`git grep -n -I --regexp '${pattern}' -- . 2>&1`, '.');
+      const err = (r.stderr ?? '').trim();
+      if (err && /fatal|not a git repository/i.test(err)) {
+        this.searchMessage.set(err.split(/\r?\n/)[0] ?? err);
+        this.cdr.markForCheck();
+        return;
+      }
+      const raw = (r.stdout ?? '').trim();
+      const lines = raw.split(/\r?\n/).filter((l) => l.length > 0);
+      const hits: SearchHit[] = [];
+      for (const line of lines) {
+        if (/^fatal:/i.test(line)) {
+          this.searchMessage.set(line);
+          this.cdr.markForCheck();
+          return;
+        }
+        const hit = this.parseGitGrepLine(line);
+        if (hit) hits.push(hit);
+      }
+      this.searchHits.set(hits);
+      if (hits.length) {
+        this.searchMessage.set(`共 ${hits.length} 条匹配`);
+      } else if (!r.ok && r.code === 1) {
+        this.searchMessage.set('无匹配（git grep 退出码 1）');
+      } else {
+        this.searchMessage.set('无匹配（未跟踪文件需先 git add，或换关键词）');
+      }
+    } finally {
+      this.searchBusy.set(false);
+      this.cdr.markForCheck();
+    }
+  }
+
+  private parseGitGrepLine(line: string): SearchHit | null {
+    const idx = line.indexOf(':');
+    if (idx <= 0) return null;
+    const rest = line.slice(idx + 1);
+    const idx2 = rest.indexOf(':');
+    if (idx2 <= 0) return null;
+    const path = line.slice(0, idx).replace(/\\/g, '/');
+    const lineNo = Number(rest.slice(0, idx2));
+    const text = rest.slice(idx2 + 1);
+    if (!path || !Number.isFinite(lineNo)) return null;
+    return { path, line: lineNo, text };
+  }
+
+  protected async openSearchHit(hit: SearchHit): Promise<void> {
+    await this.openFileByPath(hit.path);
+  }
+
+  private async openFileByPath(rel: string): Promise<void> {
+    const norm = rel.replace(/\\/g, '/');
+    const tabLabel = norm;
+    this.persistTabState(this.activeTab());
+    const result = await window.zytrader.fs.read(norm);
+    if (!result.ok) {
+      this.previewKind.set('code');
+      this.selectedPath.set(norm);
+      this.selectedContent.set('无法读取该文件。');
+      this.editorDirty.set(false);
+      this.tabEditorState.set(tabLabel, {
+        relPath: norm,
+        content: '无法读取该文件。',
+        previewKind: 'code',
+        dirty: false,
+      });
+      this.addTabIfMissing(tabLabel);
+      this.activeTab.set(tabLabel);
+      this.editorDiagnostics.set([]);
+      this.sidebarView.set('explorer');
+      queueMicrotask(() => {
+        this.fitAddon?.fit();
+        this.psFitAddon?.fit();
+      });
+      this.cdr.markForCheck();
+      return;
+    }
+    const content = result.content.slice(0, 800_000);
+    this.previewKind.set('code');
+    this.selectedPath.set(norm);
+    this.selectedContent.set(content);
+    this.editorDirty.set(false);
+    this.tabEditorState.set(tabLabel, { relPath: norm, content, previewKind: 'code', dirty: false });
+    this.addTabIfMissing(tabLabel);
+    this.activeTab.set(tabLabel);
+    this.editorDiagnostics.set([]);
+    this.sidebarView.set('explorer');
+    queueMicrotask(() => {
+      this.fitAddon?.fit();
+      this.psFitAddon?.fit();
+    });
+    this.cdr.markForCheck();
   }
 
   protected setTab(tab: string): void {
+    const prev = this.activeTab();
+    if (prev !== tab) {
+      this.persistTabState(prev);
+    }
     this.activeTab.set(tab);
+    if (tab === 'Terminal - Main') {
+      this.editorDiagnostics.set([]);
+    } else {
+      this.restoreTabState(tab);
+    }
     queueMicrotask(() => {
       this.fitAddon?.fit();
       this.psFitAddon?.fit();
@@ -415,26 +996,53 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         if (this.terminalMenuVisible()) this.focusPowerShellTerminal();
       }
     });
+    this.cdr.markForCheck();
   }
 
-  protected closeEditorTab(tab: string, event: Event): void {
-    event.stopPropagation();
-    event.preventDefault();
+  protected closeEditorTab(tab: string): void {
     if (tab === 'Terminal - Main') return;
+    this.tabEditorState.delete(tab);
     const cur = this.tabs().filter((t) => t !== tab);
     this.tabs.set(cur);
     if (this.activeTab() === tab) {
       const fallback = cur.includes('Terminal - Main') ? 'Terminal - Main' : cur[0] ?? 'Terminal - Main';
       this.setTab(fallback);
     }
+    this.hideTabContextMenu();
   }
 
-  private updateEditorTab(label: string): void {
+  protected closeOtherTabs(tab: string): void {
+    if (tab === 'Terminal - Main') return;
+    const keep = ['Terminal - Main', tab];
+    const removed = this.tabs().filter((t) => !keep.includes(t));
+    removed.forEach((k) => this.tabEditorState.delete(k));
+    this.tabs.set(this.tabs().filter((t) => keep.includes(t)));
+    this.setTab(tab);
+    this.hideTabContextMenu();
+  }
+
+  protected closeTabsToRight(tab: string): void {
+    if (tab === 'Terminal - Main') return;
     const cur = this.tabs();
-    if (!cur.includes(label)) {
-      this.tabs.set([...cur, label]);
-    }
-    this.setTab(label);
+    const idx = cur.indexOf(tab);
+    if (idx < 0) return;
+    const right = cur.slice(idx + 1).filter((t) => t !== 'Terminal - Main');
+    right.forEach((k) => this.tabEditorState.delete(k));
+    const next = cur.filter((t, i) => i <= idx || t === 'Terminal - Main');
+    this.tabs.set(next);
+    this.hideTabContextMenu();
+  }
+
+  protected closeTabsToLeft(tab: string): void {
+    if (tab === 'Terminal - Main') return;
+    const cur = this.tabs();
+    const idx = cur.indexOf(tab);
+    if (idx < 0) return;
+    const left = cur.slice(0, idx).filter((t) => t !== 'Terminal - Main');
+    left.forEach((k) => this.tabEditorState.delete(k));
+    const next = cur.filter((t, i) => i >= idx || t === 'Terminal - Main');
+    this.tabs.set(next);
+    this.hideTabContextMenu();
   }
 
   protected treeIcon(node: FileNode): string {
@@ -531,6 +1139,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.fitAddon?.fit();
       this.psFitAddon?.fit();
       this.syncPowerShellSize();
+      setTimeout(() => {
+        this.psFitAddon?.fit();
+        this.syncPowerShellSize();
+      }, 80);
       if (show) {
         this.focusPowerShellTerminal();
       } else {
@@ -719,6 +1331,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       return;
     }
     if (value.type === 'done') {
+      if (value.usage) {
+        const model = this.runtime.client.getModel().model;
+        this.usageLedger.record(value.usage, model, Date.now() - this.streamRequestStartMs);
+      }
       return;
     }
     if (value.type === 'anthropic_turn') {
@@ -1074,15 +1690,44 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected async openFile(node: FileNode): Promise<void> {
     if (node.type !== 'file') return;
-    this.selectedPath.set(node.path);
-    this.updateEditorTab(node.name);
-
+    const tabLabel = node.path;
+    this.persistTabState(this.activeTab());
     const result = await window.zytrader.fs.read(node.path);
     if (!result.ok) {
+      this.previewKind.set('code');
+      this.selectedPath.set(node.path);
       this.selectedContent.set('无法读取该文件。');
+      this.editorDirty.set(false);
+      this.tabEditorState.set(tabLabel, {
+        relPath: node.path,
+        content: '无法读取该文件。',
+        previewKind: 'code',
+        dirty: false,
+      });
+      this.addTabIfMissing(tabLabel);
+      this.activeTab.set(tabLabel);
+      this.editorDiagnostics.set([]);
+      queueMicrotask(() => {
+        this.fitAddon?.fit();
+        this.psFitAddon?.fit();
+      });
+      this.cdr.markForCheck();
       return;
     }
-    this.selectedContent.set(result.content.slice(0, 20000));
+    const content = result.content.slice(0, 800_000);
+    this.previewKind.set('code');
+    this.selectedPath.set(node.path);
+    this.selectedContent.set(content);
+    this.editorDirty.set(false);
+    this.tabEditorState.set(tabLabel, { relPath: node.path, content, previewKind: 'code', dirty: false });
+    this.addTabIfMissing(tabLabel);
+    this.activeTab.set(tabLabel);
+    this.editorDiagnostics.set([]);
+    queueMicrotask(() => {
+      this.fitAddon?.fit();
+      this.psFitAddon?.fit();
+    });
+    this.cdr.markForCheck();
   }
 
   private async runDirective(raw: string): Promise<void> {
@@ -1186,6 +1831,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     this.streamInterruptRequested = false;
     this.terminalBusy.set(true);
+    this.streamRequestStartMs = Date.now();
     this.aiXtermWrite('\x1b[90m正在请求助手…\x1b[0m\r\n');
 
     const { stream, cancel } = this.runtime.assistant.stream(SESSION_ID, {
@@ -1372,14 +2018,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const title = shell === 'cmd' ? 'CMD' : shell === 'git-bash' ? 'Git Bash' : 'PowerShell';
     this.psSessions.update((arr) => [...arr, { id: created.id!, name: `${title} ${arr.length + 1}`, shell, output: '', exited: false }]);
     this.switchPsSession(created.id);
-    this.schedulePowerShellPromptRefresh(created.id!);
+    this.schedulePowerShellPromptRefresh();
   }
 
   /** Windows PowerShell 在 PTY 中有时首屏不刷提示符，补一次尺寸同步与回车以触发 PSReadLine 绘制路径 */
-  private schedulePowerShellPromptRefresh(sessionId: string): void {
+  private schedulePowerShellPromptRefresh(): void {
     setTimeout(() => {
       this.syncPowerShellSize();
-      void window.zytrader.terminal.write({ id: sessionId, data: '\r' });
+      this.psFitAddon?.fit();
     }, 120);
   }
 
@@ -1393,6 +2039,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.focusPowerShellTerminal();
     });
     this.syncPowerShellSize();
+    setTimeout(() => {
+      this.psFitAddon?.fit();
+      this.syncPowerShellSize();
+    }, 80);
   }
 
   protected async closePsSession(id: string): Promise<void> {
