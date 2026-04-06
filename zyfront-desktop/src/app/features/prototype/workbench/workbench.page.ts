@@ -37,6 +37,10 @@ import 'prismjs/components/prism-python';
 import 'prismjs/components/prism-yaml';
 import 'prismjs/components/prism-markup';
 
+/** 自动提交：主终端发给助手的固定提示（中文以走自然语言路由） */
+const AUTO_COMMIT_PROMPT =
+  '请根据当前工作区未提交的变更生成详细的中文提交说明（含文件与要点），然后依次执行 git add、git commit、git push 到远程仓库。';
+
 const RECENT_STORAGE_KEY_V2 = 'zytrader-workbench-recent-turns:v2';
 const RECENT_STORAGE_KEY_V1 = 'zytrader-workbench-recent-turns:v1';
 const SESSION_ID = 'workbench-terminal-ai';
@@ -227,7 +231,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private directiveTabCycle = 0;
 
   protected readonly leftPanelVisible = signal(true);
-  protected readonly terminalMenuVisible = signal(false);
+  /** 为 true 时渲染底部 PTY；默认开启以便首次进入即可初始化真实 Shell */
+  protected readonly terminalMenuVisible = signal(true);
   protected readonly rightPanelVisible = signal(true);
 
   protected readonly leftPanelWidth = signal(220);
@@ -269,6 +274,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   async ngAfterViewInit(): Promise<void> {
     this.initAiXterm();
     await this.initPowerShellTerminal();
+    if (!this.psTerminal) {
+      setTimeout(() => void this.initPowerShellTerminal(), 0);
+    }
   }
 
   ngOnDestroy(): void {
@@ -518,16 +526,27 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected toggleTerminalMenu(): void {
     this.terminalMenuVisible.update((v) => !v);
-    queueMicrotask(() => {
+    const show = this.terminalMenuVisible();
+    const afterLayout = (): void => {
       this.fitAddon?.fit();
       this.psFitAddon?.fit();
       this.syncPowerShellSize();
-      if (this.terminalMenuVisible()) {
+      if (show) {
         this.focusPowerShellTerminal();
       } else {
         this.focusAiTerminal();
       }
-    });
+    };
+    if (show) {
+      // *ngIf 展开后再挂载 #psHost，需晚于本轮变更检测再初始化 PTY
+      setTimeout(() => {
+        void this.initPowerShellTerminal().finally(() => {
+          afterLayout();
+        });
+      }, 0);
+    } else {
+      queueMicrotask(afterLayout);
+    }
   }
 
   protected focusAiTerminal(): void {
@@ -1277,6 +1296,25 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.psFitAddon.fit();
     queueMicrotask(() => this.focusPowerShellTerminal());
 
+    this.psTerminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.type !== 'keydown') return true;
+      if (event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
+        const sel = this.psTerminal?.getSelection() ?? '';
+        if (sel) void navigator.clipboard.writeText(sel);
+        return false;
+      }
+      if (event.ctrlKey && event.shiftKey && event.code === 'KeyV') {
+        event.preventDefault();
+        const id = this.activePsSessionId();
+        if (!id) return false;
+        void navigator.clipboard.readText().then((t) => {
+          if (t) void window.zytrader.terminal.write({ id, data: t });
+        });
+        return false;
+      }
+      return true;
+    });
+
     this.detachPsData = window.zytrader.terminal.onData((payload) => {
       if (payload.id !== this.activePsSessionId()) return;
       this.psTerminal?.write(payload.data);
@@ -1334,6 +1372,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const title = shell === 'cmd' ? 'CMD' : shell === 'git-bash' ? 'Git Bash' : 'PowerShell';
     this.psSessions.update((arr) => [...arr, { id: created.id!, name: `${title} ${arr.length + 1}`, shell, output: '', exited: false }]);
     this.switchPsSession(created.id);
+    this.schedulePowerShellPromptRefresh(created.id!);
+  }
+
+  /** Windows PowerShell 在 PTY 中有时首屏不刷提示符，补一次尺寸同步与回车以触发 PSReadLine 绘制路径 */
+  private schedulePowerShellPromptRefresh(sessionId: string): void {
+    setTimeout(() => {
+      this.syncPowerShellSize();
+      void window.zytrader.terminal.write({ id: sessionId, data: '\r' });
+    }, 120);
   }
 
   protected switchPsSession(id: string): void {
@@ -1363,16 +1410,35 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  protected runAutomation(kind: 'edit' | 'run' | 'test'): void {
+  protected runAutomation(kind: 'commit' | 'run' | 'build'): void {
+    if (kind === 'commit') {
+      if (this.activeTab() !== 'Terminal - Main') {
+        this.setTab('Terminal - Main');
+      }
+      setTimeout(() => void this.runAutoCommitInMainTerminal(), 0);
+      return;
+    }
     const id = this.activePsSessionId();
     if (!id) return;
-    const cmd =
-      kind === 'edit'
-        ? 'git status\r'
-        : kind === 'run'
-          ? 'npm.cmd run start\r'
-          : 'npm.cmd run test\r';
+    const cmd = kind === 'run' ? 'npm run start\r' : 'npm run build\r';
     void window.zytrader.terminal.write({ id, data: cmd });
+  }
+
+  /** 在主终端写入提示词并走助手流（生成提交说明并推送远程） */
+  private async runAutoCommitInMainTerminal(): Promise<void> {
+    this.focusAiTerminal();
+    const line = AUTO_COMMIT_PROMPT;
+    if (this.terminalBusy()) {
+      this.aiXtermWrite('\x1b[33m(busy)\x1b[0m\r\n');
+      this.writeMainTerminalPrompt();
+      this.redrawInputLine();
+      return;
+    }
+    this.mainLineBuffer = '';
+    this.clearSlashHintRow();
+    this.directiveTabCycle = 0;
+    this.aiXtermWrite(`\r\n\x1b[32m>\x1b[0m ${line}\r\n`);
+    await this.dispatchMainTerminalLine(line);
   }
 
   private aiXtermWrite(text: string): void {

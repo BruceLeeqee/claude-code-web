@@ -113,9 +113,9 @@
 
               <div class="ps-toolbar">
                 <button type="button" class="ps-btn plus-only" title="新建 PowerShell" (click)="createPsSession('powershell')">+</button>
-                <button type="button" class="ps-btn action" title="自动化改代码入口" (click)="runAutomation('edit')">自动改代码</button>
-                <button type="button" class="ps-btn action" title="自动运行" (click)="runAutomation('run')">自动运行</button>
-                <button type="button" class="ps-btn action" title="自动测试" (click)="runAutomation('test')">自动测试</button>
+                <button type="button" class="ps-btn action" title="在主终端填入提示词并请求助手生成提交说明并推送到远程" (click)="runAutomation('commit')">自动提交</button>
+                <button type="button" class="ps-btn action" title="执行 npm run start" (click)="runAutomation('run')">自动运行</button>
+                <button type="button" class="ps-btn action" title="执行 npm run build" (click)="runAutomation('build')">自动构建</button>
               </div>
             </div>
             <div class="powershell-body">
