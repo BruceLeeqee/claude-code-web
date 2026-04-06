@@ -1,16 +1,55 @@
-<div class="agents-grid">
-  <nz-card *ngFor="let agent of facade.agents()" class="block" [nzTitle]="agent.name">
-    <p>{{ agent.role }} · {{ agent.id }}</p>
-    <nz-progress [nzPercent]="agent.progress" nzSize="small"></nz-progress>
-    <p>状态：{{ agent.status }}</p>
+<section class="proto-page collaboration-proto">
+  <div class="collab-shell">
+    <header class="collab-toolbar">
+      <div class="title-wrap">
+        <h1>多Agent协作实时看板</h1>
+        <span class="badge">实时更新中</span>
+      </div>
+      <div class="toolbar-actions">
+        <label>
+          Agent 数量
+          <select nz-select>
+            <option>4个</option>
+            <option>6个</option>
+            <option>8个</option>
+          </select>
+        </label>
+        <button nz-button nzType="primary">添加新 Agent</button>
+      </div>
+    </header>
 
-    <div class="actions">
-      <button nz-button (click)="facade.toggleAgent(agent.id)">暂停/恢复</button>
-      <button nz-button nzType="primary" (click)="facade.advanceAgent(agent.id)">推进进度</button>
+    <div class="agent-grid">
+      <article class="agent-card" *ngFor="let agent of facade.agents()" [attr.data-status]="agent.status">
+        <div class="agent-head">
+          <div>
+            <h3>{{ agent.name }}</h3>
+            <p>{{ agent.role }} · {{ agent.id }}</p>
+          </div>
+          <span class="status">{{ agent.status }}</span>
+        </div>
+
+        <div class="agent-progress">
+          <div class="meta">
+            <span>执行进度</span>
+            <strong>{{ agent.progress }}%</strong>
+          </div>
+          <nz-progress [nzPercent]="agent.progress" nzSize="small"></nz-progress>
+        </div>
+
+        <div class="agent-log">
+          <div class="line" *ngFor="let line of agent.logs">{{ line }}</div>
+        </div>
+
+        <div class="actions">
+          <button nz-button (click)="facade.toggleAgent(agent.id)">暂停/恢复</button>
+          <button nz-button nzType="default" (click)="facade.advanceAgent(agent.id)">推进</button>
+        </div>
+      </article>
     </div>
 
-    <div class="actions" style="display:block; margin-top: 8px">
-      <div *ngFor="let line of agent.logs">- {{ line }}</div>
-    </div>
-  </nz-card>
-</div>
+    <footer class="collab-footer">
+      <span>在线 Agent: {{ facade.agents().length }}</span>
+      <span>Orchestrator v2.4.0</span>
+    </footer>
+  </div>
+</section>

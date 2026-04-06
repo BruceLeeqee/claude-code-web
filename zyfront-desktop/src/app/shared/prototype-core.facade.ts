@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { AppSettingsService, type AppSettings } from '../../../core/app-settings.service';
-import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../../../core/zyfront-core.providers';
+import { AppSettingsService, type AppSettings } from '../core/app-settings.service';
+import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../core/zyfront-core.providers';
 
 export type AgentStatus = 'preparing' | 'executing' | 'waiting' | 'completed' | 'error' | 'paused';
 
@@ -50,9 +50,9 @@ export class PrototypeCoreFacade {
   ]);
 
   readonly skills = signal([
-    { id: 'skill.auto-cr', name: '自动代码审查 (Auto-CR)', desc: 'Git Push 前分析安全漏洞和逻辑缺陷', active: true },
-    { id: 'skill.docs-sync', name: '文档自动化同步', desc: '根据代码变更自动更新 README 和 API 文档', active: false },
-    { id: 'skill.tests', name: '深度单元测试生成', desc: '模拟复杂场景自动填充测试用例', active: true },
+    { id: 'skill.smart-refactor', name: '智能代码重构', desc: '识别并修复代码坏味道', active: true },
+    { id: 'skill.auto-cr', name: '自动代码审查 (Auto-CR)', desc: 'Git Push 前分析安全漏洞和逻辑缺陷', active: false },
+    { id: 'skill.tests', name: '深度单元测试生成', desc: '模拟复杂场景自动填充测试用例', active: false },
     { id: 'skill.cicd', name: 'CI/CD Pipeline 优化', desc: '分析构建日志并优化流水线速度', active: false },
   ]);
 
@@ -114,7 +114,8 @@ export class PrototypeCoreFacade {
   }
 
   toggleSkill(id: string): void {
-    this.skills.update((items) => items.map((it) => (it.id === id ? { ...it, active: !it.active } : it)));
+    // 技能页为单选激活：点击某个技能后，仅该技能保持 active=true
+    this.skills.update((items) => items.map((it) => ({ ...it, active: it.id === id })));
   }
 
   togglePlugin(id: string): void {

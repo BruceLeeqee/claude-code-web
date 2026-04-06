@@ -1,28 +1,3 @@
-<nz-layout class="shell">
-  <header class="titlebar">
-    <div class="left">
-      <div class="dots">
-        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
-      </div>
-      <span class="title">ClaudeCode Desktop v1.2.0-stable</span>
-    </div>
-    <div class="right">
-      <span><span nz-icon nzType="api"></span> API Connected</span>
-      <span><span nz-icon nzType="robot"></span> Orchestrator Active</span>
-    </div>
-  </header>
-
-  <nz-layout>
-    <aside class="activity">
-      <a routerLink="/workbench" routerLinkActive="active"><span nz-icon nzType="code"></span></a>
-      <a routerLink="/prototype/models" routerLinkActive="active"><span nz-icon nzType="robot"></span></a>
-      <a routerLink="/prototype/graph" routerLinkActive="active"><span nz-icon nzType="deployment-unit"></span></a>
-      <a routerLink="/prototype/collaboration" routerLinkActive="active"><span nz-icon nzType="team"></span></a>
-      <a routerLink="/prototype/skills" routerLinkActive="active"><span nz-icon nzType="thunderbolt"></span></a>
-      <a routerLink="/prototype/plugins" routerLinkActive="active"><span nz-icon nzType="appstore"></span></a>
-    </aside>
-    <nz-content class="content-wrap">
-      <router-outlet></router-outlet>
-    </nz-content>
-  </nz-layout>
-</nz-layout>
+<app-global-shell-frame [llmAvailable]="llmAvailable()" [showSettingsToggle]="true">
+  <router-outlet></router-outlet>
+</app-global-shell-frame>

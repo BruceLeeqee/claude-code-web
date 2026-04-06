@@ -12,9 +12,9 @@ import {
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NgFor, NgIf, NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { RouterLink, RouterLinkActive } from '@angular/router';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
+import { GlobalShellFrameComponent } from '../../../shared/global-shell-frame.component';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { AppSettingsService } from '../../../core/app-settings.service';
@@ -25,6 +25,7 @@ import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../../../core/zyfront-co
 import { CommandRouterService } from './command-router.service';
 import { DIRECTIVE_REGISTRY, isCoordinationMode, parseDirective, type DirectiveDefinition } from './directive-registry';
 import Prism from 'prismjs';
+import { Subscription } from 'rxjs';
 import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-javascript';
 import 'prismjs/components/prism-json';
@@ -76,6 +77,14 @@ interface FileNode {
   children?: FileNode[];
 }
 
+interface PsSessionVm {
+  id: string;
+  name: string;
+  shell: 'powershell' | 'cmd' | 'git-bash';
+  output: string;
+  exited: boolean;
+}
+
 /** 从助手正文中抽取计划步骤（编号列表、Markdown 列表、「步骤n：」） */
 function parsePlanStepsFromText(text: string): string[] {
   const lines = text.split(/\r?\n/);
@@ -109,9 +118,8 @@ function parsePlanStepsFromText(text: string): string[] {
     NgIf,
     NgTemplateOutlet,
     FormsModule,
-    RouterLink,
-    RouterLinkActive,
     NzButtonModule,
+    GlobalShellFrameComponent,
     NzIconModule,
     NzInputModule,
     NzProgressModule,
@@ -128,6 +136,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   @ViewChild('xtermHost', { static: false })
   private xtermHost?: ElementRef<HTMLDivElement>;
+
+  @ViewChild('psHost', { static: false })
+  private psHost?: ElementRef<HTMLDivElement>;
 
   protected readonly workspaceRoot = signal('workspace');
   protected readonly tree = signal<FileNode[]>([]);
@@ -159,6 +170,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   });
 
   protected readonly recentTurns = signal<RecentTurn[]>(this.loadRecentTurns());
+  protected readonly llmAvailable = signal(this.hasLlmConfigured());
 
   /** 非「主终端」标签：Prism 语法高亮预览 */
   protected readonly filePreviewHtml = computed<SafeHtml>(() => {
@@ -188,6 +200,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private xterm?: Terminal;
   private fitAddon?: FitAddon;
   private resizeObserver?: ResizeObserver;
+
+  private psTerminal?: Terminal;
+  private psFitAddon?: FitAddon;
+  private psResizeObserver?: ResizeObserver;
+  private detachPsData?: () => void;
+  private detachPsExit?: () => void;
+
+  protected readonly psSessions = signal<PsSessionVm[]>([]);
+  protected readonly activePsSessionId = signal('');
   /** ??? Backspace?????????? xterm/?? IME ? onData ????? */
   private xtermBackspaceKeydown?: (e: Event) => void;
   /** ? onData ? \\b ????????? */
@@ -205,9 +226,30 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private streamInterruptRequested = false;
   private directiveTabCycle = 0;
 
+  protected readonly leftPanelVisible = signal(true);
+  protected readonly terminalMenuVisible = signal(false);
   protected readonly rightPanelVisible = signal(true);
 
+  protected readonly leftPanelWidth = signal(220);
+  protected readonly rightPanelWidth = signal(300);
+  protected readonly bottomPanelHeight = signal(180);
+
+  protected readonly mainGridTemplate = computed(() => {
+    const cols: string[] = [];
+    if (this.leftPanelVisible()) cols.push(`${this.leftPanelWidth()}px`, '4px');
+    cols.push('minmax(0, 1fr)');
+    if (this.rightPanelVisible()) cols.push('4px', `${this.rightPanelWidth()}px`);
+    return cols.join(' ');
+  });
+
+  protected readonly centerGridTemplateRows = computed(() => {
+    if (this.activeTab() !== 'Terminal - Main') return 'minmax(0, 1fr)';
+    if (!this.terminalMenuVisible()) return 'minmax(0, 1fr)';
+    return `minmax(0, 1fr) 4px ${this.bottomPanelHeight()}px`;
+  });
+
   private syncTimer?: number;
+  private settingsSub?: Subscription;
   /** 工具调用轨迹，与历史消息合并为右栏「记忆」 */
   private readonly toolMemoryTrace = signal<MemoryVm[]>([]);
 
@@ -215,6 +257,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     void this.bootstrapWorkspace();
     this.syncCoordinatorState();
     void this.rebuildMemoryPanel();
+    this.settingsSub = this.appSettings.settings$.subscribe(() => {
+      this.llmAvailable.set(this.hasLlmConfigured());
+    });
     this.syncTimer = window.setInterval(() => {
       this.syncCoordinatorState();
       void this.rebuildMemoryPanel();
@@ -223,6 +268,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   async ngAfterViewInit(): Promise<void> {
     this.initAiXterm();
+    await this.initPowerShellTerminal();
   }
 
   ngOnDestroy(): void {
@@ -233,7 +279,21 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.resizeObserver?.disconnect();
     this.xterm?.dispose();
 
+    this.psResizeObserver?.disconnect();
+    this.detachPsData?.();
+    this.detachPsExit?.();
+    for (const s of this.psSessions()) {
+      void window.zytrader.terminal.kill({ id: s.id });
+    }
+    this.psTerminal?.dispose();
+
+    this.settingsSub?.unsubscribe();
     if (this.syncTimer) window.clearInterval(this.syncTimer);
+  }
+
+  private hasLlmConfigured(): boolean {
+    const s = this.appSettings.value;
+    return Boolean(s.apiKey?.trim() && s.model?.trim());
   }
 
   private prismLangForExt(ext: string): string {
@@ -339,7 +399,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected setTab(tab: string): void {
     this.activeTab.set(tab);
-    queueMicrotask(() => this.fitAddon?.fit());
+    queueMicrotask(() => {
+      this.fitAddon?.fit();
+      this.psFitAddon?.fit();
+      if (tab === 'Terminal - Main') {
+        this.focusAiTerminal();
+        if (this.terminalMenuVisible()) this.focusPowerShellTerminal();
+      }
+    });
   }
 
   protected closeEditorTab(tab: string, event: Event): void {
@@ -427,9 +494,87 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     void this.rebuildMemoryPanel();
   }
 
+  protected toggleLeftPanel(): void {
+    this.leftPanelVisible.update((v) => !v);
+    queueMicrotask(() => this.fitAddon?.fit());
+  }
+
+  protected onLeftResizeStart(event: MouseEvent): void {
+    event.preventDefault();
+    const startX = event.clientX;
+    const start = this.leftPanelWidth();
+    const move = (ev: MouseEvent) => {
+      const next = Math.max(180, Math.min(520, start + (ev.clientX - startX)));
+      this.leftPanelWidth.set(next);
+      this.fitAddon?.fit();
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
+  protected toggleTerminalMenu(): void {
+    this.terminalMenuVisible.update((v) => !v);
+    queueMicrotask(() => {
+      this.fitAddon?.fit();
+      this.psFitAddon?.fit();
+      this.syncPowerShellSize();
+      if (this.terminalMenuVisible()) {
+        this.focusPowerShellTerminal();
+      } else {
+        this.focusAiTerminal();
+      }
+    });
+  }
+
+  protected focusAiTerminal(): void {
+    this.xterm?.focus();
+  }
+
+  protected focusPowerShellTerminal(): void {
+    this.psTerminal?.focus();
+  }
+
+  protected onBottomResizeStart(event: MouseEvent): void {
+    event.preventDefault();
+    const startY = event.clientY;
+    const start = this.bottomPanelHeight();
+    const move = (ev: MouseEvent) => {
+      const next = Math.max(120, Math.min(420, start - (ev.clientY - startY)));
+      this.bottomPanelHeight.set(next);
+      this.psFitAddon?.fit();
+      this.syncPowerShellSize();
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
   protected toggleRightPanel(): void {
     this.rightPanelVisible.update((v) => !v);
     queueMicrotask(() => this.fitAddon?.fit());
+  }
+
+  protected onRightResizeStart(event: MouseEvent): void {
+    event.preventDefault();
+    const startX = event.clientX;
+    const start = this.rightPanelWidth();
+    const move = (ev: MouseEvent) => {
+      const next = Math.max(240, Math.min(560, start - (ev.clientX - startX)));
+      this.rightPanelWidth.set(next);
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
   }
 
   /** 右侧展示：对话 / 计划 / 执行（parallel） */
@@ -606,6 +751,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.xterm.loadAddon(this.fitAddon);
     this.xterm.open(host);
     this.fitAddon.fit();
+    queueMicrotask(() => this.focusAiTerminal());
 
     this.xterm.onData((data) => {
       this.feedMainTerminalInput(data);
@@ -1085,6 +1231,148 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const current = this.inputHistory();
     const next = [...current.filter((x) => x !== input), input].slice(-100);
     this.inputHistory.set(next);
+  }
+
+  private async initPowerShellTerminal(): Promise<void> {
+    const host = this.psHost?.nativeElement;
+    if (!host || this.psTerminal) return;
+
+    this.psFitAddon = new FitAddon();
+    this.psTerminal = new Terminal({
+      cursorBlink: true,
+      cursorStyle: 'block',
+      fontFamily:
+        "'JetBrains Mono', 'Cascadia Mono', Consolas, 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC', monospace",
+      fontSize: 12,
+      lineHeight: 1.35,
+      theme: {
+        background: '#080b14',
+        foreground: '#dbe7ff',
+        cursor: '#60a5fa',
+        cursorAccent: '#080b14',
+        selectionBackground: '#1f2937',
+        black: '#0b1020',
+        red: '#f87171',
+        green: '#4ade80',
+        yellow: '#fbbf24',
+        blue: '#60a5fa',
+        magenta: '#c084fc',
+        cyan: '#22d3ee',
+        white: '#e5e7eb',
+        brightBlack: '#374151',
+        brightRed: '#fca5a5',
+        brightGreen: '#86efac',
+        brightYellow: '#fde68a',
+        brightBlue: '#93c5fd',
+        brightMagenta: '#ddd6fe',
+        brightCyan: '#67e8f9',
+        brightWhite: '#ffffff',
+      },
+      convertEol: true,
+      allowProposedApi: false,
+    });
+
+    this.psTerminal.loadAddon(this.psFitAddon);
+    this.psTerminal.open(host);
+    this.psFitAddon.fit();
+    queueMicrotask(() => this.focusPowerShellTerminal());
+
+    this.detachPsData = window.zytrader.terminal.onData((payload) => {
+      if (payload.id !== this.activePsSessionId()) return;
+      this.psTerminal?.write(payload.data);
+      this.psSessions.update((arr) =>
+        arr.map((s) => (s.id === payload.id ? { ...s, output: (s.output + payload.data).slice(-24000) } : s)),
+      );
+    });
+
+    this.detachPsExit = window.zytrader.terminal.onExit((payload) => {
+      this.psSessions.update((arr) => arr.map((s) => (s.id === payload.id ? { ...s, exited: true } : s)));
+      if (payload.id === this.activePsSessionId()) {
+        this.psTerminal?.writeln(`\r\n\x1b[90m[terminal exited: ${payload.exitCode}]\x1b[0m`);
+      }
+    });
+
+    this.psTerminal.onData((data) => {
+      const id = this.activePsSessionId();
+      if (!id) return;
+      void window.zytrader.terminal.write({ id, data });
+    });
+
+    this.psResizeObserver = new ResizeObserver(() => {
+      this.psFitAddon?.fit();
+      this.syncPowerShellSize();
+    });
+    this.psResizeObserver.observe(host);
+
+    await this.createPsSession('powershell');
+  }
+
+  private syncPowerShellSize(): void {
+    const id = this.activePsSessionId();
+    if (!id || !this.psTerminal) return;
+    const cols = Math.max(20, this.psTerminal.cols);
+    const rows = Math.max(4, this.psTerminal.rows);
+    void window.zytrader.terminal.resize({ id, cols, rows });
+  }
+
+  protected async createPsSession(shell: 'powershell' | 'cmd' | 'git-bash' = 'powershell'): Promise<void> {
+    if (!this.psTerminal) return;
+    const id = `term-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const created = await window.zytrader.terminal.create({
+      id,
+      cwd: '.',
+      cols: this.psTerminal.cols,
+      rows: this.psTerminal.rows,
+      shell,
+    });
+
+    if (!created.ok || !created.id) {
+      this.psTerminal.writeln(`\x1b[31m[终端启动失败]\x1b[0m ${created.error ?? 'unknown error'}`);
+      return;
+    }
+
+    const title = shell === 'cmd' ? 'CMD' : shell === 'git-bash' ? 'Git Bash' : 'PowerShell';
+    this.psSessions.update((arr) => [...arr, { id: created.id!, name: `${title} ${arr.length + 1}`, shell, output: '', exited: false }]);
+    this.switchPsSession(created.id);
+  }
+
+  protected switchPsSession(id: string): void {
+    this.activePsSessionId.set(id);
+    const target = this.psSessions().find((s) => s.id === id);
+    this.psTerminal?.clear();
+    if (target?.output) this.psTerminal?.write(target.output);
+    queueMicrotask(() => {
+      this.psFitAddon?.fit();
+      this.focusPowerShellTerminal();
+    });
+    this.syncPowerShellSize();
+  }
+
+  protected async closePsSession(id: string): Promise<void> {
+    await window.zytrader.terminal.kill({ id });
+    const left = this.psSessions().filter((s) => s.id !== id);
+    this.psSessions.set(left);
+    if (this.activePsSessionId() === id) {
+      const next = left[0]?.id ?? '';
+      this.activePsSessionId.set(next);
+      this.psTerminal?.clear();
+      if (next) {
+        const target = left.find((s) => s.id === next);
+        if (target?.output) this.psTerminal?.write(target.output);
+      }
+    }
+  }
+
+  protected runAutomation(kind: 'edit' | 'run' | 'test'): void {
+    const id = this.activePsSessionId();
+    if (!id) return;
+    const cmd =
+      kind === 'edit'
+        ? 'git status\r'
+        : kind === 'run'
+          ? 'npm.cmd run start\r'
+          : 'npm.cmd run test\r';
+    void window.zytrader.terminal.write({ id, data: cmd });
   }
 
   private aiXtermWrite(text: string): void {

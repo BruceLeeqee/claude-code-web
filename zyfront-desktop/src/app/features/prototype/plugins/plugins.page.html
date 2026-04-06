@@ -1,10 +1,47 @@
-<div class="cards-grid">
-  <nz-card *ngFor="let plugin of facade.plugins()" class="block" [nzTitle]="plugin.name">
-    <p>{{ plugin.desc }}</p>
-    <div class="actions">
-      <button nz-button [nzType]="plugin.installed ? 'default' : 'primary'" (click)="facade.togglePlugin(plugin.id)">
-        {{ plugin.installed ? '已安装（点击卸载）' : '安装' }}
-      </button>
-    </div>
-  </nz-card>
-</div>
+<section class="proto-page plugins-proto">
+  <div class="plugins-shell">
+    <header class="plugins-hero">
+      <div>
+        <h1>插件与技能管理</h1>
+        <p>安装 MCP 插件或加载技能库，扩展 AI 代理能力。</p>
+      </div>
+      <div class="search-row">
+        <input nz-input placeholder="搜索插件、技能、主题..." />
+        <button nz-button>我的已安装</button>
+      </div>
+    </header>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>热门插件 (MCP)</h2>
+      </div>
+      <div class="plugin-grid">
+        <article class="plugin-card" *ngFor="let plugin of facade.plugins()">
+          <div class="plugin-top">
+            <h3>{{ plugin.name }}</h3>
+            <button nz-button [nzType]="plugin.installed ? 'default' : 'primary'" (click)="facade.togglePlugin(plugin.id)">
+              {{ plugin.installed ? '已安装' : '安装' }}
+            </button>
+          </div>
+          <p>{{ plugin.desc }}</p>
+          <div class="meta">v1.0.0 · 热门</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>预定义技能 (Skills)</h2>
+      </div>
+      <div class="skill-list">
+        <article class="skill-item" *ngFor="let skill of facade.skills()">
+          <div>
+            <h4>{{ skill.name }}</h4>
+            <p>{{ skill.desc }}</p>
+          </div>
+          <span class="dot" [class.active]="skill.active"></span>
+        </article>
+      </div>
+    </section>
+  </div>
+</section>

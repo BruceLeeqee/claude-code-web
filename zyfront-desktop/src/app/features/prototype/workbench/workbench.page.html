@@ -1,166 +1,190 @@
-<div class="wb-shell">
-  <div class="wb-main" [class.wb-main--right-collapsed]="!rightPanelVisible()">
-    <aside class="wb-activity-rail">
-      <a nz-button nzType="text" nzShape="circle" routerLink="/workbench" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="工作台">
-        <span nz-icon nzType="code"></span>
-      </a>
-      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/models" routerLinkActive="wb-rail-active" title="模型">
-        <span nz-icon nzType="robot"></span>
-      </a>
-      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/graph" routerLinkActive="wb-rail-active" title="图谱">
-        <span nz-icon nzType="deployment-unit"></span>
-      </a>
-      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/collaboration" routerLinkActive="wb-rail-active" title="协作">
-        <span nz-icon nzType="team"></span>
-      </a>
-      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/skills" routerLinkActive="wb-rail-active" title="技能">
-        <span nz-icon nzType="thunderbolt"></span>
-      </a>
-      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/plugins" routerLinkActive="wb-rail-active" title="插件">
-        <span nz-icon nzType="appstore"></span>
-      </a>
-      <a nz-button nzType="text" nzShape="circle" routerLink="/settings" routerLinkActive="wb-rail-active" title="设置">
-        <span nz-icon nzType="setting"></span>
-      </a>
-    </aside>
+<app-global-shell-frame
+  [llmAvailable]="llmAvailable()"
+  [showExplorerToggle]="true"
+  [showTerminalMenuToggle]="true"
+  [showSettingsToggle]="true"
+  [showRightPanelToggle]="true"
+  [explorerVisible]="leftPanelVisible()"
+  [terminalMenuVisible]="terminalMenuVisible()"
+  [rightPanelVisible]="rightPanelVisible()"
+  (toggleExplorer)="toggleLeftPanel()"
+  (toggleTerminalMenu)="toggleTerminalMenu()"
+  (toggleRightPanel)="toggleRightPanel()"
+>
+  <div class="wb-shell">
+    <div class="wb-main" [style.gridTemplateColumns]="mainGridTemplate()">
 
-    <section class="wb-left-panel">
-      <div class="left-header">
-        <div>
-          <div class="panel-title vscode-section-title">资源管理器</div>
-          <div class="panel-sub vscode-breadcrumb" [title]="workspaceRoot()">{{ workspaceRoot() }}</div>
-        </div>
-      </div>
-
-      <div class="tree-scroll vscode-tree">
-        <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: tree(), depth: 0 }"></ng-container>
-      </div>
-
-      <ng-template #treeTpl let-nodes let-depth="depth">
-        <ng-container *ngFor="let node of nodes">
-          <div
-            class="vscode-tree-row"
-            [class.is-dir]="node.type === 'dir'"
-            [class.is-selected]="node.type === 'file' && selectedPath() === node.path"
-            [style.paddingLeft.px]="depth * 16 + 8"
-            (click)="node.type === 'dir' ? toggleDir(node) : openFile(node)"
-          >
-            <span class="vscode-chevron" *ngIf="node.type === 'dir'">{{ node.expanded ? '▾' : '▸' }}</span>
-            <span class="vscode-chevron-placeholder" *ngIf="node.type === 'file'"></span>
-            <span class="vscode-tree-icon" nz-icon [nzType]="treeIcon(node)"></span>
-            <span class="vscode-tree-label">{{ node.name }}</span>
+      <section class="wb-left-panel" *ngIf="leftPanelVisible()" [style.width.px]="leftPanelWidth()">
+        <div class="left-header">
+          <div>
+            <div class="panel-title vscode-section-title">资源管理器</div>
+            <div class="panel-sub vscode-breadcrumb" [title]="workspaceRoot()">{{ workspaceRoot() }}</div>
           </div>
+        </div>
 
-          <ng-container *ngIf="node.type === 'dir' && node.expanded && node.children?.length">
-            <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: node.children, depth: depth + 1 }"></ng-container>
+        <div class="tree-scroll vscode-tree">
+          <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: tree(), depth: 0 }"></ng-container>
+        </div>
+
+        <ng-template #treeTpl let-nodes let-depth="depth">
+          <ng-container *ngFor="let node of nodes">
+            <div
+              class="vscode-tree-row"
+              [class.is-dir]="node.type === 'dir'"
+              [class.is-selected]="node.type === 'file' && selectedPath() === node.path"
+              [style.paddingLeft.px]="depth * 16 + 8"
+              (click)="node.type === 'dir' ? toggleDir(node) : openFile(node)"
+            >
+              <span class="vscode-chevron" *ngIf="node.type === 'dir'">{{ node.expanded ? '▾' : '▸' }}</span>
+              <span class="vscode-chevron-placeholder" *ngIf="node.type === 'file'"></span>
+              <span class="vscode-tree-icon" nz-icon [nzType]="treeIcon(node)"></span>
+              <span class="vscode-tree-label">{{ node.name }}</span>
+            </div>
+
+            <ng-container *ngIf="node.type === 'dir' && node.expanded && node.children?.length">
+              <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: node.children, depth: depth + 1 }"></ng-container>
+            </ng-container>
           </ng-container>
-        </ng-container>
-      </ng-template>
+        </ng-template>
 
-      <div class="left-activity">
-        <div class="panel-title vscode-section-title">最近会话</div>
-        <div class="recent-scroll">
-          <p class="activity-hint" *ngIf="recentTurns().length === 0">在主终端用自然语言提问并成功回复后，会出现在此；点击可将内容填回输入行。</p>
-          <button type="button" class="recent-item" *ngFor="let r of recentTurns()" (click)="replayRecent(r)">
-            <span class="recent-item-title">{{ r.title }}</span>
-            <span class="recent-item-meta">{{ formatRecentTime(r.at) }}</span>
-          </button>
+        <div class="left-activity">
+          <div class="panel-title vscode-section-title">最近会话</div>
+          <div class="recent-scroll">
+            <p class="activity-hint" *ngIf="recentTurns().length === 0">在主终端用自然语言提问并成功回复后，会出现在此；点击可将内容填回输入行。</p>
+            <button type="button" class="recent-item" *ngFor="let r of recentTurns()" (click)="replayRecent(r)">
+              <span class="recent-item-title">{{ r.title }}</span>
+              <span class="recent-item-meta">{{ formatRecentTime(r.at) }}</span>
+            </button>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="wb-center-panel">
-      <div class="wb-center-tabs">
-        <div
-          *ngFor="let tab of tabs()"
-          class="editor-tab"
-          [class.active]="activeTab() === tab"
-        >
-          <button type="button" class="tab-label-btn" (click)="setTab(tab)">{{ tab }}</button>
-          <button
-            *ngIf="tab !== 'Terminal - Main'"
-            type="button"
-            class="tab-close"
-            title="关闭"
-            aria-label="关闭标签页"
-            (click)="closeEditorTab(tab, $event)"
+      <div class="panel-resizer vertical" *ngIf="leftPanelVisible()" (mousedown)="onLeftResizeStart($event)"></div>
+
+      <section class="wb-center-panel">
+        <div class="wb-center-tabs">
+          <div
+            *ngFor="let tab of tabs()"
+            class="editor-tab"
+            [class.active]="activeTab() === tab"
           >
-            ×
-          </button>
-        </div>
-      </div>
-
-      <div class="wb-center-scroll">
-        <div class="terminal-meta">
-          <span>主终端 · {{ workspaceRoot() }}</span>
-          <button type="button" class="terminal-meta-btn" (click)="toggleRightPanel()">
-            {{ rightPanelVisible() ? '隐藏右侧面板' : '显示右侧面板' }}
-          </button>
-        </div>
-
-        <div class="terminal-body" *ngIf="activeTab() === 'Terminal - Main'">
-          <div #xtermHost class="xterm-host"></div>
-        </div>
-
-        <div
-          class="file-preview-wrap"
-          *ngIf="activeTab() !== 'Terminal - Main'"
-          [innerHTML]="filePreviewHtml()"
-        ></div>
-      </div>
-    </section>
-
-    <aside class="wb-right-panel" *ngIf="rightPanelVisible()">
-      <div class="wb-right-scroll">
-        <div class="right-header">
-          <div class="panel-title vscode-section-title">任务拆解</div>
-          <div class="panel-sub">{{ formatWorkbenchModeLabel(coordinatorMode()) }} · 共 {{ stepTotal() }} 步</div>
-        </div>
-
-        <div class="task-summary-bar">
-          <span class="ts-done">完成 {{ stepDone() }}</span>
-          <span class="ts-run">进行中 {{ stepInProgress() }}</span>
-          <span class="ts-todo">待处理 {{ stepPending() }}</span>
-          <span class="ts-tools">工具 {{ toolCallCount() }}</span>
-        </div>
-
-        <div class="plan-progress-block" *ngIf="stepTotal() > 0">
-          <div class="section-label">整体进度</div>
-          <nz-progress [nzPercent]="planProgressPercent()" nzStatus="active"></nz-progress>
-          <div class="plan-progress-meta">{{ stepDone() }} / {{ stepTotal() }} 已完成 · {{ planProgressPercent() }}%</div>
-        </div>
-
-        <div class="memory-section">
-          <div class="section-label">捕获的记忆</div>
-          <p class="memory-hint" *ngIf="memoryItems().length === 0">
-            与助手对话或出现工具调用后，会显示最近会话与工具摘要（与左侧「最近会话」同源历史，约每 0.5 秒刷新）。
-          </p>
-          <div class="memory-list" *ngIf="memoryItems().length > 0">
-            <div class="memory-row" *ngFor="let m of memoryItems()" [attr.data-kind]="m.kind">
-              <span class="memory-kind">{{ m.label }}</span>
-              <span class="memory-snippet" [title]="m.snippet">{{ m.snippet }}</span>
-              <span class="memory-time">{{ formatRecentTime(m.at) }}</span>
-            </div>
+            <button type="button" class="tab-label-btn" (click)="setTab(tab)">{{ tab }}</button>
+            <button
+              *ngIf="tab !== 'Terminal - Main'"
+              type="button"
+              class="tab-close"
+              title="关闭"
+              aria-label="关闭标签页"
+              (click)="closeEditorTab(tab, $event)"
+            >
+              ×
+            </button>
           </div>
         </div>
 
-        <div class="plan-steps-section">
-          <div class="section-label">计划步骤</div>
-          <p class="plan-empty" *ngIf="planSteps().length === 0">
-            暂无步骤。在 <strong>计划</strong> 模式（<code>/mode plan</code>）下向主终端提问时，助手若回复带编号/列表（如 <code>1. xxx</code>），会自动同步到此处。
-          </p>
-          <div class="vscode-task-list">
-            <div class="vscode-task-item" *ngFor="let s of planSteps()" [attr.data-status]="s.status">
-              <span class="task-checkbox" aria-hidden="true"></span>
-              <div class="task-item-body">
-                <span class="task-item-title">{{ s.title }}</span>
-                <span class="task-item-detail" *ngIf="s.detail">{{ s.detail }}</span>
+        <div class="wb-center-scroll" [style.gridTemplateRows]="centerGridTemplateRows()">
+          <section class="terminal-panel" *ngIf="activeTab() === 'Terminal - Main'" (click)="focusAiTerminal()">
+            <div class="terminal-body">
+              <div #xtermHost class="xterm-host"></div>
+            </div>
+          </section>
+
+          <div class="panel-resizer horizontal" *ngIf="activeTab() === 'Terminal - Main' && terminalMenuVisible()" (mousedown)="onBottomResizeStart($event)"></div>
+
+          <section
+            class="powershell-panel"
+            *ngIf="activeTab() === 'Terminal - Main' && terminalMenuVisible()"
+            (click)="focusPowerShellTerminal()"
+          >
+            <div class="powershell-head">
+              <div class="ps-tabs">
+                <button
+                  type="button"
+                  class="ps-tab"
+                  *ngFor="let s of psSessions()"
+                  [class.active]="s.id === activePsSessionId()"
+                  (click)="switchPsSession(s.id)"
+                >
+                  <span>{{ s.name }}</span>
+                  <span class="ps-exit-dot" *ngIf="s.exited">●</span>
+                  <span class="ps-close" (click)="closePsSession(s.id); $event.stopPropagation()">×</span>
+                </button>
               </div>
-              <span class="step-badge">{{ statusLabel(s.status) }}</span>
+
+              <div class="ps-toolbar">
+                <button type="button" class="ps-btn plus-only" title="新建 PowerShell" (click)="createPsSession('powershell')">+</button>
+                <button type="button" class="ps-btn action" title="自动化改代码入口" (click)="runAutomation('edit')">自动改代码</button>
+                <button type="button" class="ps-btn action" title="自动运行" (click)="runAutomation('run')">自动运行</button>
+                <button type="button" class="ps-btn action" title="自动测试" (click)="runAutomation('test')">自动测试</button>
+              </div>
+            </div>
+            <div class="powershell-body">
+              <div #psHost class="ps-xterm-host"></div>
+            </div>
+          </section>
+
+          <div
+            class="file-preview-wrap"
+            *ngIf="activeTab() !== 'Terminal - Main'"
+            [innerHTML]="filePreviewHtml()"
+          ></div>
+        </div>
+      </section>
+
+      <div class="panel-resizer vertical" *ngIf="rightPanelVisible()" (mousedown)="onRightResizeStart($event)"></div>
+
+      <aside class="wb-right-panel" *ngIf="rightPanelVisible()" [style.width.px]="rightPanelWidth()">
+        <div class="wb-right-scroll">
+          <div class="right-header">
+            <div class="panel-title vscode-section-title">任务拆解</div>
+            <div class="panel-sub">{{ formatWorkbenchModeLabel(coordinatorMode()) }} · 共 {{ stepTotal() }} 步</div>
+          </div>
+
+          <div class="task-summary-bar">
+            <span class="ts-done">完成 {{ stepDone() }}</span>
+            <span class="ts-run">进行中 {{ stepInProgress() }}</span>
+            <span class="ts-todo">待处理 {{ stepPending() }}</span>
+            <span class="ts-tools">工具 {{ toolCallCount() }}</span>
+          </div>
+
+          <div class="plan-progress-block" *ngIf="stepTotal() > 0">
+            <div class="section-label">整体进度</div>
+            <nz-progress [nzPercent]="planProgressPercent()" nzStatus="active"></nz-progress>
+            <div class="plan-progress-meta">{{ stepDone() }} / {{ stepTotal() }} 已完成 · {{ planProgressPercent() }}%</div>
+          </div>
+
+          <div class="memory-section">
+            <div class="section-label">捕获的记忆</div>
+            <p class="memory-hint" *ngIf="memoryItems().length === 0">
+              与助手对话或出现工具调用后，会显示最近会话与工具摘要（与左侧「最近会话」同源历史，约每 0.5 秒刷新）。
+            </p>
+            <div class="memory-list" *ngIf="memoryItems().length > 0">
+              <div class="memory-row" *ngFor="let m of memoryItems()" [attr.data-kind]="m.kind">
+                <span class="memory-kind">{{ m.label }}</span>
+                <span class="memory-snippet" [title]="m.snippet">{{ m.snippet }}</span>
+                <span class="memory-time">{{ formatRecentTime(m.at) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="plan-steps-section">
+            <div class="section-label">计划步骤</div>
+            <p class="plan-empty" *ngIf="planSteps().length === 0">
+              暂无步骤。在 <strong>计划</strong> 模式（<code>/mode plan</code>）下向主终端提问时，助手若回复带编号/列表（如 <code>1. xxx</code>），会自动同步到此处。
+            </p>
+            <div class="vscode-task-list">
+              <div class="vscode-task-item" *ngFor="let s of planSteps()" [attr.data-status]="s.status">
+                <span class="task-checkbox" aria-hidden="true"></span>
+                <div class="task-item-body">
+                  <span class="task-item-title">{{ s.title }}</span>
+                  <span class="task-item-detail" *ngIf="s.detail">{{ s.detail }}</span>
+                </div>
+                <span class="step-badge">{{ statusLabel(s.status) }}</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </div>
   </div>
-</div>
+</app-global-shell-frame>

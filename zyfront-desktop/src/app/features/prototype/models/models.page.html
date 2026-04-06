@@ -1,25 +1,144 @@
-<div class="page-grid">
-  <nz-card nzTitle="模型配置" class="block">
-    <p>当前模型：<strong>{{ facade.activeModel() }}</strong></p>
-    <p>Token 使用：{{ facade.tokenUsed() }} / {{ facade.tokenMax() }}</p>
-    <p>累计消耗：${{ facade.estimatedCostUsd() }}</p>
-    <nz-progress [nzPercent]="facade.modelUsagePercent()" nzStrokeColor="#a855f7"></nz-progress>
-    <div class="actions">
-      <button nz-button nzType="primary">添加自定义模型</button>
-      <button nz-button>配置参数</button>
+<main class="settings-page" *ngIf="settings$ | async as settings">
+  <section class="settings-hero card">
+    <div>
+      <h1>模型管理中心</h1>
+      <p>管理 API / 模型、上下文压缩策略与当前生效配置。</p>
     </div>
-  </nz-card>
-
-  <nz-card nzTitle="默认 API 设置" class="block">
-    <label>模型</label>
-    <input nz-input [ngModel]="model()" (ngModelChange)="model.set($event)" />
-
-    <label>最大 Token 生成限制（占位）</label>
-    <input nz-input [ngModel]="maxTokens()" (ngModelChange)="maxTokens.set($event)" />
-
-    <div class="actions">
-      <button nz-button (click)="reset()">重置默认</button>
-      <button nz-button nzType="primary" (click)="save()">保存配置</button>
+    <div class="hero-actions">
+      <a routerLink="/workbench" class="back-link">返回工作台</a>
+      <button type="button" (click)="testConnection()" [disabled]="testStatus() === 'testing'">
+        {{ testStatus() === 'testing' ? '测试中...' : '测试连接' }}
+      </button>
+      <button type="button" (click)="save()">保存配置</button>
     </div>
-  </nz-card>
-</div>
+  </section>
+
+  <section class="settings-grid">
+    <aside class="card side-nav">
+      <h2>配置导航</h2>
+      <ul>
+        <li>API / 模型</li>
+        <li>上下文压缩策略</li>
+        <li>代理与成本</li>
+        <li>当前生效配置</li>
+      </ul>
+    </aside>
+
+    <div class="settings-content">
+      <form class="card form" [formGroup]="form" (ngSubmit)="save()">
+        <h2>API / 模型</h2>
+        <div class="form-grid">
+          <label>
+            <span>API Key</span>
+            <input type="password" formControlName="apiKey" placeholder="sk-..." />
+          </label>
+          <label>
+            <span>模型供应商</span>
+            <select formControlName="modelProvider">
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="minimax">MiniMax</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label>
+            <span>模型</span>
+            <select formControlName="model">
+              <option value="MiniMax-M2.7">MiniMax-M2.7</option>
+              <option value="abab6.5s-chat">MiniMax abab6.5s-chat</option>
+              <option value="abab6.5g-chat">MiniMax abab6.5g-chat</option>
+              <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
+              <option value="claude-3-7-sonnet-latest">Claude 3.7 Sonnet</option>
+              <option value="claude-3-opus-latest">Claude 3 Opus</option>
+            </select>
+          </label>
+          <label>
+            <span>主题</span>
+            <select formControlName="theme">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </label>
+        </div>
+
+        <h2>上下文压缩策略</h2>
+        <label class="check-row">
+          <input type="checkbox" formControlName="compressionEnabled" />
+          <span>启用自动压缩</span>
+        </label>
+        <div class="form-grid">
+          <label>
+            <span>触发阈值（消息条数）</span>
+            <input type="number" formControlName="maxMessagesBeforeCompact" />
+          </label>
+          <label>
+            <span>压缩后保留条数</span>
+            <input type="number" formControlName="compactToMessages" />
+          </label>
+        </div>
+
+        <h2>代理与成本</h2>
+        <label class="check-row">
+          <input type="checkbox" formControlName="proxyEnabled" />
+          <span>启用代理</span>
+        </label>
+        <div class="form-grid">
+          <label>
+            <span>代理地址</span>
+            <input type="text" formControlName="proxyBaseUrl" placeholder="https://proxy.example.com" />
+          </label>
+          <label>
+            <span>代理 Token</span>
+            <input type="password" formControlName="proxyAuthToken" placeholder="token" />
+          </label>
+          <label>
+            <span>会话成本上限（USD）</span>
+            <input type="number" step="0.1" formControlName="maxSessionCostUsd" />
+          </label>
+          <label>
+            <span>预警阈值（USD）</span>
+            <input type="number" step="0.1" formControlName="warnThresholdUsd" />
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="submit">保存配置</button>
+          <button type="button" (click)="runSelfCheck()">运行自检</button>
+          <button type="button" class="secondary" (click)="reset()">恢复默认</button>
+        </div>
+
+        @if (testMessage()) {
+          <p
+            class="test-msg"
+            [style.color]="testStatus() === 'ok' ? '#22c55e' : testStatus() === 'error' ? '#ef4444' : '#94a3b8'"
+          >
+            {{ testMessage() }}
+          </p>
+        }
+      </form>
+
+      <section class="card runtime-card">
+        <h2>运行环境自检</h2>
+        <div class="status-grid">
+          <div class="status-item">
+            <span>{{ badge(runtimeState()) }}</span><strong>本地运行环境</strong><small>{{ runtimeState() }}</small>
+          </div>
+          <div class="status-item">
+            <span>{{ badge(permissionState()) }}</span><strong>本地权限</strong><small>{{ permissionState() }}</small>
+          </div>
+          <div class="status-item">
+            <span>{{ badge(upstreamState()) }}</span><strong>Upstream 模型</strong><small>{{ upstreamState() }}</small>
+          </div>
+        </div>
+        @if (selfCheckDetail()) {
+          <pre class="detail">{{ selfCheckDetail() }}</pre>
+        }
+      </section>
+
+      <section class="card preview-card">
+        <h2>当前生效配置</h2>
+        <pre>{{ settings | json }}</pre>
+      </section>
+    </div>
+  </section>
+</main>

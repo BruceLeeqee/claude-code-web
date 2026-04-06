@@ -1,20 +1,77 @@
-<div class="graph-layout">
-  <nz-card nzTitle="知识图谱" class="block full">
-    <div class="graph-placeholder">
-      <button nz-button *ngFor="let node of facade.nodes()" (click)="facade.selectNode(node.id)">
-        {{ node.name }}
-      </button>
+<section class="proto-page graph-proto">
+  <div class="graph-shell">
+    <header class="graph-header">
+      <div>
+        <h1>知识图谱</h1>
+        <p>类 Obsidian 记忆系统可视化，查看核心实体关系。</p>
+      </div>
+    </header>
+
+    <div class="graph-body">
+      <div class="graph-toolbar">
+        <div class="tool-group">
+          <button type="button" class="tool-btn" title="缩放至适合大小">适配</button>
+          <button type="button" class="tool-btn" title="强制布局刷新">刷新</button>
+          <div class="tool-divider"></div>
+          <button type="button" class="tool-btn active" title="节点标签">标签</button>
+          <button type="button" class="tool-btn" title="关系连线">连线</button>
+        </div>
+        <div class="force-slider">
+          <span>物理模拟力</span>
+          <input type="range" />
+        </div>
+      </div>
+
+      <div class="graph-main">
+        <div class="graph-canvas">
+          <div class="graph-placeholder">
+            <div class="placeholder-title">Graph View</div>
+            <div class="node-list">
+              <button
+                type="button"
+                class="node-pill"
+                *ngFor="let node of facade.nodes()"
+                (click)="facade.selectNode(node.id)"
+              >
+                {{ node.name }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <aside class="graph-side">
+          <h3>节点详情</h3>
+          <ng-container *ngIf="facade.selectedNode() as node; else empty">
+            <div class="node-summary">
+              <div class="node-badge">ENTITY</div>
+              <h4>{{ node.name }}</h4>
+              <p class="muted">类型：{{ node.group }}</p>
+            </div>
+            <div class="node-links">
+              <div class="label">直接关联</div>
+              <div class="chips">
+                <span class="chip" *ngFor="let link of node.links">{{ link }}</span>
+              </div>
+            </div>
+            <button nz-button nzType="primary" class="primary-btn">定位对话上下文</button>
+          </ng-container>
+          <ng-template #empty>
+            <div class="empty-state">
+              <p>点击图谱中的节点查看详情</p>
+            </div>
+          </ng-template>
+          <div class="graph-stats">
+            <div>
+              <div class="stat-value">128</div>
+              <div class="stat-label">知识实体</div>
+            </div>
+            <div>
+              <div class="stat-value">452</div>
+              <div class="stat-label">语义关联</div>
+            </div>
+          </div>
+        </aside>
+      </div>
     </div>
-  </nz-card>
-  <nz-card nzTitle="节点详情" class="block side">
-    <ng-container *ngIf="facade.selectedNode() as node; else empty">
-      <p>实体：{{ node.name }}</p>
-      <p>类型：{{ node.group }}</p>
-      <p>关联：{{ node.links.join('、') }}</p>
-      <button nz-button nzType="primary">定位对话上下文</button>
-    </ng-container>
-    <ng-template #empty>
-      <p>请选择一个节点。</p>
-    </ng-template>
-  </nz-card>
-</div>
+  </div>
+</section>

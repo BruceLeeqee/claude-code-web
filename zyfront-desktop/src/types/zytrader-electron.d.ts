@@ -11,7 +11,7 @@ declare global {
       };
       terminal: {
         exec: (command: string, cwd?: string) => Promise<{ ok: boolean; command: string; cwd: string; code: number; stdout: string; stderr: string }>;
-        create: (payload: { id: string; cwd?: string; cols?: number; rows?: number; shell?: 'git-bash' | 'powershell' | 'cmd' | 'bash' | 'zsh' }) => Promise<{ ok: boolean; id?: string; error?: string }>;
+        create: (payload: { id: string; cwd?: string; cols?: number; rows?: number; shell?: 'powershell' | 'git-bash' | 'cmd' | 'bash' | 'zsh' }) => Promise<{ ok: boolean; id?: string; error?: string }>;
         write: (payload: { id: string; data: string }) => Promise<{ ok: boolean; error?: string }>;
         resize: (payload: { id: string; cols: number; rows: number }) => Promise<{ ok: boolean; error?: string }>;
         kill: (payload: { id: string }) => Promise<{ ok: boolean; error?: string }>;

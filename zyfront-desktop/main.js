@@ -80,17 +80,17 @@ function emitTerminalExit(payload) {
 }
 
 function resolveWinShell(shell) {
-  const normalized = String(shell || 'git-bash').toLowerCase()
+  const normalized = String(shell || 'powershell').toLowerCase()
 
   if (normalized === 'powershell') {
-    return { cmd: 'powershell.exe', args: ['-NoLogo', '-NoProfile'] }
+    return { cmd: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass'] }
   }
 
   if (normalized === 'cmd') {
     return { cmd: 'cmd.exe', args: [] }
   }
 
-  // 默认与 ClaudeCode 内置终端体验对齐：优先 Git Bash
+  // 如显式选择 git-bash，再按候选路径查找
   const gitBashCandidates = [
     process.env.GIT_BASH_PATH,
     'C:/Program Files/Git/bin/bash.exe',
@@ -120,7 +120,7 @@ function resolveShellCommand(shell) {
   return { cmd: process.env.SHELL || 'bash', args: ['-i'] }
 }
 
-function createPtySession({ id, cwd = '.', cols = 120, rows = 36, shell = 'git-bash' }) {
+function createPtySession({ id, cwd = '.', cols = 120, rows = 36, shell = 'powershell' }) {
   const absCwd = resolveSafePath(cwd)
   const { cmd, args } = resolveShellCommand(shell)
 
@@ -177,8 +177,14 @@ function registerIpcHandlers() {
 
   ipcMain.handle('zytrader:terminal:exec', async (_event, command, cwd = '.') => {
     const absCwd = resolveSafePath(cwd)
+    const execOptions = {
+      cwd: absCwd,
+      windowsHide: true,
+      timeout: 120000,
+      ...(process.platform === 'win32' ? { shell: 'powershell.exe' } : {}),
+    }
     return await new Promise((resolve) => {
-      exec(command, { cwd: absCwd, windowsHide: true, timeout: 120000 }, (error, stdout, stderr) => {
+      exec(command, execOptions, (error, stdout, stderr) => {
         const code = error && typeof error.code === 'number' ? error.code : 0
         resolve({ ok: !error, command, cwd, code, stdout: stdout ?? '', stderr: stderr ?? '' })
       })
@@ -281,6 +287,15 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 720,
     title: 'ZyTrader Desktop',
+    titleBarStyle: process.platform === 'win32' ? 'hidden' : 'default',
+    titleBarOverlay: process.platform === 'win32'
+      ? {
+          color: '#2f2f2f',
+          symbolColor: '#d4d4d4',
+          height: 32,
+        }
+      : false,
+    backgroundColor: '#1e1e1e',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

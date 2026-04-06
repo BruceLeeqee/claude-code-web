@@ -1,0 +1,134 @@
+.collab-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #09090b;
+}
+
+.collab-toolbar {
+  border-bottom: 1px solid #27272a;
+  background: #0c0c0e;
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.title-wrap h1 {
+  margin: 0;
+  color: #fff;
+  font-size: 16px;
+}
+
+.badge {
+  border: 1px solid #3f3f46;
+  background: #18181b;
+  color: #a1a1aa;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toolbar-actions label {
+  color: #a1a1aa;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+
+.agent-card {
+  border: 1px solid #27272a;
+  background: #18181b;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agent-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.agent-head h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #fff;
+}
+
+.agent-head p {
+  margin: 4px 0 0;
+  color: #71717a;
+  font-size: 12px;
+}
+
+.status {
+  font-size: 11px;
+  color: #c4b5fd;
+  text-transform: uppercase;
+}
+
+.agent-progress .meta {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  color: #a1a1aa;
+  font-size: 12px;
+}
+
+.agent-log {
+  border: 1px solid #3f3f46;
+  background: #0b0b0f;
+  border-radius: 8px;
+  padding: 8px;
+  min-height: 120px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.line {
+  color: #a1a1aa;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.collab-footer {
+  border-top: 1px solid #27272a;
+  background: #18181b;
+  padding: 8px 14px;
+  color: #71717a;
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between;
+}

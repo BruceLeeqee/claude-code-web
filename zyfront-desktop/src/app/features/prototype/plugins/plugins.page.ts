@@ -1,15 +1,16 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { NgFor } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
-import { NzCardModule } from 'ng-zorro-antd/card';
-import { PrototypeCoreFacade } from '../shared/prototype-core.facade';
+import { NzInputModule } from 'ng-zorro-antd/input';
+import { PrototypeCoreFacade } from '../../../shared/prototype-core.facade';
 
 @Component({
   selector: 'app-plugins-page',
   standalone: true,
-  imports: [NgFor, NzCardModule, NzButtonModule],
+  imports: [NgFor, FormsModule, NzButtonModule, NzInputModule],
   templateUrl: './plugins.page.html',
-  styleUrl: '../prototype-page.scss',
+  styleUrls: ['../prototype-page.scss', './plugins.page.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class PluginsPrototypePageComponent {

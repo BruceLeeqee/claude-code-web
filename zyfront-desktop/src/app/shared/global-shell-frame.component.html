@@ -1,0 +1,89 @@
+<div class="global-shell-frame">
+  <header class="global-menubar" role="menubar" aria-label="应用菜单栏">
+    <div class="menu-left" role="none">
+      <button type="button" class="menu-item" role="menuitem">文件(F)</button>
+      <button type="button" class="menu-item" role="menuitem">编辑(E)</button>
+      <button type="button" class="menu-item" role="menuitem">选择(S)</button>
+      <button type="button" class="menu-item" role="menuitem">查看(V)</button>
+      <button type="button" class="menu-item" role="menuitem">转到(G)</button>
+      <button type="button" class="menu-item" role="menuitem">运行(R)</button>
+      <button type="button" class="menu-item" role="menuitem">终端(T)</button>
+      <button type="button" class="menu-item" role="menuitem">帮助(H)</button>
+    </div>
+
+    <div class="menu-center">zyfront AI</div>
+
+    <div class="menu-right">
+      <div class="menu-controls">
+        <button
+          type="button"
+          class="ctrl-btn"
+          *ngIf="showExplorerToggle"
+          (click)="toggleExplorer.emit()"
+          [class.active]="explorerVisible"
+          title="显示/隐藏项目目录"
+        >
+          <span nz-icon nzType="folder"></span>
+        </button>
+        <button
+          type="button"
+          class="ctrl-btn"
+          *ngIf="showTerminalMenuToggle"
+          (click)="toggleTerminalMenu.emit()"
+          [class.active]="terminalMenuVisible"
+          title="显示/隐藏终端面板"
+        >
+          <span nz-icon nzType="code"></span>
+        </button>
+        <a
+          *ngIf="showSettingsToggle"
+          class="ctrl-btn link-btn"
+          routerLink="/prototype/models"
+          title="打开配置"
+        >
+          <span nz-icon nzType="setting"></span>
+        </a>
+        <button
+          type="button"
+          class="ctrl-btn"
+          *ngIf="showRightPanelToggle"
+          (click)="toggleRightPanel.emit()"
+          [class.active]="rightPanelVisible"
+          title="显示/隐藏右侧边栏"
+        >
+          <span nz-icon nzType="profile"></span>
+        </button>
+      </div>
+      <span class="menu-win-icon" nz-icon nzType="minus"></span>
+      <span class="menu-win-icon" nz-icon nzType="border"></span>
+      <span class="menu-win-icon close" nz-icon nzType="close"></span>
+    </div>
+  </header>
+
+  <div class="global-shell-body">
+    <aside class="wb-activity-rail">
+      <a nz-button nzType="text" nzShape="circle" routerLink="/workbench" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="工作台">
+        <span nz-icon nzType="code"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/skills" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="技能">
+        <span nz-icon nzType="thunderbolt"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/models" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="模型配置">
+        <span nz-icon nzType="robot"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/plugins" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="插件管理">
+        <span nz-icon nzType="appstore"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/graph" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="图谱">
+        <span nz-icon nzType="deployment-unit"></span>
+      </a>
+      <a nz-button nzType="text" nzShape="circle" routerLink="/prototype/collaboration" routerLinkActive="wb-rail-active" [routerLinkActiveOptions]="{ exact: true }" title="协作">
+        <span nz-icon nzType="team"></span>
+      </a>
+    </aside>
+
+    <section class="global-shell-content">
+      <ng-content></ng-content>
+    </section>
+  </div>
+</div>

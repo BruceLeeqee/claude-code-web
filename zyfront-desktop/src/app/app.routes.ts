@@ -15,19 +15,15 @@ export const routes: Routes = [
       import('./features/prototype/workbench/workbench.page').then((m) => m.WorkbenchPageComponent),
   },
   {
-    path: 'settings',
-    loadComponent: () =>
-      import('./features/settings/settings.page').then((m) => m.SettingsPageComponent),
-  },
-  {
     path: 'prototype',
     loadComponent: () =>
       import('./features/prototype/prototype-shell.component').then((m) => m.PrototypeShellComponent),
     children: [
-      { path: '', pathMatch: 'full', redirectTo: 'models' },
+      { path: '', pathMatch: 'full', redirectTo: 'skills' },
       {
         path: 'models',
-        loadComponent: () => import('./features/prototype/models/models.page').then((m) => m.ModelsPrototypePageComponent),
+        loadComponent: () =>
+          import('./features/prototype/models/models.page').then((m) => m.ModelsPrototypePageComponent),
       },
       {
         path: 'graph',

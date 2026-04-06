@@ -1,11 +1,122 @@
-<div class="cards-grid">
-  <nz-card *ngFor="let skill of facade.skills()" class="block" [nzTitle]="skill.name">
-    <p>{{ skill.desc }}</p>
-    <div class="actions">
-      <nz-tag [nzColor]="skill.active ? 'green' : 'default'">{{ skill.active ? '已启用' : '未启用' }}</nz-tag>
-      <button nz-button nzType="primary" (click)="facade.toggleSkill(skill.id)">
-        {{ skill.active ? '停用' : '启用' }}
-      </button>
-    </div>
-  </nz-card>
-</div>
+<section class="proto-page skills-page">
+  <div class="skills-layout">
+    <aside class="skills-left">
+      <div class="left-head">
+        <h3>技能库</h3>
+        <button nz-button nzType="primary" nzSize="small">+ 新建技能</button>
+      </div>
+
+      <div class="left-section-title">已安装技能</div>
+      <div class="skill-list">
+        <button
+          class="skill-card"
+          type="button"
+          *ngFor="let skill of facade.skills()"
+          (click)="facade.toggleSkill(skill.id)"
+          [class.active]="skill.active"
+        >
+          <div class="skill-icon">{{ skill.active ? '✦' : '◼' }}</div>
+          <div>
+            <div class="name">{{ skill.name }}</div>
+            <div class="desc">{{ skill.desc }}</div>
+          </div>
+        </button>
+      </div>
+
+      <div class="left-section-title mt">分类</div>
+      <ul class="category-list">
+        <li>代码质量 (4)</li>
+        <li>DevOps (2)</li>
+        <li>数据分析 (3)</li>
+      </ul>
+
+      <div class="quick-nav">
+        <a routerLink="/prototype/models" routerLinkActive="active">模型配置</a>
+        <a routerLink="/prototype/plugins" routerLinkActive="active">插件管理</a>
+      </div>
+    </aside>
+
+    <main class="skills-main">
+      <div class="main-breadcrumb">技能库 / {{ activeSkill().name }}</div>
+
+      <article class="hero-card">
+        <div class="hero-top">
+          <div class="hero-icon">⚒</div>
+          <div class="hero-body">
+            <h1>{{ activeSkill().name }}</h1>
+            <p>{{ activeSkill().desc }}</p>
+            <div class="meta-row">
+              <span>已同步文件 18</span>
+              <span>最后更新 2026-04-01</span>
+            </div>
+          </div>
+          <div class="hero-actions">
+            <button nz-button>配置技能</button>
+            <button nz-button nzType="primary">立即运行</button>
+          </div>
+        </div>
+
+        <div class="capability-grid">
+          <section>
+            <h4>核心能力</h4>
+            <ul>
+              <li>循环展开与优化</li>
+              <li>变量作用域提取</li>
+              <li>异步/同步逻辑转换</li>
+            </ul>
+          </section>
+          <section>
+            <h4>兼容语言</h4>
+            <div class="tags">
+              <nz-tag>TypeScript</nz-tag>
+              <nz-tag>JavaScript</nz-tag>
+              <nz-tag>Python</nz-tag>
+              <nz-tag>Go</nz-tag>
+            </div>
+          </section>
+        </div>
+      </article>
+
+      <article class="sample-card">
+        <div class="sample-head">
+          <h3>用法示例</h3>
+          <span>CLI 语法</span>
+        </div>
+        <pre>/refactor --target=src/core/parser.ts
+Analyzing parser.ts...
+Found 3 potential improvements.
+Applying rule: simplify-conditionals...</pre>
+      </article>
+    </main>
+
+    <aside class="skills-right">
+      <div class="right-head">
+        <h3>任务分解</h3>
+      </div>
+      <ul class="task-list">
+        <li class="done">
+          <strong>初始化环境</strong>
+          <span>加载 AST 解析器并同步本地配置</span>
+        </li>
+        <li class="done">
+          <strong>扫描目标代码</strong>
+          <span>定位 src/core 下冗余逻辑</span>
+        </li>
+        <li class="active">
+          <strong>执行 AI 逻辑变换</strong>
+          <span>正在调用 DeepSeek-Coder-V2</span>
+        </li>
+        <li>
+          <strong>验证重构一致性</strong>
+          <span>运行自动化测试对比输出</span>
+        </li>
+      </ul>
+
+      <div class="runtime-stats">
+        <div><span>已用时</span><strong>00:13:45</strong></div>
+        <div><span>内存消耗</span><strong>1.4 GB</strong></div>
+        <div><span>当前状态</span><strong class="ok">运行中</strong></div>
+      </div>
+    </aside>
+  </div>
+</section>

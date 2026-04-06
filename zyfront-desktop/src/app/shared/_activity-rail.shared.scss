@@ -1,0 +1,40 @@
+.wb-activity-rail {
+  width: 46px;
+  min-width: 46px;
+  max-width: 46px;
+  border-right: 1px solid #232432;
+  background: #10121a;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  padding-top: 8px;
+
+  button,
+  a[nz-button] {
+    color: #8a8ea5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    padding: 0;
+    font-size: 18px;
+    line-height: 1;
+    border: 1px solid transparent;
+    box-sizing: border-box;
+
+    span[nz-icon] {
+      font-size: 18px;
+      line-height: 1;
+    }
+  }
+
+  .wb-rail-active {
+    color: #dbe0ff !important;
+    background: #1e2233 !important;
+    border-radius: 10px;
+    border-color: #2b3352 !important;
+  }
+}
