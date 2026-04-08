@@ -32,6 +32,16 @@
         <button
           type="button"
           class="ctrl-btn"
+          *ngIf="showLeftPanelToggle"
+          (click)="toggleLeftPanel.emit()"
+          [class.active]="leftPanelVisible"
+          [title]="leftPanelVisible ? '隐藏左侧项目目录' : '显示左侧项目目录'"
+        >
+          <span nz-icon nzType="step-backward" nzTheme="outline"></span>
+        </button>
+        <button
+          type="button"
+          class="ctrl-btn"
           *ngIf="showTerminalMenuToggle"
           (click)="toggleTerminalMenu.emit()"
           [class.active]="terminalMenuVisible"

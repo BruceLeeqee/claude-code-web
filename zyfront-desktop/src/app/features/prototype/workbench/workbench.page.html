@@ -1,11 +1,14 @@
 <app-global-shell-frame
   [llmAvailable]="llmAvailable()"
+  [showLeftPanelToggle]="true"
+  [leftPanelVisible]="leftPanelVisible()"
   [showTerminalMenuToggle]="true"
   [showSettingsToggle]="true"
   [showRightPanelToggle]="true"
   [terminalMenuVisible]="terminalMenuVisible()"
   [rightPanelVisible]="rightPanelVisible()"
   (openProject)="pickWorkspaceFolder()"
+  (toggleLeftPanel)="toggleLeftPanel()"
   (toggleTerminalMenu)="toggleTerminalMenu()"
   (toggleRightPanel)="toggleRightPanel()"
 >
@@ -217,15 +220,6 @@
 
       <section class="wb-center-panel" (click)="hideTabContextMenu()">
         <div class="wb-center-tabs">
-          <button
-            type="button"
-            class="tab-scroll-btn"
-            [title]="leftPanelVisible() ? '隐藏左侧项目目录' : '显示左侧项目目录'"
-            (click)="toggleLeftPanel()"
-          >
-            {{ leftPanelVisible() ? '⟨' : '⟩' }}
-          </button>
-          <button type="button" class="tab-scroll-btn" title="向左滚动" (click)="scrollTabsBy(-220)">◀</button>
           <div class="wb-center-tabs-scroll" #tabScrollHost>
             <div
               *ngFor="let tab of visibleTabs()"
@@ -249,7 +243,20 @@
               </button>
             </div>
           </div>
-          <button type="button" class="tab-scroll-btn" title="向右滚动" (click)="scrollTabsBy(220)">▶</button>
+          <div class="tab-overflow-wrap" *ngIf="tabBarHasOverflow()">
+            <button type="button" class="tab-overflow-btn" title="显示隐藏标签页" (click)="toggleTabOverflowMenu($event)">»</button>
+            <div class="tab-overflow-menu" *ngIf="tabOverflowMenuOpen()" (click)="$event.stopPropagation()">
+              <button
+                type="button"
+                class="tab-overflow-item"
+                *ngFor="let tab of tabOverflowHiddenTabs()"
+                [title]="tabTooltip(tab)"
+                (click)="selectTabFromOverflowMenu(tab)"
+              >
+                {{ displayTabLabel(tab) }}
+              </button>
+            </div>
+          </div>
         </div>
         <div
           class="tab-context-menu"

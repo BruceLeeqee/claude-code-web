@@ -7,6 +7,7 @@ import {
   OnDestroy,
   ViewChild,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -408,6 +409,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly leftPanelWidth = signal(260);
   protected readonly rightPanelWidth = signal(300);
   protected readonly bottomPanelHeight = signal(180);
+  protected readonly tabOverflowHiddenTabs = signal<string[]>([]);
+  protected readonly tabBarHasOverflow = signal(false);
+  protected readonly tabOverflowMenuOpen = signal(false);
+  private tabOverflowObserver?: ResizeObserver;
 
   protected readonly mainGridTemplate = computed(() => {
     const cols: string[] = [];
@@ -421,6 +426,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly centerGridTemplateRows = computed(() => {
     if (!this.terminalMenuVisible()) return 'minmax(0, 1fr)';
     return `minmax(0, 1fr) 4px minmax(120px, ${this.bottomPanelHeight()}px)`;
+  });
+
+  private readonly tabOverflowSyncEffect = effect(() => {
+    this.visibleTabs();
+    this.activeTab();
+    queueMicrotask(() => this.updateTabOverflow());
   });
 
   private syncTimer?: number;
@@ -454,6 +465,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     if (!this.psTerminal) {
       setTimeout(() => void this.initPowerShellTerminal(), 0);
     }
+    queueMicrotask(() => this.setupTabOverflowObserver());
   }
 
   ngOnDestroy(): void {
@@ -481,6 +493,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     if (this.syncTimer) window.clearInterval(this.syncTimer);
     if (this.memoryStatsTimer) window.clearInterval(this.memoryStatsTimer);
     if (this.gitPollTimer) window.clearInterval(this.gitPollTimer);
+    this.teardownTabOverflowObserver();
   }
 
   private hasLlmConfigured(): boolean {
@@ -582,8 +595,72 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return tab;
   }
 
-  protected scrollTabsBy(offsetPx: number): void {
-    this.tabScrollHost?.nativeElement.scrollBy({ left: offsetPx, behavior: 'smooth' });
+  private readonly tabOverflowOnScroll = (): void => {
+    this.updateTabOverflow();
+  };
+
+  private setupTabOverflowObserver(): void {
+    const host = this.tabScrollHost?.nativeElement;
+    if (!host) return;
+    this.teardownTabOverflowObserver();
+    const run = (): void => this.updateTabOverflow();
+    this.tabOverflowObserver = new ResizeObserver(run);
+    this.tabOverflowObserver.observe(host);
+    host.addEventListener('scroll', this.tabOverflowOnScroll, { passive: true });
+    run();
+  }
+
+  private teardownTabOverflowObserver(): void {
+    const host = this.tabScrollHost?.nativeElement;
+    if (host) {
+      host.removeEventListener('scroll', this.tabOverflowOnScroll);
+    }
+    this.tabOverflowObserver?.disconnect();
+    this.tabOverflowObserver = undefined;
+  }
+
+  private updateTabOverflow(): void {
+    const host = this.tabScrollHost?.nativeElement;
+    if (!host) return;
+    const labels = this.visibleTabs();
+    const els = host.querySelectorAll<HTMLElement>('.editor-tab');
+    const hL = host.scrollLeft;
+    const hR = host.scrollLeft + host.clientWidth;
+    const hidden: string[] = [];
+    els.forEach((el, i) => {
+      const tab = labels[i];
+      if (!tab) return;
+      const left = el.offsetLeft;
+      const right = left + el.offsetWidth;
+      if (right > hR + 2 || left < hL - 2) {
+        hidden.push(tab);
+      }
+    });
+    const hasOverflow = host.scrollWidth > host.clientWidth + 2;
+    this.tabOverflowHiddenTabs.set(hidden);
+    this.tabBarHasOverflow.set(hasOverflow);
+    if (!hasOverflow) this.tabOverflowMenuOpen.set(false);
+    this.cdr.markForCheck();
+  }
+
+  protected toggleTabOverflowMenu(event: MouseEvent): void {
+    event.stopPropagation();
+    this.tabOverflowMenuOpen.update((v) => !v);
+  }
+
+  protected selectTabFromOverflowMenu(tab: string): void {
+    this.setTab(tab);
+    this.tabOverflowMenuOpen.set(false);
+    queueMicrotask(() => {
+      const host = this.tabScrollHost?.nativeElement;
+      const els = host?.querySelectorAll<HTMLElement>('.editor-tab');
+      const labels = this.visibleTabs();
+      const idx = labels.indexOf(tab);
+      if (els && idx >= 0 && els[idx]) {
+        els[idx].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+      this.updateTabOverflow();
+    });
   }
 
   protected onTabContextMenu(tab: string, event: MouseEvent): void {
@@ -596,8 +673,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected hideTabContextMenu(): void {
     if (this.tabContextMenu()) {
       this.tabContextMenu.set(null);
-      this.cdr.markForCheck();
     }
+    if (this.tabOverflowMenuOpen()) {
+      this.tabOverflowMenuOpen.set(false);
+    }
+    this.cdr.markForCheck();
   }
 
   protected onEditorContentChange(text: string): void {
@@ -1318,7 +1398,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected toggleLeftPanel(): void {
     this.leftPanelVisible.update((v) => !v);
-    queueMicrotask(() => this.fitAddon?.fit());
+    queueMicrotask(() => {
+      this.fitAddon?.fit();
+      this.updateTabOverflow();
+    });
   }
 
   protected onLeftResizeStart(event: MouseEvent): void {
@@ -1395,7 +1478,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected toggleRightPanel(): void {
     this.rightPanelVisible.update((v) => !v);
-    queueMicrotask(() => this.fitAddon?.fit());
+    queueMicrotask(() => {
+      this.fitAddon?.fit();
+      this.updateTabOverflow();
+    });
   }
 
   protected onRightResizeStart(event: MouseEvent): void {

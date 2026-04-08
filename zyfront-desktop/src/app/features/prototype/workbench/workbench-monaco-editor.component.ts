@@ -7,6 +7,7 @@ import {
   effect,
   input,
   output,
+  signal,
   viewChild,
 } from '@angular/core';
 import loader from '@monaco-editor/loader';
@@ -57,18 +58,20 @@ export class WorkbenchMonacoEditorComponent implements AfterViewInit, OnDestroy 
 
   private editor?: import('monaco-editor').editor.IStandaloneCodeEditor;
   private monaco?: MonacoApi;
-  private ready = false;
+  /** 与 loader/editor 就绪联动，确保 effect 在首次可写时同步一次 */
+  private readonly editorReady = signal(false);
   private markersDisposable?: { dispose: () => void };
 
   constructor() {
     effect(() => {
-      if (!this.ready || !this.editor || !this.monaco) return;
+      // 必须先读 input signal，否则若在 !ready 时提前 return，将不会订阅 value，切换 Tab 时视图不更新
       const v = this.value();
+      const lang = this.language();
+      if (!this.editorReady() || !this.editor || !this.monaco) return;
       const cur = this.editor.getValue();
       if (cur !== v) {
         this.editor.setValue(v);
       }
-      const lang = this.language();
       const model = this.editor.getModel();
       if (model) {
         this.monaco.editor.setModelLanguage(model, lang);
@@ -132,7 +135,7 @@ export class WorkbenchMonacoEditorComponent implements AfterViewInit, OnDestroy 
     this.markersDisposable = monaco.editor.onDidChangeMarkers(() => this.pushMarkers());
     this.pushMarkers();
 
-    this.ready = true;
+    this.editorReady.set(true);
   }
 
   private applyTsDefaults(monaco: MonacoApi): void {
@@ -164,7 +167,7 @@ export class WorkbenchMonacoEditorComponent implements AfterViewInit, OnDestroy 
   }
 
   ngOnDestroy(): void {
-    this.ready = false;
+    this.editorReady.set(false);
     this.markersDisposable?.dispose();
     this.markersDisposable = undefined;
     this.editor?.dispose();
