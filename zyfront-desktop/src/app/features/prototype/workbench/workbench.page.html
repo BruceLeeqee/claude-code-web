@@ -217,6 +217,14 @@
 
       <section class="wb-center-panel" (click)="hideTabContextMenu()">
         <div class="wb-center-tabs">
+          <button
+            type="button"
+            class="tab-scroll-btn"
+            [title]="leftPanelVisible() ? '隐藏左侧项目目录' : '显示左侧项目目录'"
+            (click)="toggleLeftPanel()"
+          >
+            {{ leftPanelVisible() ? '⟨' : '⟩' }}
+          </button>
           <button type="button" class="tab-scroll-btn" title="向左滚动" (click)="scrollTabsBy(-220)">◀</button>
           <div class="wb-center-tabs-scroll" #tabScrollHost>
             <div
@@ -227,6 +235,15 @@
               (contextmenu)="onTabContextMenu(tab, $event)"
             >
               <button type="button" class="tab-label-btn" (click)="setTab(tab)">{{ displayTabLabel(tab) }}</button>
+              <button
+                *ngIf="tab !== 'Terminal - Main'"
+                type="button"
+                class="tab-close-btn"
+                title="关闭"
+                (click)="closeEditorTab(tab); $event.stopPropagation()"
+              >
+                ×
+              </button>
             </div>
           </div>
           <button type="button" class="tab-scroll-btn" title="向右滚动" (click)="scrollTabsBy(220)">▶</button>

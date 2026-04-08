@@ -35,6 +35,7 @@ import { TerminalMemoryGraphService } from '../../../core/terminal-memory-graph.
 import { CommandRouterService } from './command-router.service';
 import { DIRECTIVE_REGISTRY, isCoordinationMode, parseDirective, type DirectiveDefinition } from './directive-registry';
 import { Subscription } from 'rxjs';
+import { type TurnContext } from '../../../core/memory/memory.types';
 
 /** 自动提交：主终端发给助手的固定提示（中文以走自然语言路由） */
 const AUTO_COMMIT_PROMPT =
@@ -263,9 +264,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly tabs = signal<string[]>(['Terminal - Main']);
   protected readonly activeTab = signal('Terminal - Main');
   protected readonly terminalBusy = signal(false);
-  protected readonly visibleTabs = computed(() =>
-    this.tabs().filter((tab) => tab === 'Terminal - Main' || tab === this.activeTab() || this.tabEditorState.get(tab)?.dirty),
-  );
+  protected readonly visibleTabs = computed(() => this.tabs());
 
   private readonly inputHistory = signal<string[]>([]);
 
@@ -403,8 +402,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected readonly leftPanelVisible = signal(true);
   /** 为 true 时渲染底部 PTY；默认开启以便首次进入即可初始化真实 Shell */
-  protected readonly terminalMenuVisible = signal(true);
-  protected readonly rightPanelVisible = signal(true);
+  protected readonly terminalMenuVisible = signal(false);
+  protected readonly rightPanelVisible = signal(false);
 
   protected readonly leftPanelWidth = signal(260);
   protected readonly rightPanelWidth = signal(300);
@@ -1496,6 +1495,31 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.persistRecentTurns(next);
   }
 
+  private async triggerMemoryPipelineFromHistory(userPrompt: string): Promise<void> {
+    const prompt = userPrompt.trim();
+    if (!prompt) return;
+
+    const now = Date.now();
+    const msgs = await this.runtime.history.list(SESSION_ID);
+    const turn: TurnContext = {
+      sessionId: SESSION_ID,
+      turnId: `turn_${now}`,
+      timestamp: now,
+      messages: msgs.reduce<TurnContext['messages']>((acc, m) => {
+        if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'system') return acc;
+        acc.push({
+          id: m.id,
+          role: m.role,
+          content: String(m.content ?? ''),
+          timestamp: m.timestamp,
+        });
+        return acc;
+      }, []),
+    };
+    await this.agentMemory.runMemoryPipelineNow(turn);
+    await this.refreshShortTermMemoryStats();
+  }
+
   /** plan 模式：从最近一条助手消息解析步骤并写入协调器 */
   private async syncPlanStepsFromLastAssistant(): Promise<void> {
     if (this.runtime.coordinator.getState().mode !== 'plan') return;
@@ -1667,7 +1691,31 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.aiXtermWrite(
       '\x1b[90m主终端：shell；前加 ! 显式执行。输入 / 时下一行实时显示同前缀指令；Tab 补全；Shift+Tab 切换 对话/计划/执行；流式时 Ctrl+C 中断。\x1b[0m\r\n',
     );
+    void this.replayMainSessionHistory();
     this.writeMainTerminalPrompt();
+  }
+
+  private async replayMainSessionHistory(): Promise<void> {
+    try {
+      const msgs = await this.runtime.history.list(SESSION_ID);
+      const recent = msgs.slice(-24);
+      if (recent.length === 0) return;
+      this.aiXtermWrite('\x1b[90m--- 已恢复最近会话 ---\x1b[0m\r\n');
+      for (const m of recent) {
+        const content = String(m.content ?? '').trim();
+        if (!content) continue;
+        if (m.role === 'user') {
+          this.aiXtermWrite(`\x1b[32m>\x1b[0m ${content}\r\n`);
+        } else if (m.role === 'assistant') {
+          this.aiXtermWrite(`\x1b[35m[助手]\x1b[0m\r\n${content}\r\n`);
+        } else if (m.role === 'tool') {
+          this.aiXtermWrite(`\x1b[36m[工具]\x1b[0m ${content.replace(/\r?\n/g, ' ')}\r\n`);
+        }
+      }
+      this.aiXtermWrite('\x1b[90m--- 恢复结束 ---\x1b[0m\r\n');
+    } catch {
+      // ignore history replay failures
+    }
   }
 
   private writeMainTerminalPrompt(): void {
@@ -2105,6 +2153,16 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       } else if (!streamFailed) {
         this.aiXtermWrite('\r\n\x1b[90m本轮结束。\x1b[0m\r\n');
         await this.appendRecentTurnAfterSuccess(trimmed);
+        try {
+          await this.triggerMemoryPipelineFromHistory(trimmed);
+          const last = this.agentMemory.getPipelineStatus().lastResult;
+          this.aiXtermWrite(
+            `\x1b[90m[memory] pipeline=${last?.pipeline ?? 'unknown'} status=${last?.status ?? 'unknown'} reason=${last?.reason ?? 'none'}\x1b[0m\r\n`,
+          );
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'unknown_error';
+          this.aiXtermWrite(`\x1b[31m[memory] pipeline 失败：${msg}\x1b[0m\r\n`);
+        }
         await this.syncPlanStepsFromLastAssistant();
         this.syncCoordinatorState();
       } else {

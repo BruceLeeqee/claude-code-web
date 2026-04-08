@@ -1,5 +1,8 @@
 import { Injectable } from '@angular/core';
 import { DirectoryManagerService } from './directory-manager.service';
+import { MemoryOrchestratorService } from './memory/memory.orchestrator';
+import { TeamMemorySyncService, type TeamSyncState } from './memory/team/team-memory-sync.service';
+import { type MemoryPipelineStatus, type TurnContext } from './memory/memory.types';
 
 export interface AgentShortTermMemory {
   id: string;
@@ -35,16 +38,22 @@ type AgentMemoryType = 'short' | 'long' | 'context';
 
 @Injectable({ providedIn: 'root' })
 export class AgentMemoryService {
-  constructor(private readonly directoryManager: DirectoryManagerService) {}
+  constructor(
+    private readonly directoryManager: DirectoryManagerService,
+    private readonly memoryOrchestrator: MemoryOrchestratorService,
+    private readonly teamSync: TeamMemorySyncService,
+  ) {}
 
   private keyByType(type: AgentMemoryType): string {
     return type === 'short' ? 'agent-short-term' : type === 'long' ? 'agent-long-term' : 'agent-context';
   }
 
   private buildId(prefix: string, extra?: string): string {
-    const ts = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+    const now = new Date();
+    const ts = now.toISOString().replace(/[-:.TZ]/g, '').slice(0, 17);
+    const nonce = Math.random().toString(36).slice(2, 8);
     const suffix = extra ? `-${extra.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 24)}` : '';
-    return `${prefix}-${ts}${suffix}`;
+    return `${prefix}-${ts}-${nonce}${suffix}`;
   }
 
   async writeShortTermMemory(
@@ -194,5 +203,36 @@ export class AgentMemoryService {
     const content = map['content'];
     const body = typeof content === 'string' ? content : JSON.stringify(content ?? {}, null, 2);
     return `---\n${JSON.stringify(map, null, 2)}\n---\n\n${body}`;
+  }
+
+  /** Sprint 1: memory pipeline runtime status */
+  getPipelineStatus(): MemoryPipelineStatus {
+    return this.memoryOrchestrator.getStatus();
+  }
+
+  async runMemoryPipelineNow(turn?: TurnContext): Promise<void> {
+    const now = Date.now();
+    const fallbackTurn: TurnContext = {
+      sessionId: 'manual-session',
+      turnId: `manual-${now}`,
+      timestamp: now,
+      messages: [
+        {
+          id: `manual-${now}`,
+          role: 'system',
+          content: 'Manual memory pipeline run',
+          timestamp: now,
+        },
+      ],
+    };
+    await this.memoryOrchestrator.runNow(turn ?? fallbackTurn);
+  }
+
+  getTeamSyncState(): TeamSyncState {
+    return this.teamSync.getState();
+  }
+
+  async retryTeamSyncNow(): Promise<void> {
+    await this.teamSync.retryNow();
   }
 }

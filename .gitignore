@@ -19,3 +19,6 @@ Thumbs.db
 
 # 本地工具 / 编辑器生成的项目记忆（不入库）
 .omc/
+
+# 本机/IDE AI 代理配置（通常包含本地路径或敏感信息）
+.claude/settings*.json

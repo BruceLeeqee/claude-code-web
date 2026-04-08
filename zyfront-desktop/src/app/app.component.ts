@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import { ClaudeAgentService } from './core/claude-agent.service';
+import { TeamMemorySyncService } from './core/memory/team/team-memory-sync.service';
+import { RuntimeSettingsSyncService } from './core/runtime-settings-sync.service';
 
 @Component({
   selector: 'app-root',
@@ -11,9 +12,10 @@ import { ClaudeAgentService } from './core/claude-agent.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AppComponent {
-  /**
-   * 必须尽早构造，以便订阅 AppSettingsService 并把 API Key 写入 ClaudeClient。
-   * 仅打开工作台时若未注入本服务，会导致请求始终无 Key（401）。
-   */
-  private readonly _agentSettingsBridge = inject(ClaudeAgentService);
+  private readonly _runtimeSettingsSync = inject(RuntimeSettingsSyncService);
+  private readonly _teamMemorySync = inject(TeamMemorySyncService);
+
+  constructor() {
+    void this._teamMemorySync.start();
+  }
 }

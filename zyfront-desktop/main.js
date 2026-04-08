@@ -276,7 +276,18 @@ function resolveVaultPath(relativePath = '.') {
 
 function resolveScopedPath(relativePath, scope) {
   const sc = scope === 'vault' ? 'vault' : 'workspace'
-  return sc === 'vault' ? resolveVaultPath(relativePath) : resolveSafePath(relativePath)
+  try {
+    return sc === 'vault' ? resolveVaultPath(relativePath) : resolveSafePath(relativePath)
+  } catch (error) {
+    // Tolerate wrong scope from renderer when absolute path is already under
+    // the other allowed root; keep path traversal checks enforced.
+    const raw = String(relativePath ?? '').trim()
+    if (!path.isAbsolute(raw)) throw error
+    const abs = path.normalize(raw)
+    if (isPathUnder(abs, RUNTIME.workspaceRoot)) return abs
+    if (isPathUnder(abs, RUNTIME.vaultRoot)) return abs
+    throw error
+  }
 }
 
 /** 供 shell.openPath：工作区或 Vault 相对路径，或用户主目录/工作区/Vault 下的绝对路径 */
@@ -453,8 +464,21 @@ function registerIpcHandlers() {
   ipcMain.handle('zytrader:fs:read', async (_event, filePath, opts = {}) => {
     const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
     const abs = resolveScopedPath(filePath, scope)
-    const content = await fs.readFile(abs, 'utf8')
-    return { ok: true, path: filePath, scope, content }
+    try {
+      const content = await fs.readFile(abs, 'utf8')
+      return { ok: true, path: filePath, scope, content }
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+      if (code === 'ENOENT') {
+        return { ok: false, path: filePath, scope, error: 'not_found' }
+      }
+      return {
+        ok: false,
+        path: filePath,
+        scope,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
   })
 
   ipcMain.handle('zytrader:fs:write', async (_event, filePath, content, opts = {}) => {

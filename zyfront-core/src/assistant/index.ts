@@ -295,7 +295,11 @@ export class AssistantRuntime {
                   };
                   await this.history.append(sessionId, finalMsg);
                   this.coordinator.ingestAssistantMessage(finalMsg);
-                  controller.enqueue({ type: 'done', usage: t.usage });
+                  if (t.usage) {
+                    controller.enqueue({ type: 'done', usage: t.usage });
+                  } else {
+                    controller.enqueue({ type: 'done' });
+                  }
                   controller.close();
                   return;
                 }

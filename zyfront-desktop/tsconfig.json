@@ -5,10 +5,10 @@
     "outDir": "./dist/out-tsc",
     "baseUrl": "./",
     "paths": {
-      "zyfront-core": ["../zyfront-core/src/index.ts"],
-      "zyfront-core/*": ["../zyfront-core/src/*"],
-      "claude-core": ["../zyfront-core/src/index.ts"],
-      "claude-core/*": ["../zyfront-core/src/*"]
+      "zyfront-core": ["./node_modules/zyfront-core/dist/index.d.ts"],
+      "zyfront-core/*": ["./node_modules/zyfront-core/dist/*"],
+      "claude-core": ["./node_modules/zyfront-core/dist/index.d.ts"],
+      "claude-core/*": ["./node_modules/zyfront-core/dist/*"]
     },
     "strict": true,
     "noImplicitOverride": true,
