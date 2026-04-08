@@ -61,6 +61,93 @@
   height: 100%;
 }
 
+.vault-explorer-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px 8px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: #858585;
+  border-bottom: 1px solid #333;
+}
+
+.vault-meta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.vault-action-btn {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid #555;
+  background: #3c3c3c;
+  color: #e0e0e0;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: #4a4a4a;
+  }
+
+  &.active {
+    border-color: #0078d4;
+    background: rgba(0, 120, 212, 0.32);
+    color: #ffffff;
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+.vault-meta-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+
+}
+
+.explorer-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #bbb;
+  padding: 8px 8px 4px;
+}
+
+.tree-scroll--nested {
+  max-height: 40vh;
+  border-top: 1px solid #2a2a2a;
+}
+
+.vault-meta-k {
+  font-weight: 600;
+  color: #b0b0b0;
+}
+
+.vault-meta-v {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cccccc;
+}
+
+.vault-badge {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #5a3d00;
+  color: #ffd586;
+}
+
+
 .left-title-row {
   display: flex;
   align-items: center;
@@ -597,6 +684,16 @@
   &.is-dir .vscode-tree-label {
     color: #e0e0e0;
   }
+
+  &.is-project-entry {
+    background: rgba(245, 158, 11, 0.16);
+    border: 1px solid rgba(245, 158, 11, 0.45);
+
+    .vscode-tree-label {
+      color: #fde68a;
+      font-weight: 600;
+    }
+  }
 }
 
 .vscode-chevron {
@@ -628,6 +725,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.entry-badge {
+  margin-left: 8px;
+  font-size: 10px;
+  line-height: 1;
+  border-radius: 999px;
+  padding: 2px 6px;
+  border: 1px solid rgba(245, 158, 11, 0.65);
+  color: #fbbf24;
+  background: rgba(0, 0, 0, 0.35);
+}
+
 
 .left-activity {
   border-top: 1px solid #2b2b2b;
@@ -808,6 +917,7 @@
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
 
 .ps-btn {
   border: 1px solid #3a3f4f;

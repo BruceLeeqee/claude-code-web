@@ -1,7 +1,20 @@
 <div class="global-shell-frame">
   <header class="global-menubar" role="menubar" aria-label="应用菜单栏">
     <div class="menu-left" role="none">
-      <button type="button" class="menu-item" role="menuitem">文件(F)</button>
+      <div class="menu-group" role="none">
+        <button type="button" class="menu-item" role="menuitem" [attr.aria-haspopup]="'menu'">文件(F)</button>
+        <div class="menu-dropdown" role="menu" aria-label="文件菜单">
+          <button
+            type="button"
+            class="menu-dropdown-item"
+            role="menuitem"
+            *ngFor="let item of fileMenuItems"
+            (click)="handleFileMenuAction(item.key)"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+      </div>
       <button type="button" class="menu-item" role="menuitem">编辑(E)</button>
       <button type="button" class="menu-item" role="menuitem">选择(S)</button>
       <button type="button" class="menu-item" role="menuitem">查看(V)</button>
@@ -15,16 +28,7 @@
 
     <div class="menu-right">
       <div class="menu-controls">
-        <button
-          type="button"
-          class="ctrl-btn"
-          *ngIf="showExplorerToggle"
-          (click)="toggleExplorer.emit()"
-          [class.active]="explorerVisible"
-          title="显示/隐藏项目目录"
-        >
-          <span nz-icon nzType="step-backward" nzTheme="outline"></span>
-        </button>
+
         <button
           type="button"
           class="ctrl-btn"

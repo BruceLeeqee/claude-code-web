@@ -11,7 +11,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { NgClass, NgFor, NgIf } from '@angular/common';
+import { NgFor, NgIf } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
@@ -34,10 +34,14 @@ interface SimNode {
   fill: string;
 }
 
+interface MemoryDirGraph {
+  nodes: Array<{ id: string; name: string; kind: 'memory-root' | 'memory-dir' | 'memory-file'; path: string }>;
+  edges: Array<{ source: string; target: string }>;
+}
 @Component({
   selector: 'app-graph-page',
   standalone: true,
-  imports: [NgFor, NgIf, NgClass, FormsModule, NzButtonModule, NzIconModule],
+  imports: [NgFor, NgIf, FormsModule, NzButtonModule, NzIconModule],
   templateUrl: './graph.page.html',
   styleUrls: ['../prototype-page.scss', './graph.page.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -55,9 +59,15 @@ export class GraphPrototypePageComponent implements AfterViewInit, OnDestroy {
   protected readonly showLabels = signal(true);
   protected readonly showEdges = signal(true);
   protected readonly selectedId = signal<string | null>(null);
+  protected readonly selectedMemoryDir = signal<string>('ALL');
 
   protected readonly simNodes = signal<SimNode[]>([]);
   private readonly edgePairs = signal<Array<{ source: string; target: string }>>([]);
+  private readonly memoryDirGraph = signal<MemoryDirGraph>({ nodes: [], edges: [] });
+  protected readonly memoryDirOptions = computed(() => {
+    const dirs = this.memoryDirGraph().nodes.filter((n) => n.kind === 'memory-dir');
+    return [{ label: '全部记忆', value: 'ALL' }, ...dirs.map((d) => ({ label: d.name, value: d.path }))];
+  });
 
   protected readonly viewBox = computed(() => `0 0 ${this.width()} ${this.height()}`);
 
@@ -100,10 +110,13 @@ export class GraphPrototypePageComponent implements AfterViewInit, OnDestroy {
   private layoutScheduled = false;
 
   constructor() {
+    void this.refreshMemoryDirectoryGraph();
     effect(
       () => {
         this.memoryGraph.nodes();
         this.memoryGraph.edges();
+        this.memoryDirGraph();
+        this.selectedMemoryDir();
         this.facade.nodes();
         this.width();
         this.height();
@@ -148,6 +161,13 @@ export class GraphPrototypePageComponent implements AfterViewInit, OnDestroy {
   }
 
   protected refreshLayout(): void {
+    void this.refreshMemoryDirectoryGraph();
+    this.scheduleLayout();
+  }
+
+  protected selectMemoryDir(path: string): void {
+    this.selectedMemoryDir.set(path || 'ALL');
+    this.selectedId.set(null);
     this.scheduleLayout();
   }
 
@@ -165,6 +185,10 @@ export class GraphPrototypePageComponent implements AfterViewInit, OnDestroy {
 
   protected onSelectNode(id: string): void {
     this.selectedId.set(id);
+    if (id.startsWith('mem-dir:')) {
+      this.selectMemoryDir(id);
+      return;
+    }
     if (this.facade.nodes().some((n) => n.id === id)) {
       this.facade.selectNode(id);
     }
@@ -178,6 +202,35 @@ export class GraphPrototypePageComponent implements AfterViewInit, OnDestroy {
   }
 
   private buildGraph(): { nodes: Omit<SimNode, 'x' | 'y' | 'vx' | 'vy'>[]; edges: Array<{ source: string; target: string }> } {
+    const dirGraph = this.memoryDirGraph();
+    const selectedDir = this.selectedMemoryDir();
+
+    if (dirGraph.nodes.length > 1) {
+      const visibleIds = new Set<string>();
+      if (selectedDir === 'ALL') {
+        dirGraph.nodes.forEach((n) => visibleIds.add(n.id));
+      } else {
+        visibleIds.add('mem-root');
+        visibleIds.add(selectedDir);
+        dirGraph.edges
+          .filter((e) => e.source === selectedDir)
+          .forEach((e) => visibleIds.add(e.target));
+      }
+
+      const nodes = dirGraph.nodes
+        .filter((n) => visibleIds.has(n.id))
+        .map((n) => ({
+          id: n.id,
+          name: n.name,
+          kind: n.kind,
+          snippet: n.path,
+          r: n.kind === 'memory-root' ? 26 : n.kind === 'memory-dir' ? 18 : 12,
+          fill: this.fillForKind(n.kind, undefined),
+        }));
+      const edges = dirGraph.edges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
+      return { nodes, edges };
+    }
+
     const memN = this.memoryGraph.nodes();
     const memE = this.memoryGraph.edges();
     if (memN.length > 1) {
@@ -217,6 +270,9 @@ export class GraphPrototypePageComponent implements AfterViewInit, OnDestroy {
     if (kind === 'user') return '#38bdf8';
     if (kind === 'assistant') return '#a78bfa';
     if (kind === 'tool') return '#34d399';
+    if (kind === 'memory-root') return '#7c3aed';
+    if (kind === 'memory-dir') return '#f59e0b';
+    if (kind === 'memory-file') return '#60a5fa';
     const g = group ?? 'logic';
     const map: Record<string, string> = {
       logic: '#f97316',
@@ -226,6 +282,35 @@ export class GraphPrototypePageComponent implements AfterViewInit, OnDestroy {
       issue: '#ef4444',
     };
     return map[g] ?? '#94a3b8';
+  }
+
+  private async refreshMemoryDirectoryGraph(): Promise<void> {
+    const root = await window.zytrader.fs.list('.', { scope: 'vault' });
+    if (!root.ok) {
+      this.memoryDirGraph.set({ nodes: [], edges: [] });
+      return;
+    }
+
+    const nodes: MemoryDirGraph['nodes'] = [{ id: 'mem-root', name: '全部记忆', kind: 'memory-root', path: '.' }];
+    const edges: MemoryDirGraph['edges'] = [];
+
+    for (const entry of root.entries.filter((e) => e.type === 'dir')) {
+      const dirPath = entry.name;
+      const dirId = `mem-dir:${dirPath}`;
+      nodes.push({ id: dirId, name: entry.name, kind: 'memory-dir', path: dirPath });
+      edges.push({ source: 'mem-root', target: dirId });
+
+      const listed = await window.zytrader.fs.list(dirPath, { scope: 'vault' });
+      if (!listed.ok) continue;
+      for (const child of listed.entries.slice(0, 24)) {
+        const childPath = `${dirPath}/${child.name}`;
+        const childId = `mem-file:${childPath}`;
+        nodes.push({ id: childId, name: child.name, kind: 'memory-file', path: childPath });
+        edges.push({ source: dirId, target: childId });
+      }
+    }
+
+    this.memoryDirGraph.set({ nodes, edges });
   }
 
   private runLayout(): void {

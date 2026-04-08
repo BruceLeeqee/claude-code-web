@@ -9,7 +9,18 @@
 
     <div class="graph-body">
       <div class="graph-toolbar">
-        <div class="toolbar-spacer" aria-hidden="true"></div>
+        <div class="memory-dir-filter">
+          <span class="filter-label">记忆目录</span>
+          <button
+            type="button"
+            class="dir-chip"
+            *ngFor="let opt of memoryDirOptions()"
+            [class.active]="selectedMemoryDir() === opt.value"
+            (click)="selectMemoryDir(opt.value)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
         <div class="tool-group tool-group--center">
           <button type="button" class="tool-btn tool-btn--icon" title="缩放适配" (click)="fitView()">
             <span nz-icon nzType="border" nzTheme="outline"></span>

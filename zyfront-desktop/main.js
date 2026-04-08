@@ -20,7 +20,6 @@ if (typeof electronModule === 'string') {
     console.error('[bootstrap] Failed to relaunch with Electron:', err)
     process.exit(1)
   })
-  // In plain Node runtime, stop executing the rest of this file.
   process.exit(0)
 }
 
@@ -33,40 +32,279 @@ if (!electronModule?.app || typeof electronModule.app.whenReady !== 'function') 
   process.exit(1)
 }
 
-const { app, BrowserWindow, ipcMain, shell } = electronModule
+const { app, BrowserWindow, ipcMain, shell, dialog } = electronModule
 
 let win
 
-const workspaceRoot = process.env.ZYTRADER_WORKSPACE
-  ? path.resolve(process.env.ZYTRADER_WORKSPACE)
-  : path.resolve(__dirname, '..')
+/** @type {{ workspaceRoot: string, vaultRoot: string, vaultMode: string, projectKey: string, workspaceFromEnv: boolean, vaultConfigured: boolean }} */
+const RUNTIME = {
+  workspaceRoot: '',
+  vaultRoot: '',
+  vaultMode: 'nested',
+  projectKey: '',
+  workspaceFromEnv: false,
+  vaultConfigured: false,
+}
+
+const APP_CONFIG_FILENAME = 'zytrader-workspace.json'
+
+const DEFAULT_DIRECTORY_CONFIG = {
+  version: 1,
+  keys: {
+    inbox: '00-INBOX',
+    'inbox-human': '00-INBOX/human',
+    'inbox-agent': '00-INBOX/agent',
+    'human-notes': '01-HUMAN-NOTES',
+    'agent-memory': '02-AGENT-MEMORY',
+    'agent-short-term': '02-AGENT-MEMORY/01-Short-Term',
+    'agent-long-term': '02-AGENT-MEMORY/02-Long-Term',
+    'agent-context': '02-AGENT-MEMORY/03-Context',
+    'agent-meta': '02-AGENT-MEMORY/04-Meta',
+    projects: '03-PROJECTS',
+    resources: '04-RESOURCES',
+    system: '05-SYSTEM',
+  },
+}
+
+const VAULT_SUBDIRS = [
+  path.join('00-INBOX', 'human'),
+  path.join('00-INBOX', 'agent'),
+  path.join('01-HUMAN-NOTES', '01-Daily'),
+  path.join('01-HUMAN-NOTES', '02-Knowledge'),
+  path.join('01-HUMAN-NOTES', '03-Notes'),
+  path.join('01-HUMAN-NOTES', '04-Tags'),
+  path.join('02-AGENT-MEMORY', '01-Short-Term'),
+  path.join('02-AGENT-MEMORY', '02-Long-Term'),
+  path.join('02-AGENT-MEMORY', '03-Context'),
+  path.join('02-AGENT-MEMORY', '04-Meta'),
+  '03-PROJECTS',
+  path.join('04-RESOURCES', 'images'),
+  path.join('04-RESOURCES', 'files'),
+  path.join('04-RESOURCES', 'media'),
+  path.join('04-RESOURCES', 'templates'),
+  '05-SYSTEM',
+]
+
+const VAULT_README_CONTENT = `Obsidian-Agent-Vault/  # 根目录（可自定义路径）
+├── 00-INBOX/          # 临时收纳（人类随手记、Agent临时记忆、未分类文件）
+│   ├── human/         # 人类临时笔记
+│   └── agent/         # Agent临时记忆（短期上下文、未归档记忆）
+├── 01-HUMAN-NOTES/    # 人类正式笔记（对应Obsidian原生笔记）
+│   ├── 01-Daily/      # 日记（按日期归档）
+│   ├── 02-Knowledge/  # 知识笔记（按领域分类，支持双链）
+│   ├── 03-Notes/      # 普通笔记（随手整理的内容）
+│   └── 04-Tags/       # 标签归档（按标签聚合，可选）
+├── 02-AGENT-MEMORY/   # Claude Code Agent记忆（核心目录，标准化存储）
+│   ├── 01-Short-Term/ # 短期记忆（会话上下文、临时决策，定期清理）
+│   ├── 02-Long-Term/  # 长期记忆（核心知识、固定规则、用户偏好，持久化）
+│   ├── 03-Context/    # 上下文记忆（与用户交互的历史上下文，关联笔记）
+│   └── 04-Meta/       # 记忆元数据（记忆更新日志、关联映射表）
+├── 03-PROJECTS/       # 项目管理（人类+Agent协同项目）
+│   ├── 项目1/         # 单个项目目录
+│   │   ├── notes/     # 项目相关人类笔记
+│   │   ├── memory/    # 项目相关Agent记忆（项目专属规则、进度记忆）
+│   │   └── resources/ # 项目相关资源
+│   └── 项目2/
+├── 04-RESOURCES/      # 通用资源（所有模块共享）
+│   ├── images/        # 图片（笔记插图、Agent生成图片）
+│   ├── files/         # 附件（PDF、文档、压缩包）
+│   ├── media/         # 媒体（音频、视频）
+│   └── templates/     # 模板（人类笔记模板、Agent记忆模板）
+└── 05-SYSTEM/         # 系统配置（目录规则、Agent记忆规则、解析配置）
+    ├── directory.config.json # 目录配置（可自定义目录映射）
+    ├── rule.config.json      # 文件处理规则配置
+    └── agent.config.json     # Agent记忆配置`
+
+function normalizeRelPath(p = '') {
+  return String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '')
+}
+
+function shouldProtectVaultPath(relativePath) {
+  const rel = normalizeRelPath(relativePath)
+  if (!rel) return false
+  if (rel === 'README.md') return true
+  const parts = rel.split('/').filter(Boolean)
+  if (parts.length <= 2) return true
+  return false
+}
+
+function getAppConfigPath() {
+  return path.join(app.getPath('userData'), APP_CONFIG_FILENAME)
+}
+
+function getDefaultAppConfig() {
+  return {
+    version: 1,
+    workspaceRoot: '',
+    vault: {
+      mode: 'nested',
+      // 默认不在项目目录下再套一层 AGENT-ROOT，按工作区位置自动推断
+      nestedRelative: '',
+      globalRoot: '',
+      projectKey: '',
+    },
+  }
+}
+
+function sanitizeProjectKey(name) {
+  const s = String(name || 'project')
+    .replace(/[/\\:*?"<>|]+/g, '-')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+  return s || 'project'
+}
+
+async function readAppConfigFile() {
+  const fp = getAppConfigPath()
+  try {
+    const raw = await fs.readFile(fp, 'utf8')
+    const parsed = JSON.parse(raw)
+    return { ...getDefaultAppConfig(), ...parsed, vault: { ...getDefaultAppConfig().vault, ...(parsed.vault || {}) } }
+  } catch {
+    return getDefaultAppConfig()
+  }
+}
+
+async function writeAppConfigFile(cfg) {
+  const fp = getAppConfigPath()
+  await fs.mkdir(path.dirname(fp), { recursive: true })
+  await fs.writeFile(fp, JSON.stringify(cfg, null, 2), 'utf8')
+}
+
+function computeWorkspaceRoot(cfg) {
+  const persisted = cfg.workspaceRoot && String(cfg.workspaceRoot).trim()
+  if (persisted) {
+    const abs = path.resolve(persisted)
+    if (existsSync(abs)) {
+      return { root: abs, fromEnv: false }
+    }
+  }
+  if (process.env.ZYTRADER_WORKSPACE) {
+    return { root: path.resolve(process.env.ZYTRADER_WORKSPACE), fromEnv: true }
+  }
+  return { root: path.resolve(__dirname, '..'), fromEnv: false }
+}
+
+function computeVaultRoot(workspaceRoot, vaultCfg) {
+  const mode = vaultCfg?.mode === 'global' ? 'global' : 'nested'
+  const nestedRelRaw = vaultCfg?.nestedRelative !== undefined ? String(vaultCfg.nestedRelative).trim() : ''
+  const nestedRel = nestedRelRaw.replace(/\\/g, '/')
+
+  let pk =
+    vaultCfg?.projectKey !== undefined && String(vaultCfg.projectKey).trim() !== ''
+      ? sanitizeProjectKey(vaultCfg.projectKey)
+      : sanitizeProjectKey(path.basename(workspaceRoot))
+
+  if (mode === 'global') {
+    const gr = vaultCfg?.globalRoot && String(vaultCfg.globalRoot).trim()
+    if (gr) {
+      return { vaultRoot: path.resolve(gr), mode: 'global', projectKey: pk }
+    }
+  }
+
+  // nested 模式默认策略：
+  // 1) 若显式配置 nestedRelative，则按配置拼接
+  // 2) 若工作区位于 .../AGENT-ROOT/03-PROJECTS/<project>，则 vault 根自动回退到外层 AGENT-ROOT
+  // 3) 其他情况回退到 workspaceRoot
+  if (nestedRel) {
+    const vr = nestedRel === '.' ? workspaceRoot : path.join(workspaceRoot, nestedRel)
+    return { vaultRoot: path.normalize(vr), mode: 'nested', projectKey: pk }
+  }
+
+  const wsNorm = path.normalize(workspaceRoot)
+  const parts = wsNorm.split(path.sep)
+  const projectsIdx = parts.findIndex((p, i) => p === '03-PROJECTS' && i > 0)
+  if (projectsIdx > 0 && parts[projectsIdx - 1] === 'AGENT-ROOT') {
+    const root = parts.slice(0, projectsIdx).join(path.sep) || path.sep
+    return { vaultRoot: path.normalize(root), mode: 'nested', projectKey: pk }
+  }
+
+  return { vaultRoot: wsNorm, mode: 'nested', projectKey: pk }
+}
+
+async function refreshRuntime() {
+  const cfg = await readAppConfigFile()
+
+  // 兼容旧版本：若历史配置仍是 AGENT-ROOT 子目录模式，自动迁移到外层根目录策略
+  if (cfg?.vault?.nestedRelative === 'AGENT-ROOT') {
+    cfg.vault.nestedRelative = ''
+    await writeAppConfigFile(cfg)
+  }
+
+  const { root: ws, fromEnv } = computeWorkspaceRoot(cfg)
+  const { vaultRoot, mode, projectKey } = computeVaultRoot(ws, cfg.vault || {})
+  const sysDir = path.join(vaultRoot, '05-SYSTEM')
+  RUNTIME.workspaceRoot = ws
+  RUNTIME.vaultRoot = vaultRoot
+  RUNTIME.vaultMode = mode
+  RUNTIME.projectKey = projectKey
+  RUNTIME.workspaceFromEnv = fromEnv
+  RUNTIME.vaultConfigured = existsSync(sysDir)
+}
 
 const ptySessions = new Map()
 
+function isPathUnder(child, parent) {
+  const c = path.normalize(child)
+  const p = path.normalize(parent)
+  if (process.platform === 'win32') {
+    const cl = c.toLowerCase()
+    const pl = p.toLowerCase()
+    return cl === pl || cl.startsWith(pl + path.sep)
+  }
+  return c === p || c.startsWith(p + path.sep)
+}
+
 function resolveSafePath(relativePath = '.') {
-  const target = path.resolve(workspaceRoot, relativePath)
-  if (!target.startsWith(workspaceRoot)) {
+  const base = RUNTIME.workspaceRoot
+  const target = path.resolve(base, relativePath)
+  if (!isPathUnder(target, base)) {
     throw new Error('Path escapes workspace root')
   }
   return target
 }
 
-/** 供 shell.openPath：工作区相对路径，或用户主目录/工作区下的绝对路径 */
-function resolveHostOpenPath(inputPath) {
+function resolveVaultPath(relativePath = '.') {
+  const base = RUNTIME.vaultRoot
+  const target = path.resolve(base, relativePath)
+  if (!isPathUnder(target, base)) {
+    throw new Error('Path escapes vault root')
+  }
+  return target
+}
+
+function resolveScopedPath(relativePath, scope) {
+  const sc = scope === 'vault' ? 'vault' : 'workspace'
+  return sc === 'vault' ? resolveVaultPath(relativePath) : resolveSafePath(relativePath)
+}
+
+/** 供 shell.openPath：工作区或 Vault 相对路径，或用户主目录/工作区/Vault 下的绝对路径 */
+function resolveHostOpenPath(inputPath, scope = 'workspace') {
   const raw = String(inputPath ?? '').trim()
   if (!raw) throw new Error('path is required')
+  const bases =
+    scope === 'vault'
+      ? [RUNTIME.vaultRoot, RUNTIME.workspaceRoot, path.normalize(os.homedir())]
+      : [RUNTIME.workspaceRoot, RUNTIME.vaultRoot, path.normalize(os.homedir())]
+
   if (path.isAbsolute(raw)) {
     const abs = path.normalize(raw)
     const home = path.normalize(os.homedir())
-    const wr = path.normalize(workspaceRoot)
-    const under =
-      process.platform === 'win32'
-        ? abs.toLowerCase().startsWith(wr.toLowerCase()) || abs.toLowerCase().startsWith(home.toLowerCase())
-        : abs.startsWith(wr) || abs.startsWith(home)
-    if (under) return abs
-    throw new Error('absolute path must be under workspace or user home directory')
+    for (const b of bases) {
+      const bn = path.normalize(b)
+      const under =
+        process.platform === 'win32'
+          ? abs.toLowerCase().startsWith(bn.toLowerCase()) || abs.toLowerCase().startsWith(home.toLowerCase())
+          : abs.startsWith(bn) || abs.startsWith(home)
+      if (under) return abs
+    }
+    throw new Error('absolute path must be under workspace, vault, or user home directory')
   }
-  return resolveSafePath(raw)
+  const relBase = scope === 'vault' ? RUNTIME.vaultRoot : RUNTIME.workspaceRoot
+  const target = path.resolve(relBase, raw)
+  if (!isPathUnder(target, relBase)) throw new Error('Path escapes allowed root')
+  return target
 }
 
 function emitTerminalData(payload) {
@@ -90,7 +328,6 @@ function resolveWinShell(shell) {
     return { cmd: 'cmd.exe', args: [] }
   }
 
-  // 如显式选择 git-bash，再按候选路径查找
   const gitBashCandidates = [
     process.env.GIT_BASH_PATH,
     'C:/Program Files/Git/bin/bash.exe',
@@ -105,7 +342,6 @@ function resolveWinShell(shell) {
     }
   }
 
-  // Git Bash 不可用时回退到 PowerShell
   return { cmd: 'powershell.exe', args: ['-NoLogo', '-NoProfile'] }
 }
 
@@ -120,8 +356,8 @@ function resolveShellCommand(shell) {
   return { cmd: process.env.SHELL || 'bash', args: ['-i'] }
 }
 
-function createPtySession({ id, cwd = '.', cols = 120, rows = 36, shell = 'powershell' }) {
-  const absCwd = resolveSafePath(cwd)
+function createPtySession({ id, cwd = '.', cwdScope = 'workspace', cols = 120, rows = 36, shell = 'powershell' }) {
+  const absCwd = resolveScopedPath(cwd, cwdScope === 'vault' ? 'vault' : 'workspace')
   const { cmd, args } = resolveShellCommand(shell)
 
   const proc = pty.spawn(cmd, args, {
@@ -145,50 +381,113 @@ function createPtySession({ id, cwd = '.', cols = 120, rows = 36, shell = 'power
   return { ok: true, id }
 }
 
+async function readDirectoryConfigFromDisk() {
+  const fp = path.join(RUNTIME.vaultRoot, '05-SYSTEM', 'directory.config.json')
+  try {
+    const raw = await fs.readFile(fp, 'utf8')
+    const o = JSON.parse(raw)
+    return { ...DEFAULT_DIRECTORY_CONFIG, ...o, keys: { ...DEFAULT_DIRECTORY_CONFIG.keys, ...(o.keys || {}) } }
+  } catch {
+    return { ...DEFAULT_DIRECTORY_CONFIG }
+  }
+}
+
+async function vaultBootstrap() {
+  await refreshRuntime()
+  const root = RUNTIME.vaultRoot
+  await fs.mkdir(root, { recursive: true })
+  for (const rel of VAULT_SUBDIRS) {
+    await fs.mkdir(path.join(root, rel), { recursive: true })
+  }
+
+  const readmePath = path.join(root, 'README.md')
+  if (!existsSync(readmePath)) {
+    await fs.writeFile(readmePath, VAULT_README_CONTENT, 'utf8')
+  }
+
+  const sys = path.join(root, '05-SYSTEM')
+  const dc = path.join(sys, 'directory.config.json')
+  if (!existsSync(dc)) {
+    await fs.writeFile(dc, JSON.stringify(DEFAULT_DIRECTORY_CONFIG, null, 2), 'utf8')
+  }
+  const rc = path.join(sys, 'rule.config.json')
+  if (!existsSync(rc)) {
+    await fs.writeFile(rc, JSON.stringify({ version: 1, rules: [] }, null, 2), 'utf8')
+  }
+  const ac = path.join(sys, 'agent.config.json')
+  const defaultAgentConfig = {
+    version: 1,
+    projectKey: RUNTIME.projectKey,
+    memory: {
+      protectedPaths: ['README.md', '00-INBOX', '01-HUMAN-NOTES', '02-AGENT-MEMORY', '03-PROJECTS', '04-RESOURCES', '05-SYSTEM'],
+      protectedDepth: 2,
+      shortTermRetentionDays: 7,
+      autoPrune: false,
+    },
+    discovery: {
+      skills: { enabled: true, workspaceDir: 'skills' },
+      plugins: { enabled: true, source: 'openclaw/clawhub' },
+      chatHistory: { enabled: true, sessionId: 'workbench-terminal-ai', recentTurnsStorageKey: 'zytrader-workbench-recent-turns:v2' },
+    },
+  }
+  if (!existsSync(ac)) {
+    await fs.writeFile(ac, JSON.stringify(defaultAgentConfig, null, 2), 'utf8')
+  }
+  await refreshRuntime()
+  return { ok: true, vaultRoot: RUNTIME.vaultRoot }
+}
+
 function registerIpcHandlers() {
-  ipcMain.handle('zytrader:fs:list', async (_event, dir = '.') => {
-    const abs = resolveSafePath(dir)
+  ipcMain.handle('zytrader:fs:list', async (_event, dir = '.', opts = {}) => {
+    const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
+    const abs = resolveScopedPath(dir, scope)
     const entries = await fs.readdir(abs, { withFileTypes: true })
     return {
       ok: true,
       dir,
+      scope,
       entries: entries.map((e) => ({ name: e.name, type: e.isDirectory() ? 'dir' : 'file' })),
     }
   })
 
-  ipcMain.handle('zytrader:fs:read', async (_event, filePath) => {
-    const abs = resolveSafePath(filePath)
+  ipcMain.handle('zytrader:fs:read', async (_event, filePath, opts = {}) => {
+    const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
+    const abs = resolveScopedPath(filePath, scope)
     const content = await fs.readFile(abs, 'utf8')
-    return { ok: true, path: filePath, content }
+    return { ok: true, path: filePath, scope, content }
   })
 
-  ipcMain.handle('zytrader:fs:write', async (_event, filePath, content) => {
-    const abs = resolveSafePath(filePath)
+  ipcMain.handle('zytrader:fs:write', async (_event, filePath, content, opts = {}) => {
+    const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
+    const abs = resolveScopedPath(filePath, scope)
     await fs.mkdir(path.dirname(abs), { recursive: true })
     await fs.writeFile(abs, content ?? '', 'utf8')
-    return { ok: true, path: filePath }
+    return { ok: true, path: filePath, scope }
   })
 
-  ipcMain.handle('zytrader:fs:delete', async (_event, targetPath) => {
-    const abs = resolveSafePath(targetPath)
+  ipcMain.handle('zytrader:fs:delete', async (_event, targetPath, opts = {}) => {
+    const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
+    if (scope === 'vault' && shouldProtectVaultPath(targetPath)) {
+      return { ok: false, path: targetPath, scope, error: 'protected path: AGENT-ROOT level-1/2 and README.md are immutable' }
+    }
+    const abs = resolveScopedPath(targetPath, scope)
     await fs.rm(abs, { recursive: true, force: true })
-    return { ok: true, path: targetPath }
+    return { ok: true, path: targetPath, scope }
   })
 
-  ipcMain.handle('zytrader:terminal:exec', async (_event, command, cwd = '.') => {
-    const absCwd = resolveSafePath(cwd)
+  ipcMain.handle('zytrader:terminal:exec', async (_event, command, cwd = '.', cwdScope = 'workspace') => {
+    const sc = cwdScope === 'vault' ? 'vault' : 'workspace'
+    const absCwd = resolveScopedPath(cwd, sc)
     const execOptions = {
       cwd: absCwd,
       windowsHide: true,
       timeout: 120000,
-      // 勿用 PowerShell 作为 exec 的 shell：渲染进程大量下发 `cmd.exe /c git ...`，
-      // 经 PowerShell 中转会导致重定向/管道与退出码异常，Git 分支名等读不到。
       ...(process.platform === 'win32' ? { shell: process.env.ComSpec || 'cmd.exe' } : {}),
     }
     return await new Promise((resolve) => {
       exec(command, execOptions, (error, stdout, stderr) => {
         const code = error && typeof error.code === 'number' ? error.code : 0
-        resolve({ ok: !error, command, cwd, code, stdout: stdout ?? '', stderr: stderr ?? '' })
+        resolve({ ok: !error, command, cwd, cwdScope: sc, code, stdout: stdout ?? '', stderr: stderr ?? '' })
       })
     })
   })
@@ -262,7 +561,6 @@ function registerIpcHandlers() {
           }),
         })
       } else {
-        // Anthropic 兼容（含 MiniMax 等）：与 zyfront-web bridge 一致，同时带 Bearer 与 x-api-key
         const url = root.endsWith('/v1') ? `${root}/messages` : `${root}/v1/messages`
         resp = await fetch(url, {
           method: 'POST',
@@ -286,9 +584,10 @@ function registerIpcHandlers() {
     }
   })
 
-  ipcMain.handle('zytrader:host:openPath', async (_event, inputPath) => {
+  ipcMain.handle('zytrader:host:openPath', async (_event, inputPath, opts = {}) => {
     try {
-      const abs = resolveHostOpenPath(inputPath)
+      const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
+      const abs = resolveHostOpenPath(inputPath, scope)
       const err = await shell.openPath(abs)
       return { ok: !err, path: abs, error: err || undefined }
     } catch (error) {
@@ -296,11 +595,89 @@ function registerIpcHandlers() {
     }
   })
 
-  ipcMain.handle('zytrader:workspace:info', async () => ({
-    ok: true,
-    root: workspaceRoot,
-    exists: existsSync(workspaceRoot),
-  }))
+  ipcMain.handle('zytrader:workspace:info', async () => {
+    await refreshRuntime()
+    return {
+      ok: true,
+      root: RUNTIME.workspaceRoot,
+      exists: existsSync(RUNTIME.workspaceRoot),
+      vaultRoot: RUNTIME.vaultRoot,
+      vaultMode: RUNTIME.vaultMode,
+      vaultConfigured: RUNTIME.vaultConfigured,
+      projectKey: RUNTIME.projectKey,
+      workspaceFromEnv: RUNTIME.workspaceFromEnv,
+    }
+  })
+
+  ipcMain.handle('zytrader:workspace:setRoot', async (_event, nextRoot) => {
+    const raw = String(nextRoot ?? '').trim()
+    if (!raw) return { ok: false, error: 'path required' }
+    const abs = path.resolve(raw)
+    if (!existsSync(abs)) return { ok: false, error: 'path does not exist' }
+    const cfg = await readAppConfigFile()
+    cfg.workspaceRoot = abs
+    await writeAppConfigFile(cfg)
+    await refreshRuntime()
+    return { ok: true, root: RUNTIME.workspaceRoot, vaultRoot: RUNTIME.vaultRoot }
+  })
+
+  ipcMain.handle('zytrader:workspace:pickRoot', async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(parent ?? undefined, {
+      title: '选择工程文件夹（代码仓库根目录）',
+      properties: ['openDirectory', 'dontAddToRecent'],
+    })
+    if (result.canceled || !result.filePaths?.length) {
+      return { ok: false, canceled: true }
+    }
+    const abs = path.resolve(result.filePaths[0])
+    if (!existsSync(abs)) return { ok: false, error: 'path does not exist' }
+    const cfg = await readAppConfigFile()
+    cfg.workspaceRoot = abs
+    await writeAppConfigFile(cfg)
+    await refreshRuntime()
+    return {
+      ok: true,
+      root: RUNTIME.workspaceRoot,
+      exists: existsSync(RUNTIME.workspaceRoot),
+      vaultRoot: RUNTIME.vaultRoot,
+      vaultMode: RUNTIME.vaultMode,
+      vaultConfigured: RUNTIME.vaultConfigured,
+      projectKey: RUNTIME.projectKey,
+      workspaceFromEnv: RUNTIME.workspaceFromEnv,
+    }
+  })
+
+  ipcMain.handle('zytrader:vault:setConfig', async (_event, partial) => {
+    const cfg = await readAppConfigFile()
+    cfg.vault = { ...cfg.vault, ...(partial || {}) }
+    await writeAppConfigFile(cfg)
+    await refreshRuntime()
+    return { ok: true, vault: cfg.vault, vaultRoot: RUNTIME.vaultRoot }
+  })
+
+  ipcMain.handle('zytrader:vault:bootstrap', async () => {
+    try {
+      return await vaultBootstrap()
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('zytrader:vault:resolve', async (_event, key) => {
+    await refreshRuntime()
+    const k = String(key ?? '').trim()
+    if (!k) return { ok: false, error: 'key required' }
+    const dc = await readDirectoryConfigFromDisk()
+    const rel = dc.keys[k]
+    if (!rel) return { ok: false, error: `unknown key: ${k}` }
+    const abs = path.join(RUNTIME.vaultRoot, ...rel.split('/'))
+    const norm = path.normalize(abs)
+    if (!isPathUnder(norm, RUNTIME.vaultRoot)) {
+      return { ok: false, error: 'invalid path' }
+    }
+    return { ok: true, key: k, relative: rel, absolute: norm }
+  })
 }
 
 function createWindow() {
@@ -333,7 +710,8 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await refreshRuntime()
   registerIpcHandlers()
   createWindow()
 })

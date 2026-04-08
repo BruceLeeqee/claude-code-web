@@ -26,6 +26,7 @@ import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { AppSettingsService } from '../../../core/app-settings.service';
 import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
+import { AgentMemoryService } from '../../../core/agent-memory.service';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import type { CoordinationMode, CoordinationStep, StreamChunk } from 'zyfront-core';
@@ -42,6 +43,41 @@ const AUTO_COMMIT_PROMPT =
 const RECENT_STORAGE_KEY_V2 = 'zytrader-workbench-recent-turns:v2';
 const RECENT_STORAGE_KEY_V1 = 'zytrader-workbench-recent-turns:v1';
 const SESSION_ID = 'workbench-terminal-ai';
+
+/** 资源管理器：Obsidian-Agent 标准顶层目录（顺序固定） */
+const VAULT_EXPLORER_TOP = [
+  { name: '00-INBOX', path: '00-INBOX' },
+  { name: '01-HUMAN-NOTES', path: '01-HUMAN-NOTES' },
+  { name: '02-AGENT-MEMORY', path: '02-AGENT-MEMORY' },
+  { name: '03-PROJECTS', path: '03-PROJECTS' },
+  { name: '04-RESOURCES', path: '04-RESOURCES' },
+  { name: '05-SYSTEM', path: '05-SYSTEM' },
+] as const;
+
+const VAULT_EXPLORER_FIXED_CHILDREN: Record<string, Array<{ name: string; path: string }>> = {
+  '00-INBOX': [
+    { name: 'human', path: '00-INBOX/human' },
+    { name: 'agent', path: '00-INBOX/agent' },
+  ],
+  '01-HUMAN-NOTES': [
+    { name: '01-Daily', path: '01-HUMAN-NOTES/01-Daily' },
+    { name: '02-Knowledge', path: '01-HUMAN-NOTES/02-Knowledge' },
+    { name: '03-Notes', path: '01-HUMAN-NOTES/03-Notes' },
+    { name: '04-Tags', path: '01-HUMAN-NOTES/04-Tags' },
+  ],
+  '02-AGENT-MEMORY': [
+    { name: '01-Short-Term', path: '02-AGENT-MEMORY/01-Short-Term' },
+    { name: '02-Long-Term', path: '02-AGENT-MEMORY/02-Long-Term' },
+    { name: '03-Context', path: '02-AGENT-MEMORY/03-Context' },
+    { name: '04-Meta', path: '02-AGENT-MEMORY/04-Meta' },
+  ],
+  '04-RESOURCES': [
+    { name: 'images', path: '04-RESOURCES/images' },
+    { name: 'files', path: '04-RESOURCES/files' },
+    { name: 'media', path: '04-RESOURCES/media' },
+    { name: 'templates', path: '04-RESOURCES/templates' },
+  ],
+};
 /** 最近会话写入 localStorage；v2 含 transcript 便于完整回放 */
 const MAX_TRANSCRIPT_ENTRIES = 120;
 /** 回放时单条助手内容最大字符数 */
@@ -77,6 +113,10 @@ interface FileNode {
   expanded?: boolean;
   loaded?: boolean;
   children?: FileNode[];
+  /** 相对 workspace 或 vault 根；资源管理器节点均为 vault */
+  fsScope?: 'workspace' | 'vault';
+  /** 归属哪棵资源树（用于刷新 signal） */
+  treeRoot?: 'vault' | 'workspace';
 }
 
 interface PsSessionVm {
@@ -87,22 +127,27 @@ interface PsSessionVm {
   exited: boolean;
 }
 
+type PsCwdPresetId = 'vault-root' | 'workspace-root' | 'inbox-human' | 'agent-short-term' | 'projects';
+
 /** 每个编辑器标签页缓存的内容（切换 Tab 时恢复，避免共用 selectedContent 导致串台） */
 interface TabEditorState {
   relPath: string;
   content: string;
   previewKind: 'code' | 'diff';
   dirty: boolean;
+  fsScope?: 'workspace' | 'vault';
 }
 
 interface PendingAutoSave {
   tab: string;
   relPath: string;
   content: string;
+  fsScope: 'workspace' | 'vault';
 }
 
 /** 左侧活动栏视图（对齐 VS Code） */
 type SidebarView = 'explorer' | 'search' | 'git' | 'plugins';
+type ExplorerRootView = 'project' | 'memory';
 
 /** git grep 单条结果 */
 interface SearchHit {
@@ -180,6 +225,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly appSettings = inject(AppSettingsService);
   private readonly usageLedger = inject(ModelUsageLedgerService);
   private readonly memoryGraph = inject(TerminalMemoryGraphService);
+  private readonly agentMemory = inject(AgentMemoryService);
   protected readonly prototypeFacade = inject(PrototypeCoreFacade);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly cdr = inject(ChangeDetectorRef);
@@ -197,9 +243,22 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private tabScrollHost?: ElementRef<HTMLDivElement>;
 
   protected readonly workspaceRoot = signal('workspace');
-  protected readonly tree = signal<FileNode[]>([]);
+  /** Vault 绝对路径（Electron 解析后） */
+  protected readonly vaultPathLabel = signal('');
+  /** 是否已检测到 05-SYSTEM（或已完成 bootstrap） */
+  protected readonly vaultReady = signal(false);
+  protected readonly shortTermMemoryCount = signal(0);
+  protected readonly shortTermMemoryLatest = signal<string | null>(null);
+  /** 工程（仓库）根目录下列出的节点 */
+  protected readonly workspaceTree = signal<FileNode[]>([]);
+  /** 记忆目录树（显示时代表原 Vault 树） */
+  protected readonly memoryTree = signal<FileNode[]>([]);
+  /** 左侧资源管理器当前视图：工程 / 记忆 */
+  protected readonly explorerRootView = signal<ExplorerRootView>('project');
+  /** 与 selectedPath 配对，区分 Vault / 工程树中高亮 */
+  protected readonly selectedFileTreeRoot = signal<'vault' | 'workspace' | null>(null);
   protected readonly selectedPath = signal('');
-  protected readonly selectedContent = signal('在左侧资源管理器中点击文件以在此预览。');
+ protected readonly selectedContent = signal('在左侧资源管理器中点击文件以在此预览。');
 
   protected readonly tabs = signal<string[]>(['Terminal - Main']);
   protected readonly activeTab = signal('Terminal - Main');
@@ -312,6 +371,19 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected readonly psSessions = signal<PsSessionVm[]>([]);
   protected readonly activePsSessionId = signal('');
+  protected readonly psCwdPresets = [
+    { id: 'vault-root' as const, label: 'Vault 根目录', cwd: '.', cwdScope: 'vault' as const },
+    { id: 'workspace-root' as const, label: '工程根目录', cwd: '.', cwdScope: 'workspace' as const },
+    { id: 'inbox-human' as const, label: '00-INBOX/human', cwd: '00-INBOX/human', cwdScope: 'vault' as const },
+    {
+      id: 'agent-short-term' as const,
+      label: '02-AGENT-MEMORY/01-Short-Term',
+      cwd: '02-AGENT-MEMORY/01-Short-Term',
+      cwdScope: 'vault' as const,
+    },
+    { id: 'projects' as const, label: '03-PROJECTS', cwd: '03-PROJECTS', cwdScope: 'vault' as const },
+  ];
+  protected readonly activePsCwdPresetId = signal<PsCwdPresetId>('vault-root');
   /** ??? Backspace?????????? xterm/?? IME ? onData ????? */
   private xtermBackspaceKeydown?: (e: Event) => void;
   /** ? onData ? \\b ????????? */
@@ -353,6 +425,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   });
 
   private syncTimer?: number;
+  private memoryStatsTimer?: number;
   private settingsSub?: Subscription;
   /** 工具调用轨迹，与历史消息合并为右栏「记忆」 */
   private readonly toolMemoryTrace = signal<MemoryVm[]>([]);
@@ -368,6 +441,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.syncCoordinatorState();
       void this.rebuildMemoryPanel();
     }, 500);
+    this.memoryStatsTimer = window.setInterval(() => {
+      if (this.activeTab() === 'Terminal - Main') void this.refreshShortTermMemoryStats();
+    }, 20000);
     this.gitPollTimer = window.setInterval(() => {
       if (this.activeTab() === 'Terminal - Main') void this.refreshGitBranchOnly();
     }, 25000);
@@ -404,6 +480,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     this.settingsSub?.unsubscribe();
     if (this.syncTimer) window.clearInterval(this.syncTimer);
+    if (this.memoryStatsTimer) window.clearInterval(this.memoryStatsTimer);
     if (this.gitPollTimer) window.clearInterval(this.gitPollTimer);
   }
 
@@ -458,11 +535,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private persistTabState(tab: string): void {
     if (tab === 'Terminal - Main') return;
+    const prev = this.tabEditorState.get(tab);
     this.tabEditorState.set(tab, {
       relPath: this.selectedPath(),
       content: this.selectedContent(),
       previewKind: this.previewKind(),
       dirty: this.editorDirty(),
+      fsScope: prev?.fsScope ?? 'workspace',
     });
   }
 
@@ -470,6 +549,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const st = this.tabEditorState.get(tab);
     if (!st) return;
     this.selectedPath.set(st.relPath);
+    if (st.previewKind === 'diff') {
+      this.selectedFileTreeRoot.set(null);
+    } else {
+      this.selectedFileTreeRoot.set(st.fsScope === 'vault' ? 'vault' : 'workspace');
+    }
     this.selectedContent.set(st.content);
     this.previewKind.set(st.previewKind);
     this.editorDirty.set(st.dirty);
@@ -484,13 +568,18 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected displayTabLabel(tab: string): string {
     if (tab === 'Terminal - Main') return tab;
-    const plain = tab.startsWith('↔ ') ? tab.slice(2).trim() : tab;
+    let plain = tab.startsWith('↔ ') ? tab.slice(2).trim() : tab;
+    if (/^(vault|workspace):/.test(plain)) {
+      plain = plain.replace(/^(vault|workspace):/, '');
+    }
     return plain.split('/').pop() ?? plain;
   }
 
   protected tabTooltip(tab: string): string {
     if (tab === 'Terminal - Main') return tab;
     if (tab.startsWith('↔ ')) return `Diff: ${tab.slice(2).trim()}`;
+    if (/^vault:/.test(tab)) return `Vault: ${tab.slice('vault:'.length)}`;
+    if (/^workspace:/.test(tab)) return `工程: ${tab.slice('workspace:'.length)}`;
     return tab;
   }
 
@@ -523,8 +612,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
     }
     const relPath = this.selectedPath().trim();
+    const fsScope = this.tabEditorState.get(tab)?.fsScope ?? 'workspace';
     if (tab !== 'Terminal - Main' && this.previewKind() === 'code' && relPath) {
-      this.pendingAutoSave = { tab, relPath, content: text };
+      this.pendingAutoSave = { tab, relPath, content: text, fsScope };
       if (this.autoSaveTimer !== undefined) {
         clearTimeout(this.autoSaveTimer);
       }
@@ -542,7 +632,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private async flushAutoSaveToDisk(payload: PendingAutoSave): Promise<void> {
     if (!payload.relPath) return;
     try {
-      const r = await window.zytrader.fs.write(payload.relPath, payload.content);
+      const r = await window.zytrader.fs.write(payload.relPath, payload.content, {
+        scope: payload.fsScope,
+      });
       if (!r.ok) return;
       const prev = this.tabEditorState.get(payload.tab);
       if (prev) {
@@ -570,7 +662,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       clearTimeout(this.autoSaveTimer);
       this.autoSaveTimer = undefined;
     }
-    this.pendingAutoSave = { tab, relPath, content: this.selectedContent() };
+    this.pendingAutoSave = {
+      tab,
+      relPath,
+      content: this.selectedContent(),
+      fsScope: this.tabEditorState.get(tab)?.fsScope ?? 'workspace',
+    };
     const payload = this.pendingAutoSave;
     this.pendingAutoSave = undefined;
     await this.flushAutoSaveToDisk(payload);
@@ -647,10 +744,104 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private async bootstrapWorkspace(): Promise<void> {
-    const info = await window.zytrader.workspace.info();
-    if (info.ok) this.workspaceRoot.set(info.root);
-    await this.loadDir('.');
+    let info = await window.zytrader.workspace.info();
+    if (!info.ok) return;
+
+    this.workspaceRoot.set(info.root);
+    this.vaultPathLabel.set(info.vaultRoot);
+    this.vaultReady.set(info.vaultConfigured);
+
+    if (!info.vaultConfigured) {
+      const boot = await window.zytrader.vault.bootstrap();
+      if (!boot.ok) {
+        console.warn('[workbench] vault bootstrap failed', boot.error ?? boot);
+      }
+      info = await window.zytrader.workspace.info();
+      if (info.ok) {
+        this.vaultPathLabel.set(info.vaultRoot);
+        this.vaultReady.set(info.vaultConfigured);
+      }
+    }
+
+    this.initMemoryExplorerTree();
+    this.workspaceTree.set([]);
+    this.explorerRootView.set('project');
+    await this.loadDir('.', undefined, 'workspace');
+    await this.refreshShortTermMemoryStats();
     void this.refreshGitState();
+  }
+
+  private async refreshShortTermMemoryStats(): Promise<void> {
+    try {
+      const stats = await this.agentMemory.getShortTermStats();
+      this.shortTermMemoryCount.set(stats.count);
+      this.shortTermMemoryLatest.set(stats.latestUpdateTime);
+    } catch {
+      this.shortTermMemoryCount.set(0);
+      this.shortTermMemoryLatest.set(null);
+    }
+  }
+
+  protected formatVaultStatTime(iso: string | null): string {
+    if (!iso) return '暂无';
+    const t = new Date(iso);
+    if (Number.isNaN(t.getTime())) return '暂无';
+    return t.toLocaleString(undefined, {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  /** 资源管理器：记忆目录（路径相对 memory/vault 根） */
+  private initMemoryExplorerTree(): void {
+    const nodes: FileNode[] = VAULT_EXPLORER_TOP.map(({ name, path }) => {
+      const fixedChildren = VAULT_EXPLORER_FIXED_CHILDREN[path] ?? [];
+      return {
+        name,
+        path,
+        type: 'dir',
+        expanded: false,
+        loaded: fixedChildren.length > 0,
+        children: fixedChildren.map((child) => ({
+          name: child.name,
+          path: child.path,
+          type: 'dir',
+          expanded: false,
+          loaded: false,
+          children: [],
+          fsScope: 'vault' as const,
+          treeRoot: 'vault' as const,
+        })),
+        fsScope: 'vault' as const,
+        treeRoot: 'vault' as const,
+      };
+    });
+    this.memoryTree.set(nodes);
+  }
+
+  /** 系统对话框选择工程目录并持久化 */
+  protected async pickWorkspaceFolder(): Promise<void> {
+    const r = await window.zytrader.workspace.pickRoot();
+    if (!r.ok) return;
+    await this.bootstrapWorkspace();
+    this.cdr.markForCheck();
+  }
+
+  /** 顶部目录按钮：隐藏记忆目录，显示工程目录 */
+  protected showProjectExplorer(): void {
+    this.explorerRootView.set('project');
+    if (this.workspaceTree().length === 0) {
+      void this.loadDir('.', undefined, 'workspace');
+    }
+    this.cdr.markForCheck();
+  }
+
+  /** 顶部记忆按钮：隐藏工程目录，显示记忆目录 */
+  protected showMemoryExplorer(): void {
+    this.explorerRootView.set('memory');
+    this.cdr.markForCheck();
   }
 
   protected setSidebarView(v: SidebarView): void {
@@ -794,7 +985,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.branchMenuOpen.set(false);
       if (this.isGitCheckoutOk(r, out)) {
         await this.refreshGitState();
-        await this.loadDir('.');
       } else {
         this.gitUiMessage.set(out.trim().slice(0, 500) || '切换分支失败');
       }
@@ -831,10 +1021,17 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const body = text.slice(0, 240000);
       this.previewKind.set('diff');
       this.selectedPath.set(norm);
+      this.selectedFileTreeRoot.set(null);
       this.selectedContent.set(body);
       this.editorDirty.set(false);
       const tabLabel = `↔ ${norm}`;
-      this.tabEditorState.set(tabLabel, { relPath: norm, content: body, previewKind: 'diff', dirty: false });
+      this.tabEditorState.set(tabLabel, {
+        relPath: norm,
+        content: body,
+        previewKind: 'diff',
+        dirty: false,
+        fsScope: 'workspace',
+      });
       const all = this.tabs();
       if (!all.includes(tabLabel)) {
         this.tabs.set([...all, tabLabel]);
@@ -935,12 +1132,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private async openFileByPath(rel: string): Promise<void> {
     const norm = rel.replace(/\\/g, '/');
-    const tabLabel = norm;
+    const tabLabel = `workspace:${norm}`;
     this.persistTabState(this.activeTab());
-    const result = await window.zytrader.fs.read(norm);
+    const result = await window.zytrader.fs.read(norm, { scope: 'workspace' });
     if (!result.ok) {
       this.previewKind.set('code');
       this.selectedPath.set(norm);
+      this.selectedFileTreeRoot.set('workspace');
       this.selectedContent.set('无法读取该文件。');
       this.editorDirty.set(false);
       this.tabEditorState.set(tabLabel, {
@@ -948,6 +1146,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         content: '无法读取该文件。',
         previewKind: 'code',
         dirty: false,
+        fsScope: 'workspace',
       });
       this.addTabIfMissing(tabLabel);
       this.activeTab.set(tabLabel);
@@ -961,13 +1160,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       return;
     }
     const content = result.content.slice(0, 800_000);
-    this.previewKind.set('code');
-    this.selectedPath.set(norm);
-    this.selectedContent.set(content);
-    this.editorDirty.set(false);
-    this.tabEditorState.set(tabLabel, { relPath: norm, content, previewKind: 'code', dirty: false });
+    this.tabEditorState.set(tabLabel, { relPath: norm, content, previewKind: 'code', dirty: false, fsScope: 'workspace' });
     this.addTabIfMissing(tabLabel);
-    this.activeTab.set(tabLabel);
+    this.setTab(tabLabel);
     this.editorDiagnostics.set([]);
     this.sidebarView.set('explorer');
     queueMicrotask(() => {
@@ -1046,7 +1241,19 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   protected treeIcon(node: FileNode): string {
+    if (this.isMemoryProjectEntry(node)) return 'folder-open';
     return node.type === 'dir' ? 'folder' : 'file-text';
+  }
+
+  protected isMemoryProjectEntry(node: FileNode): boolean {
+    return node.fsScope === 'vault' && node.type === 'dir' && node.path === '03-PROJECTS';
+  }
+
+  protected onTreeNodeDblClick(node: FileNode, event: MouseEvent): void {
+    if (!this.isMemoryProjectEntry(node)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.showProjectExplorer();
   }
 
   protected statusLabel(status: CoordinationStep['status']): string {
@@ -1652,10 +1859,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  protected async loadDir(path: string, parent?: FileNode): Promise<void> {
-    const result = await window.zytrader.fs.list(path);
+  protected async loadDir(path: string, parent?: FileNode, scope: 'workspace' | 'vault' = 'vault'): Promise<void> {
+    const result = await window.zytrader.fs.list(path, { scope });
     if (!result.ok) return;
 
+    if (scope === 'vault' && path === '02-AGENT-MEMORY/01-Short-Term') {
+      this.shortTermMemoryCount.set(result.entries.filter((e) => e.type === 'file').length);
+    }
+
+    const treeRoot: 'vault' | 'workspace' = scope === 'workspace' ? 'workspace' : 'vault';
     const nodes: FileNode[] = result.entries
       .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
       .map((entry) => ({
@@ -1665,47 +1877,60 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         expanded: false,
         loaded: false,
         children: [],
+        fsScope: scope,
+        treeRoot,
       }));
 
     if (!parent) {
-      this.tree.set(nodes);
+      if (treeRoot === 'workspace') {
+        this.workspaceTree.set(nodes);
+      } else {
+        this.memoryTree.set(nodes);
+      }
       return;
     }
 
     parent.children = nodes;
     parent.loaded = true;
     parent.expanded = true;
-    this.tree.set([...this.tree()]);
+    if (parent.treeRoot === 'workspace') {
+      this.workspaceTree.set([...this.workspaceTree()]);
+    } else {
+      this.memoryTree.set([...this.memoryTree()]);
+    }
   }
 
   protected async toggleDir(node: FileNode): Promise<void> {
     if (node.type !== 'dir') return;
     if (!node.loaded) {
-      await this.loadDir(node.path, node);
+      await this.loadDir(node.path, node, node.fsScope ?? 'vault');
       return;
     }
     node.expanded = !node.expanded;
-    this.tree.set([...this.tree()]);
+    if (node.treeRoot === 'workspace') {
+      this.workspaceTree.set([...this.workspaceTree()]);
+    } else {
+      this.memoryTree.set([...this.memoryTree()]);
+    }
   }
 
   protected async openFile(node: FileNode): Promise<void> {
     if (node.type !== 'file') return;
-    const tabLabel = node.path;
+    const tr = node.treeRoot ?? 'vault';
+    const tabLabel = `${tr}:${node.path}`;
+    const scope = node.fsScope ?? 'vault';
     this.persistTabState(this.activeTab());
-    const result = await window.zytrader.fs.read(node.path);
+    const result = await window.zytrader.fs.read(node.path, { scope });
     if (!result.ok) {
-      this.previewKind.set('code');
-      this.selectedPath.set(node.path);
-      this.selectedContent.set('无法读取该文件。');
-      this.editorDirty.set(false);
       this.tabEditorState.set(tabLabel, {
         relPath: node.path,
         content: '无法读取该文件。',
         previewKind: 'code',
         dirty: false,
+        fsScope: scope,
       });
       this.addTabIfMissing(tabLabel);
-      this.activeTab.set(tabLabel);
+      this.setTab(tabLabel);
       this.editorDiagnostics.set([]);
       queueMicrotask(() => {
         this.fitAddon?.fit();
@@ -1715,13 +1940,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       return;
     }
     const content = result.content.slice(0, 800_000);
-    this.previewKind.set('code');
-    this.selectedPath.set(node.path);
-    this.selectedContent.set(content);
-    this.editorDirty.set(false);
-    this.tabEditorState.set(tabLabel, { relPath: node.path, content, previewKind: 'code', dirty: false });
+    this.tabEditorState.set(tabLabel, { relPath: node.path, content, previewKind: 'code', dirty: false, fsScope: scope });
     this.addTabIfMissing(tabLabel);
-    this.activeTab.set(tabLabel);
+    this.setTab(tabLabel);
     this.editorDiagnostics.set([]);
     queueMicrotask(() => {
       this.fitAddon?.fit();
@@ -2001,10 +2222,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected async createPsSession(shell: 'powershell' | 'cmd' | 'git-bash' = 'powershell'): Promise<void> {
     if (!this.psTerminal) return;
+    const preset = this.psCwdPresets.find((p) => p.id === this.activePsCwdPresetId()) ?? this.psCwdPresets[0];
     const id = `term-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const created = await window.zytrader.terminal.create({
       id,
-      cwd: '.',
+      cwd: preset?.cwd ?? '.',
+      cwdScope: preset?.cwdScope ?? 'vault',
       cols: this.psTerminal.cols,
       rows: this.psTerminal.rows,
       shell,
@@ -2043,6 +2266,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.psFitAddon?.fit();
       this.syncPowerShellSize();
     }, 80);
+  }
+
+  protected setPsCwdPreset(id: PsCwdPresetId): void {
+    this.activePsCwdPresetId.set(id);
   }
 
   protected async closePsSession(id: string): Promise<void> {

@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZyFront AI 项目介绍（技能生成）</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+        .slide {
+            width: 100vw;
+            height: 100vh;
+            max-width: 100%;
+            max-height: 100%;
+            overflow: hidden;
+            page-break-after: always;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 3rem 5rem;
+            box-sizing: border-box;
+        }
+        .slide-enter { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .nav-bar {
+            position: fixed;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid #334155;
+            border-radius: 9999px;
+            padding: 0.5rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            z-index: 50;
+            font-size: 0.875rem;
+            color: #cbd5e1;
+            transition: opacity 0.3s;
+        }
+        .nav-bar button {
+            background: none;
+            border: none;
+            color: #cbd5e1;
+            cursor: pointer;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+        }
+        .nav-bar button:hover { background: #334155; }
+        @media print {
+            .slide { page-break-after: always; }
+            .nav-bar { display: none; }
+            body { margin: 0; }
+        }
+    </style>
+</head>
+<body style="background-color: #0f172a; margin: 0; padding: 0;">
+
+    <div class="slide" style="background-color: #0f172a;">
+        <div class="w-full max-w-6xl">
+            <p class="text-slate-400 text-sm tracking-[0.25em] uppercase mb-6">ZyFront AI · Project Brief</p>
+            <h1 class="text-6xl font-extrabold text-slate-50 leading-tight">ZyTrader Desktop<br/>项目介绍</h1>
+            <div class="w-44 h-1.5 bg-blue-500 rounded-full mt-8"></div>
+            <p class="text-slate-300 text-2xl mt-8">本地可控的 AI 工作台：Workbench × Vault × Skill 生态</p>
+            <div class="mt-10 flex items-center gap-4 text-slate-400 text-sm">
+                <span><i class="fa-solid fa-calendar-days mr-2"></i>2026</span>
+                <span><i class="fa-solid fa-laptop-code mr-2"></i>Angular + Electron</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="slide" style="background-color: #0f172a;">
+        <div class="w-full max-w-6xl">
+            <h2 class="text-4xl font-extrabold text-slate-50 mb-8">项目目标与价值</h2>
+            <div class="grid grid-cols-2 gap-6 w-full">
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                    <i class="fa-solid fa-brain text-3xl text-amber-500 mb-3"></i>
+                    <h3 class="font-bold text-slate-50 text-xl">AI 工作流统一入口</h3>
+                    <p class="text-slate-300 text-sm mt-2">在单一界面中完成提问、执行、编辑、记忆回收。</p>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                    <i class="fa-solid fa-database text-3xl text-blue-500 mb-3"></i>
+                    <h3 class="font-bold text-slate-50 text-xl">本地可追溯记忆</h3>
+                    <p class="text-slate-300 text-sm mt-2">采用 Vault 目录规范，确保数据可见、可备份、可迁移。</p>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                    <i class="fa-solid fa-plug text-3xl text-cyan-400 mb-3"></i>
+                    <h3 class="font-bold text-slate-50 text-xl">技能生态扩展</h3>
+                    <p class="text-slate-300 text-sm mt-2">接入 ClawHub，支持技能搜索、下载、更新、状态同步。</p>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                    <i class="fa-solid fa-shield-halved text-3xl text-green-500 mb-3"></i>
+                    <h3 class="font-bold text-slate-50 text-xl">安全边界清晰</h3>
+                    <p class="text-slate-300 text-sm mt-2">IPC 与路径解析统一收口，避免越权与路径逃逸。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="slide" style="background-color: #0f172a;">
+        <div class="w-full max-w-6xl">
+            <h2 class="text-4xl font-extrabold text-slate-50 mb-8">系统架构概览</h2>
+            <div class="grid grid-cols-5 gap-6 w-full">
+                <div class="col-span-2 bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <h3 class="text-slate-50 font-bold text-xl mb-4">分层结构</h3>
+                    <div class="flex items-start gap-3 mb-3">
+                        <div class="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold shadow-md flex-shrink-0">1</div>
+                        <div><p class="font-bold text-slate-50">Electron 主进程</p><p class="text-slate-300 text-sm">文件/终端/系统能力桥接</p></div>
+                    </div>
+                    <div class="flex items-start gap-3 mb-3">
+                        <div class="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold shadow-md flex-shrink-0">2</div>
+                        <div><p class="font-bold text-slate-50">Angular 工作台</p><p class="text-slate-300 text-sm">多面板交互与可视化控制</p></div>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <div class="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold shadow-md flex-shrink-0">3</div>
+                        <div><p class="font-bold text-slate-50">Vault 数据层</p><p class="text-slate-300 text-sm">结构化目录 + 规则配置</p></div>
+                    </div>
+                </div>
+                <div class="col-span-3 bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <h3 class="text-slate-50 font-bold text-xl mb-4">关键模块</h3>
+                    <div class="grid grid-cols-3 gap-3">
+                        <div class="bg-slate-900 rounded-lg p-3 border border-slate-700 text-center">
+                            <i class="fa-solid fa-terminal text-blue-400 text-2xl mb-2"></i>
+                            <p class="text-slate-50 font-semibold text-sm">Workbench</p>
+                        </div>
+                        <div class="bg-slate-900 rounded-lg p-3 border border-slate-700 text-center">
+                            <i class="fa-solid fa-folder-tree text-amber-500 text-2xl mb-2"></i>
+                            <p class="text-slate-50 font-semibold text-sm">Directory Manager</p>
+                        </div>
+                        <div class="bg-slate-900 rounded-lg p-3 border border-slate-700 text-center">
+                            <i class="fa-solid fa-memory text-emerald-400 text-2xl mb-2"></i>
+                            <p class="text-slate-50 font-semibold text-sm">Agent Memory</p>
+                        </div>
+                        <div class="bg-slate-900 rounded-lg p-3 border border-slate-700 text-center">
+                            <i class="fa-solid fa-sliders text-violet-400 text-2xl mb-2"></i>
+                            <p class="text-slate-50 font-semibold text-sm">Rule Engine</p>
+                        </div>
+                        <div class="bg-slate-900 rounded-lg p-3 border border-slate-700 text-center">
+                            <i class="fa-solid fa-store text-cyan-400 text-2xl mb-2"></i>
+                            <p class="text-slate-50 font-semibold text-sm">ClawHub Skills</p>
+                        </div>
+                        <div class="bg-slate-900 rounded-lg p-3 border border-slate-700 text-center">
+                            <i class="fa-solid fa-diagram-project text-rose-400 text-2xl mb-2"></i>
+                            <p class="text-slate-50 font-semibold text-sm">Prototype Facade</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="slide" style="background-color: #0f172a;">
+        <div class="w-full max-w-6xl">
+            <h2 class="text-4xl font-extrabold text-slate-50 mb-8">Vault 标准目录体系</h2>
+            <div class="grid grid-cols-3 gap-4 w-full">
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700"><p class="text-slate-500 text-xs uppercase tracking-wide">00</p><p class="text-2xl font-extrabold text-blue-500">INBOX</p><p class="text-slate-300 text-sm mt-1">human / agent 输入分流</p></div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700"><p class="text-slate-500 text-xs uppercase tracking-wide">01</p><p class="text-2xl font-extrabold text-blue-500">HUMAN NOTES</p><p class="text-slate-300 text-sm mt-1">日记、知识、笔记、标签</p></div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700"><p class="text-slate-500 text-xs uppercase tracking-wide">02</p><p class="text-2xl font-extrabold text-blue-500">AGENT MEMORY</p><p class="text-slate-300 text-sm mt-1">Short / Long / Context / Meta</p></div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700"><p class="text-slate-500 text-xs uppercase tracking-wide">03</p><p class="text-2xl font-extrabold text-blue-500">PROJECTS</p><p class="text-slate-300 text-sm mt-1">工程关联资料与任务分组</p></div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700"><p class="text-slate-500 text-xs uppercase tracking-wide">04</p><p class="text-2xl font-extrabold text-blue-500">RESOURCES</p><p class="text-slate-300 text-sm mt-1">图片、文件、媒体、模板</p></div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700"><p class="text-slate-500 text-xs uppercase tracking-wide">05</p><p class="text-2xl font-extrabold text-blue-500">SYSTEM</p><p class="text-slate-300 text-sm mt-1">directory/rule/agent 配置</p></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="slide" style="background-color: #0f172a;">
+        <div class="w-full max-w-6xl">
+            <h2 class="text-4xl font-extrabold text-slate-50 mb-8">当前能力进展（量化）</h2>
+            <div class="grid grid-cols-5 gap-6 w-full">
+                <div class="col-span-3 bg-slate-800 rounded-xl p-4 border border-slate-700">
+                    <div class="relative w-full h-72">
+                        <canvas id="chart-slide6-a91"></canvas>
+                    </div>
+                </div>
+                <div class="col-span-2 grid grid-cols-1 gap-4">
+                    <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                        <p class="text-slate-500 text-xs uppercase tracking-wide">已接入核心模块</p>
+                        <p class="text-3xl font-extrabold text-blue-500">8 / 10</p>
+                        <p class="text-green-500 text-xs mt-1"><i class="fa-solid fa-arrow-up"></i> 持续推进</p>
+                    </div>
+                    <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                        <p class="text-slate-500 text-xs uppercase tracking-wide">技能链路状态</p>
+                        <p class="text-3xl font-extrabold text-amber-500">已打通</p>
+                        <p class="text-slate-400 text-xs mt-1">search / install / update / lock 同步</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script>
+        (function(){
+            if(typeof Chart==='undefined') return;
+            var c=document.getElementById('chart-slide6-a91');
+            if(!c) return;
+            if(typeof ChartDataLabels!=='undefined') Chart.register(ChartDataLabels);
+            new Chart(c,{type:'bar',data:{labels:['IPC桥接','Vault体系','记忆服务','工作台UI','ClawHub集成'],datasets:[{label:'完成度(%)',data:[95,90,85,88,80],backgroundColor:['#3b82f6','#22c55e','#f59e0b','#a855f7','#06b6d4']}]},options:{maintainAspectRatio:false,responsive:true,plugins:{legend:{labels:{color:'#cbd5e1'},position:'bottom'},datalabels:{display:true,color:'#f8fafc',font:{weight:'bold',size:11},anchor:'end',align:'top',offset:4}},scales:{y:{min:0,max:100,ticks:{color:'#64748b'},grid:{color:'#334155'}},x:{ticks:{color:'#64748b'},grid:{display:false}}}}});
+        })();
+        </script>
+    </div>
+
+    <div class="slide" style="background-color: #0f172a;">
+        <div class="w-full max-w-6xl">
+            <h2 class="text-4xl font-extrabold text-slate-50 mb-8">ClawHub 技能管理闭环</h2>
+            <div class="flex items-center justify-between w-full">
+                <div class="text-center">
+                    <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mx-auto mb-2">1</div>
+                    <p class="text-slate-50 font-semibold text-sm">搜索技能</p>
+                    <p class="text-slate-500 text-xs">clawhub/openclaw</p>
+                </div>
+                <div class="flex-1 h-0.5 bg-slate-700 mx-2"></div>
+                <div class="text-center">
+                    <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mx-auto mb-2">2</div>
+                    <p class="text-slate-50 font-semibold text-sm">下载安装</p>
+                    <p class="text-slate-500 text-xs">一键触发 CLI</p>
+                </div>
+                <div class="flex-1 h-0.5 bg-slate-700 mx-2"></div>
+                <div class="text-center">
+                    <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mx-auto mb-2">3</div>
+                    <p class="text-slate-50 font-semibold text-sm">同步状态</p>
+                    <p class="text-slate-500 text-xs">读取 .clawhub/lock.json</p>
+                </div>
+                <div class="flex-1 h-0.5 bg-slate-700 mx-2"></div>
+                <div class="text-center">
+                    <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mx-auto mb-2">4</div>
+                    <p class="text-slate-50 font-semibold text-sm">统一展示</p>
+                    <p class="text-slate-500 text-xs">来源标识与日志</p>
+                </div>
+            </div>
+            <div class="mt-10 grid grid-cols-3 gap-4 w-full">
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 text-center">
+                    <i class="fa-solid fa-magnifying-glass text-3xl text-cyan-400 mb-2"></i>
+                    <p class="text-slate-50 font-semibold text-sm">搜索 + 过滤</p>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 text-center">
+                    <i class="fa-solid fa-download text-3xl text-amber-500 mb-2"></i>
+                    <p class="text-slate-50 font-semibold text-sm">下载 + 更新</p>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 text-center">
+                    <i class="fa-solid fa-rectangle-list text-3xl text-emerald-400 mb-2"></i>
+                    <p class="text-slate-50 font-semibold text-sm">命令日志可追溯</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="slide" style="background-color: #0f172a;">
+        <div class="w-full max-w-6xl">
+            <h2 class="text-4xl font-extrabold text-slate-50 mb-8">下一阶段路线图</h2>
+            <div class="grid grid-cols-3 gap-6 w-full">
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                    <p class="text-slate-500 text-xs uppercase tracking-wide">Phase A</p>
+                    <p class="text-slate-50 font-bold text-xl mt-1">稳定性加固</p>
+                    <ul class="text-slate-300 text-sm mt-3 space-y-2">
+                        <li>• 构建预算与样式治理</li>
+                        <li>• 类型约束统一收敛</li>
+                        <li>• 异常日志规范化</li>
+                    </ul>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                    <p class="text-slate-500 text-xs uppercase tracking-wide">Phase B</p>
+                    <p class="text-slate-50 font-bold text-xl mt-1">记忆智能化</p>
+                    <ul class="text-slate-300 text-sm mt-3 space-y-2">
+                        <li>• 记忆检索与关联增强</li>
+                        <li>• 自动归档策略</li>
+                        <li>• 规则引擎声明式执行</li>
+                    </ul>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+                    <p class="text-slate-500 text-xs uppercase tracking-wide">Phase C</p>
+                    <p class="text-slate-50 font-bold text-xl mt-1">生态扩展</p>
+                    <ul class="text-slate-300 text-sm mt-3 space-y-2">
+                        <li>• ClawHub 认证配置 UI</li>
+                        <li>• 技能一键更新策略</li>
+                        <li>• 多 Agent 协同任务</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="nav-bar">
+        <button onclick="prevSlide()"><i class="fa-solid fa-chevron-left"></i></button>
+        <span id="slide-counter">1 / 1</span>
+        <button onclick="nextSlide()"><i class="fa-solid fa-chevron-right"></i></button>
+    </div>
+
+    <script>
+        let currentSlide = 0;
+        const slides = document.querySelectorAll('.slide');
+        const counter = document.getElementById('slide-counter');
+
+        function updateCounter() {
+            counter.textContent = `${currentSlide + 1} / ${slides.length}`;
+        }
+
+        function showSlide(index) {
+            slides.forEach(s => s.style.display = 'none');
+            slides[index].style.display = 'flex';
+            slides[index].classList.add('slide-enter');
+            currentSlide = index;
+            updateCounter();
+        }
+
+        function nextSlide() { if (currentSlide < slides.length - 1) showSlide(currentSlide + 1); }
+        function prevSlide() { if (currentSlide > 0) showSlide(currentSlide - 1); }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); nextSlide(); }
+            else if (e.key === 'ArrowLeft') { e.preventDefault(); prevSlide(); }
+        });
+
+        slides.forEach((s, i) => { s.style.display = i === 0 ? 'flex' : 'none'; });
+        updateCounter();
+    </script>
+
+</body>
+</html>

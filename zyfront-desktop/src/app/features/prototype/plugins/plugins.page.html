@@ -2,21 +2,65 @@
   <div class="plugins-shell">
     <header class="plugins-hero">
       <div>
-        <h1>插件与技能管理</h1>
-        <p>安装 MCP 插件或加载技能库，扩展 AI 代理能力。</p>
+        <h1>插件管理</h1>
+        <p>本页仅负责插件管理：从 ClawHub 下载插件、查看插件安装状态。</p>
       </div>
-      <div class="search-row">
-        <input nz-input placeholder="搜索插件、技能、主题..." />
-        <button nz-button>我的已安装</button>
-      </div>
+      <p class="hub-error" *ngIf="hubError()">{{ hubError() }}</p>
     </header>
 
     <section class="section">
       <div class="section-head">
-        <h2>热门插件 (MCP)</h2>
+        <h2>ClawHub 插件市场</h2>
       </div>
-      <div class="plugin-grid">
-        <article class="plugin-card" *ngFor="let plugin of facade.plugins()">
+      <div class="search-row">
+        <input
+          nz-input
+          [value]="pluginQuery()"
+          (input)="pluginQuery.set($any($event.target).value)"
+          (keydown.enter)="refreshPluginsFromHub()"
+          placeholder="搜索插件..."
+        />
+        <button nz-button (click)="refreshPluginsFromHub()" [disabled]="loadingPlugins()">
+          {{ loadingPlugins() ? '加载中…' : '刷新插件市场' }}
+        </button>
+      </div>
+
+      <div class="clawhub-grid clawhub-grid--cards" *ngIf="!loadingPlugins()">
+        <article class="clawhub-card" *ngFor="let item of filteredPlugins()">
+          <div class="clawhub-top">
+            <div>
+              <h3>{{ item.name }}</h3>
+              <p>{{ item.desc }}</p>
+            </div>
+            <button
+              nz-button
+              [nzType]="isPluginInstalled(item.id) ? 'default' : 'primary'"
+              [disabled]="isPluginInstalled(item.id) || isInstallingPlugin(item.id)"
+              (click)="installPluginFromHub(item)"
+            >
+              {{ isPluginInstalled(item.id) ? '已安装' : isInstallingPlugin(item.id) ? '安装中…' : '下载插件' }}
+            </button>
+          </div>
+          <div class="clawhub-meta">
+            <span class="chip" *ngFor="let t of item.tags">{{ t }}</span>
+          </div>
+          <div class="clawhub-foot">
+            <span>ID：{{ item.id }}</span>
+            <span>{{ item.author }}</span>
+          </div>
+        </article>
+      </div>
+
+      <p class="empty-hint" *ngIf="loadingPlugins()">正在加载插件市场…</p>
+      <p class="empty-hint" *ngIf="!loadingPlugins() && filteredPlugins().length === 0">未找到插件结果。</p>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>已安装插件</h2>
+      </div>
+      <div class="plugin-grid plugin-grid--cards">
+        <article class="plugin-card plugin-card--strong" *ngFor="let plugin of facade.plugins()">
           <div class="plugin-top">
             <h3>{{ plugin.name }}</h3>
             <button nz-button [nzType]="plugin.installed ? 'default' : 'primary'" (click)="facade.togglePlugin(plugin.id)">
@@ -24,24 +68,17 @@
             </button>
           </div>
           <p>{{ plugin.desc }}</p>
-          <div class="meta">v1.0.0 · 热门</div>
+          <div class="meta">{{ plugin.installed ? '状态：已安装' : '状态：未安装' }}</div>
         </article>
       </div>
     </section>
 
     <section class="section">
       <div class="section-head">
-        <h2>预定义技能 (Skills)</h2>
+        <h2>命令日志</h2>
+        <span class="section-sub">ClawHub / OpenClaw 执行输出</span>
       </div>
-      <div class="skill-list">
-        <article class="skill-item" *ngFor="let skill of facade.skills()">
-          <div>
-            <h4>{{ skill.name }}</h4>
-            <p>{{ skill.desc }}</p>
-          </div>
-          <span class="dot" [class.active]="skill.active"></span>
-        </article>
-      </div>
+      <pre class="cmd-log">{{ commandLog() || '暂无日志' }}</pre>
     </section>
   </div>
 </section>

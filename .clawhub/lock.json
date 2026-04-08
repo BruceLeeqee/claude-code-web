@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "skills": {
+    "productivity": {
+      "version": "1.0.4",
+      "installedAt": 1775562854616
+    },
+    "office": {
+      "version": "1.0.0",
+      "installedAt": 1775564296279
+    }
+  }
+}

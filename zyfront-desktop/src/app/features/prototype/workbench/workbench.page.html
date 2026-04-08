@@ -1,13 +1,11 @@
 <app-global-shell-frame
   [llmAvailable]="llmAvailable()"
-  [showExplorerToggle]="true"
   [showTerminalMenuToggle]="true"
   [showSettingsToggle]="true"
   [showRightPanelToggle]="true"
-  [explorerVisible]="leftPanelVisible()"
   [terminalMenuVisible]="terminalMenuVisible()"
   [rightPanelVisible]="rightPanelVisible()"
-  (toggleExplorer)="toggleLeftPanel()"
+  (openProject)="pickWorkspaceFolder()"
   (toggleTerminalMenu)="toggleTerminalMenu()"
   (toggleRightPanel)="toggleRightPanel()"
 >
@@ -22,11 +20,20 @@
                 <button
                   type="button"
                   class="vt-btn"
-                  [class.active]="sidebarView() === 'explorer'"
-                  (click)="setSidebarView('explorer')"
-                  title="资源管理器"
+                  [class.active]="sidebarView() === 'explorer' && explorerRootView() === 'project'"
+                  (click)="setSidebarView('explorer'); showProjectExplorer()"
+                  title="项目目录"
                 >
-                  <span nz-icon nzType="folder"></span>
+                  <span nz-icon nzType="folder-open"></span>
+                </button>
+                <button
+                  type="button"
+                  class="vt-btn"
+                  [class.active]="explorerRootView() === 'memory'"
+                  (click)="setSidebarView('explorer'); showMemoryExplorer()"
+                  title="记忆目录"
+                >
+                  <span nz-icon nzType="database"></span>
                 </button>
                 <button
                   type="button"
@@ -61,28 +68,59 @@
 
           <div class="wb-sidebar-body">
             <ng-container *ngIf="sidebarView() === 'explorer'">
-              <div class="tree-scroll vscode-tree">
-                <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: tree(), depth: 0 }"></ng-container>
-              </div>
+
+              <ng-container *ngIf="explorerRootView() === 'project'; else memoryTreeBlock">
+                <div class="explorer-section-label">工程目录</div>
+                <div class="tree-scroll vscode-tree">
+                  <ng-container
+                    [ngTemplateOutlet]="treeTpl"
+                    [ngTemplateOutletContext]="{ $implicit: workspaceTree(), depth: 0 }"
+                  ></ng-container>
+                </div>
+              </ng-container>
+
+              <ng-template #memoryTreeBlock>
+                <div class="explorer-section-label">记忆目录</div>
+                <div class="tree-scroll vscode-tree">
+                  <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: memoryTree(), depth: 0 }"></ng-container>
+                </div>
+              </ng-template>
 
               <ng-template #treeTpl let-nodes let-depth="depth">
                 <ng-container *ngFor="let node of nodes">
                   <div
                     class="vscode-tree-row"
                     [class.is-dir]="node.type === 'dir'"
-                    [class.is-selected]="node.type === 'file' && selectedPath() === node.path"
+                    [class.is-project-entry]="isMemoryProjectEntry(node)"
+                    [class.is-selected]="
+                      node.type === 'file' &&
+                      selectedPath() === node.path &&
+                      selectedFileTreeRoot() === (node.treeRoot ?? 'vault')
+                    "
                     [style.paddingLeft.px]="depth * 16 + 8"
                     (click)="node.type === 'dir' ? toggleDir(node) : openFile(node)"
+                    (dblclick)="onTreeNodeDblClick(node, $event)"
                   >
                     <span class="vscode-chevron" *ngIf="node.type === 'dir'">{{ node.expanded ? '▾' : '▸' }}</span>
                     <span class="vscode-chevron-placeholder" *ngIf="node.type === 'file'"></span>
                     <span class="vscode-tree-icon" nz-icon [nzType]="treeIcon(node)"></span>
-                    <span class="vscode-tree-label">{{ node.name }}</span>
+                    <span class="vscode-tree-label">
+                      {{ node.name }}
+                      <span class="entry-badge" *ngIf="isMemoryProjectEntry(node)">工程入口</span>
+                    </span>
                   </div>
 
                   <ng-container *ngIf="node.type === 'dir' && node.expanded && node.children?.length">
                     <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: node.children, depth: depth + 1 }"></ng-container>
                   </ng-container>
+
+                  <div
+                    style="min-height:20px;line-height:20px;font-size:11px;color:#7b7b7b;padding-right:8px;user-select:none"
+                    *ngIf="node.type === 'dir' && node.expanded && node.loaded && (!node.children || node.children.length === 0)"
+                    [style.paddingLeft.px]="(depth + 1) * 16 + 8"
+                  >
+                    （空目录）
+                  </div>
                 </ng-container>
               </ng-template>
 
@@ -261,6 +299,14 @@
               </div>
 
               <div class="ps-toolbar">
+                <select
+                  style="height:24px;padding:0 6px;border-radius:4px;border:1px solid #3a3f4f;background:#121826;color:#c7d2fe;font-size:11px;max-width:180px"
+                  [value]="activePsCwdPresetId()"
+                  (change)="setPsCwdPreset($any($event.target).value)"
+                  title="新终端默认目录"
+                >
+                  <option *ngFor="let p of psCwdPresets" [value]="p.id">{{ p.label }}</option>
+                </select>
                 <button type="button" class="ps-btn plus-only" title="新建 PowerShell" (click)="createPsSession('powershell')">+</button>
                 <button type="button" class="ps-btn action" title="执行 npm run start" (click)="runAutomation('run')">自动运行</button>
                 <button type="button" class="ps-btn action" title="执行 npm run build" (click)="runAutomation('build')">自动构建</button>

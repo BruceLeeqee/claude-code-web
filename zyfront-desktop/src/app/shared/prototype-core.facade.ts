@@ -115,10 +115,10 @@ export class PrototypeCoreFacade {
   ]);
 
   readonly skills = signal([
-    { id: 'skill.smart-refactor', name: '智能代码重构', desc: '识别并修复代码坏味道', active: true },
-    { id: 'skill.auto-cr', name: '自动代码审查 (Auto-CR)', desc: 'Git Push 前分析安全漏洞和逻辑缺陷', active: false },
-    { id: 'skill.tests', name: '深度单元测试生成', desc: '模拟复杂场景自动填充测试用例', active: false },
-    { id: 'skill.cicd', name: 'CI/CD Pipeline 优化', desc: '分析构建日志并优化流水线速度', active: false },
+    { id: 'skill.smart-refactor', name: '智能代码重构', desc: '识别并修复代码坏味道', active: true, source: 'builtin' },
+    { id: 'skill.auto-cr', name: '自动代码审查 (Auto-CR)', desc: 'Git Push 前分析安全漏洞和逻辑缺陷', active: false, source: 'builtin' },
+    { id: 'skill.tests', name: '深度单元测试生成', desc: '模拟复杂场景自动填充测试用例', active: false, source: 'builtin' },
+    { id: 'skill.cicd', name: 'CI/CD Pipeline 优化', desc: '分析构建日志并优化流水线速度', active: false, source: 'builtin' },
   ]);
 
   readonly plugins = signal([
@@ -198,14 +198,95 @@ export class PrototypeCoreFacade {
     this.skills.update((items) => items.map((it) => ({ ...it, active: it.id === id })));
   }
 
-  addSkill(payload: { name: string; desc: string }): void {
+  addSkill(payload: { name: string; desc: string; outputMode?: 'standard' | 'presentation-html' | 'presentation-pptx' }): void {
     const base = payload.name.trim() || '新技能';
     const id = `skill.custom.${Date.now().toString(36)}`;
     const desc = payload.desc.trim() || '由向导创建';
-    this.skills.update((items) => [{ id, name: base, desc, active: true }, ...items.map((it) => ({ ...it, active: false }))]);
+    const mode = payload.outputMode ?? 'standard';
+    const modeLabel =
+      mode === 'presentation-html' ? '输出模式：网页演示（HTML）' : mode === 'presentation-pptx' ? '输出模式：PPTX 导出' : '输出模式：标准';
+
+    this.skills.update((items) => [
+      { id, name: base, desc: `${desc} · ${modeLabel}`, active: true, source: 'custom' as const },
+      ...items.map((it) => ({ ...it, active: false })),
+    ]);
   }
 
   togglePlugin(id: string): void {
     this.plugins.update((items) => items.map((it) => (it.id === id ? { ...it, installed: !it.installed } : it)));
   }
+
+  installSkillFromHub(payload: { id: string; name: string; desc: string }): void {
+    const normalizedId = payload.id.trim() || `skill.hub.${Date.now().toString(36)}`;
+    const name = payload.name.trim() || '未命名技能';
+    const desc = payload.desc.trim() || '来自 ClawHub';
+
+    this.skills.update((items) => {
+      const exists = items.find((it) => it.id === normalizedId);
+      if (exists) {
+        return items.map((it) =>
+          it.id === normalizedId
+            ? { ...it, name, desc, active: true, source: 'clawhub' as const }
+            : { ...it, active: false },
+        );
+      }
+      return [
+        { id: normalizedId, name, desc, active: true, source: 'clawhub' as const },
+        ...items.map((it) => ({ ...it, active: false })),
+      ];
+    });
+  }
+
+  async runSkillWithAgent(payload: { skillId: string; skillContent: string; prompt: string }): Promise<string> {
+    const assistant = this.runtime.assistant as unknown as Record<string, unknown>;
+    const contextPrompt = [
+      `你现在要严格按技能执行。`,
+      `技能ID: ${payload.skillId}`,
+      `技能内容(SKILL.md):`,
+      payload.skillContent,
+      ``,
+      `用户测试输入:`,
+      payload.prompt,
+      ``,
+      `请输出结构化结果：目标、步骤、结果。`,
+    ].join('\n');
+
+    const methodNames = ['respond', 'run', 'chat', 'invoke', 'complete'];
+    for (const name of methodNames) {
+      const fn = assistant[name];
+      if (typeof fn !== 'function') continue;
+      try {
+        const result = await (fn as (...args: unknown[]) => Promise<unknown>).call(assistant, {
+          input: contextPrompt,
+          prompt: contextPrompt,
+          message: contextPrompt,
+        });
+        const text = this.extractAgentText(result);
+        if (text) return text;
+      } catch {
+        // try next method
+      }
+    }
+
+    throw new Error('当前运行时未暴露可调用的 assistant 方法，请先在 runtime 中开放对话执行接口。');
+  }
+
+  private extractAgentText(result: unknown): string {
+    if (typeof result === 'string') return result;
+    if (!result || typeof result !== 'object') return '';
+
+    const rec = result as Record<string, unknown>;
+    const direct = rec['text'] ?? rec['output'] ?? rec['content'];
+    if (typeof direct === 'string') return direct;
+
+    const choices = rec['choices'];
+    if (Array.isArray(choices) && choices.length > 0) {
+      const c0 = choices[0] as Record<string, unknown>;
+      const msg = c0['message'] as Record<string, unknown> | undefined;
+      if (msg && typeof msg['content'] === 'string') return String(msg['content']);
+    }
+
+    return JSON.stringify(result, null, 2);
+  }
 }
+

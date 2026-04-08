@@ -10,7 +10,8 @@
       "Bash(curl -s \"https://minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com/ccv2%2F2026-04-05%2FMiniMax-M2.7%2F2022627786899857413%2F60f26dd69ea602fcc07163b5819b106c66c40e1490021cc26460cc7a95e3377c..png?Expires=1775465761&OSSAccessKeyId=LTAI5tGLnRTkBjLuYPjNcKQ8&Signature=g03GQCP5fKqT5GXoDeg3EpwsgFY%3D\" -o /tmp/screenshot.png)",
       "Bash(curl -s \"https://minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com/ccv2%2F2026-04-05%2FMiniMax-M2.7%2F2022627786899857413%2F60f26dd69ea602fcc07163b5819b106c66c40e1490021cc26460cc7a95e3377c..png?Expires=1775465761&OSSAccessKeyId=LTAI5tGLnRTkBjLuYPjNcKQ8&Signature=g03GQCP5fKqT5GXoDeg3EpwsgFY%3D\" -o C:/Users/95324/AppData/Local/Temp/screenshot.png)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d.get\\(k\\) for k in ['main','module','exports','types']}, indent=2\\)\\)\")",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(git:*)"
     ]
   }
 }

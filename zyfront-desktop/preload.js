@@ -17,13 +17,14 @@ ipcRenderer.on('zytrader:terminal:exit', (_event, payload) => {
 
 contextBridge.exposeInMainWorld('zytrader', {
   fs: {
-    list: (dir = '.') => ipcRenderer.invoke('zytrader:fs:list', dir),
-    read: (filePath) => ipcRenderer.invoke('zytrader:fs:read', filePath),
-    write: (filePath, content) => ipcRenderer.invoke('zytrader:fs:write', filePath, content),
-    remove: (targetPath) => ipcRenderer.invoke('zytrader:fs:delete', targetPath),
+    list: (dir = '.', opts = {}) => ipcRenderer.invoke('zytrader:fs:list', dir, opts),
+    read: (filePath, opts = {}) => ipcRenderer.invoke('zytrader:fs:read', filePath, opts),
+    write: (filePath, content, opts = {}) => ipcRenderer.invoke('zytrader:fs:write', filePath, content, opts),
+    remove: (targetPath, opts = {}) => ipcRenderer.invoke('zytrader:fs:delete', targetPath, opts),
   },
   terminal: {
-    exec: (command, cwd = '.') => ipcRenderer.invoke('zytrader:terminal:exec', command, cwd),
+    exec: (command, cwd = '.', cwdScope = 'workspace') =>
+      ipcRenderer.invoke('zytrader:terminal:exec', command, cwd, cwdScope),
     create: (payload) => ipcRenderer.invoke('zytrader:terminal:create', payload),
     write: (payload) => ipcRenderer.invoke('zytrader:terminal:write', payload),
     resize: (payload) => ipcRenderer.invoke('zytrader:terminal:resize', payload),
@@ -44,9 +45,16 @@ contextBridge.exposeInMainWorld('zytrader', {
   },
   workspace: {
     info: () => ipcRenderer.invoke('zytrader:workspace:info'),
+    setRoot: (dir) => ipcRenderer.invoke('zytrader:workspace:setRoot', dir),
+    pickRoot: () => ipcRenderer.invoke('zytrader:workspace:pickRoot'),
+  },
+  vault: {
+    bootstrap: () => ipcRenderer.invoke('zytrader:vault:bootstrap'),
+    resolve: (key) => ipcRenderer.invoke('zytrader:vault:resolve', key),
+    setConfig: (partial) => ipcRenderer.invoke('zytrader:vault:setConfig', partial),
   },
   host: {
-    openPath: (targetPath) => ipcRenderer.invoke('zytrader:host:openPath', targetPath),
+    openPath: (targetPath, opts = {}) => ipcRenderer.invoke('zytrader:host:openPath', targetPath, opts),
   },
 })
 
