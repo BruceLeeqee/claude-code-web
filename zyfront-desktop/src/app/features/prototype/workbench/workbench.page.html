@@ -234,7 +234,10 @@
               [title]="tabTooltip(tab)"
               (contextmenu)="onTabContextMenu(tab, $event)"
             >
-              <button type="button" class="tab-label-btn" (click)="setTab(tab)">{{ displayTabLabel(tab) }}</button>
+              <button type="button" class="tab-label-btn" (click)="setTab(tab)">
+                <span class="tab-kind-icon" *ngIf="tab === 'Terminal - Main'" nz-icon nzType="terminal"></span>
+                {{ displayTabLabel(tab) }}
+              </button>
               <button
                 *ngIf="tab !== 'Terminal - Main'"
                 type="button"
@@ -263,7 +266,7 @@
 
         <div class="wb-center-scroll" [style.gridTemplateRows]="centerGridTemplateRows()">
           <div class="wb-center-main-row">
-            <section class="terminal-panel" *ngIf="activeTab() === 'Terminal - Main'" (click)="focusAiTerminal()">
+            <section class="terminal-panel" [class.is-hidden]="activeTab() !== 'Terminal - Main'" (click)="focusAiTerminal()">
               <div class="terminal-body">
                 <div #xtermHost class="xterm-host"></div>
               </div>

@@ -29,7 +29,7 @@ import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.servic
 import { AgentMemoryService } from '../../../core/agent-memory.service';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
-import type { CoordinationMode, CoordinationStep, StreamChunk } from 'zyfront-core';
+import type { ChatMessage, CoordinationMode, CoordinationStep, StreamChunk } from 'zyfront-core';
 import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../../../core/zyfront-core.providers';
 import { TerminalMemoryGraphService } from '../../../core/terminal-memory-graph.service';
 import { CommandRouterService } from './command-router.service';
@@ -677,16 +677,16 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.coordinatorMode.set(state.mode);
     this.planSteps.set([...state.steps]);
     this.stepTotal.set(state.steps.length);
-    this.stepDone.set(state.steps.filter((s) => s.status === 'completed').length);
-    this.stepInProgress.set(state.steps.filter((s) => s.status === 'in_progress').length);
-    this.stepPending.set(state.steps.filter((s) => s.status === 'pending').length);
+    this.stepDone.set(state.steps.filter((s: CoordinationStep) => s.status === 'completed').length);
+    this.stepInProgress.set(state.steps.filter((s: CoordinationStep) => s.status === 'in_progress').length);
+    this.stepPending.set(state.steps.filter((s: CoordinationStep) => s.status === 'pending').length);
   }
 
   /** 将历史消息与工具轨迹合并为右栏「捕获的记忆」 */
   private async rebuildMemoryPanel(): Promise<void> {
     try {
-      const msgs = await this.runtime.history.list(SESSION_ID);
-      const fromHist: MemoryVm[] = msgs.slice(-18).map((m) => {
+      const msgs: ChatMessage[] = await this.runtime.history.list(SESSION_ID);
+      const fromHist: MemoryVm[] = msgs.slice(-18).map((m: ChatMessage) => {
         const raw = typeof m.content === 'string' ? m.content : '';
         const snippet = raw.replace(/\s+/g, ' ').trim().slice(0, 140);
         const label =
@@ -725,8 +725,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private bumpPlanOnToolStart(): void {
     const { steps } = this.runtime.coordinator.getState();
     if (steps.length === 0) return;
-    if (steps.some((s) => s.status === 'in_progress')) return;
-    const pending = steps.find((s) => s.status === 'pending');
+    if (steps.some((s: CoordinationStep) => s.status === 'in_progress')) return;
+    const pending = steps.find((s: CoordinationStep) => s.status === 'pending');
     if (pending) this.runtime.coordinator.updateStep(pending.id, { status: 'in_progress' });
   }
 
@@ -734,10 +734,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private bumpPlanOnToolDone(ok: boolean): void {
     if (!ok) return;
     const { steps } = this.runtime.coordinator.getState();
-    const cur = steps.find((s) => s.status === 'in_progress');
+    const cur = steps.find((s: CoordinationStep) => s.status === 'in_progress');
     if (cur) {
       this.runtime.coordinator.updateStep(cur.id, { status: 'completed' });
-      const next = this.runtime.coordinator.getState().steps.find((s) => s.status === 'pending');
+      const next = this.runtime.coordinator.getState().steps.find((s: CoordinationStep) => s.status === 'pending');
       if (next) this.runtime.coordinator.updateStep(next.id, { status: 'in_progress' });
     }
   }
@@ -1500,12 +1500,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     if (!prompt) return;
 
     const now = Date.now();
-    const msgs = await this.runtime.history.list(SESSION_ID);
+    const msgs: ChatMessage[] = await this.runtime.history.list(SESSION_ID);
     const turn: TurnContext = {
       sessionId: SESSION_ID,
       turnId: `turn_${now}`,
       timestamp: now,
-      messages: msgs.reduce<TurnContext['messages']>((acc, m) => {
+      messages: msgs.reduce<TurnContext['messages']>((acc: TurnContext['messages'], m: ChatMessage) => {
         if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'system') return acc;
         acc.push({
           id: m.id,
@@ -2016,7 +2016,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       case 'plugin_list': {
         const plugins = this.runtime.plugins.list();
         this.aiXtermWrite(`\r\n[plugins] count=${plugins.length}\r\n`);
-        plugins.forEach((p) => this.aiXtermWrite(` - ${p.id} :: v${p.version}\r\n`));
+        plugins.forEach((p: { id: string; version: string }) => this.aiXtermWrite(` - ${p.id} :: v${p.version}\r\n`));
         return;
       }
 

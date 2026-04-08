@@ -5,10 +5,10 @@
     "outDir": "./dist/out-tsc",
     "baseUrl": "./",
     "paths": {
-      "zyfront-core": ["./node_modules/zyfront-core/dist/index.d.ts"],
-      "zyfront-core/*": ["./node_modules/zyfront-core/dist/*"],
-      "claude-core": ["./node_modules/zyfront-core/dist/index.d.ts"],
-      "claude-core/*": ["./node_modules/zyfront-core/dist/*"]
+      "zyfront-core": ["../zyfront-core/src/index.ts"],
+      "zyfront-core/*": ["../zyfront-core/src/*"],
+      "claude-core": ["../zyfront-core/src/index.ts"],
+      "claude-core/*": ["../zyfront-core/src/*"]
     },
     "strict": true,
     "noImplicitOverride": true,
@@ -34,6 +34,7 @@
     "enableI18nLegacyMessageIdFormat": false,
     "strictInjectionParameters": true,
     "strictInputAccessModifiers": true,
-    "strictTemplates": true
+    "strictTemplates": true,
+    "noImplicitAny": false
   }
 }

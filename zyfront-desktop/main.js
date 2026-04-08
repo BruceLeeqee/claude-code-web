@@ -3,7 +3,7 @@ const electronModule = require('electron')
 const path = require('path')
 const os = require('os')
 const fs = require('fs/promises')
-const { existsSync } = require('fs')
+const { existsSync, readFileSync } = require('fs')
 const { exec, spawn } = require('child_process')
 const pty = require('node-pty')
 
@@ -186,6 +186,21 @@ function computeWorkspaceRoot(cfg) {
   return { root: path.resolve(__dirname, '..'), fromEnv: false }
 }
 
+function readWorkspaceLocalVaultRoot(workspaceRoot) {
+  const localCfgPath = path.join(workspaceRoot, '.zytrader', 'local.config.json')
+  if (!existsSync(localCfgPath)) return ''
+  try {
+    const raw = readFileSync(localCfgPath, 'utf8')
+    const parsed = JSON.parse(raw)
+    const v1 = parsed?.vaultRoot
+    const v2 = parsed?.vault?.root
+    const picked = typeof v1 === 'string' && v1.trim() ? v1 : typeof v2 === 'string' && v2.trim() ? v2 : ''
+    return picked ? path.resolve(String(picked).trim()) : ''
+  } catch {
+    return ''
+  }
+}
+
 function computeVaultRoot(workspaceRoot, vaultCfg) {
   const mode = vaultCfg?.mode === 'global' ? 'global' : 'nested'
   const nestedRelRaw = vaultCfg?.nestedRelative !== undefined ? String(vaultCfg.nestedRelative).trim() : ''
@@ -201,6 +216,12 @@ function computeVaultRoot(workspaceRoot, vaultCfg) {
     if (gr) {
       return { vaultRoot: path.resolve(gr), mode: 'global', projectKey: pk }
     }
+  }
+
+  // 工作区本地覆盖：支持随机器变化的绝对根目录配置（不影响一级/二级固定目录结构）
+  const localOverride = readWorkspaceLocalVaultRoot(workspaceRoot)
+  if (localOverride) {
+    return { vaultRoot: path.normalize(localOverride), mode: 'nested', projectKey: pk }
   }
 
   // nested 模式默认策略：

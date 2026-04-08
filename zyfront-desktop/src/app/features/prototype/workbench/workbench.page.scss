@@ -838,6 +838,10 @@
   overflow: hidden;
 }
 
+.is-hidden {
+  display: none !important;
+}
+
 .terminal-panel {
   flex: 1;
   min-height: 0;
@@ -1194,6 +1198,9 @@
 
   .tab-label-btn {
     flex: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1205,6 +1212,12 @@
     font: inherit;
     cursor: pointer;
     padding: 0 4px;
+  }
+
+  .tab-kind-icon {
+    font-size: 12px;
+    color: #8ab4f8;
+    flex: 0 0 auto;
   }
 
   .tab-close-btn {
