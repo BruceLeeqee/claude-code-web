@@ -1,18 +1,32 @@
 <app-global-shell-frame
   [llmAvailable]="llmAvailable()"
+  [showLeftPanelToggle]="true"
+  [leftPanelVisible]="leftPanelVisible()"
   [showTerminalMenuToggle]="true"
   [showSettingsToggle]="true"
   [showRightPanelToggle]="true"
   [terminalMenuVisible]="terminalMenuVisible()"
   [rightPanelVisible]="rightPanelVisible()"
   (openProject)="pickWorkspaceFolder()"
+  (toggleLeftPanel)="toggleLeftPanel()"
   (toggleTerminalMenu)="toggleTerminalMenu()"
   (toggleRightPanel)="toggleRightPanel()"
 >
-  <div class="wb-shell">
-    <div class="wb-main" [style.gridTemplateColumns]="mainGridTemplate()">
-
-      <section class="wb-left-panel" *ngIf="leftPanelVisible()" [style.width.px]="leftPanelWidth()">
+  <div class="wb-shell wb-shell--splitter">
+    <nz-splitter
+      class="wb-splitter-outer"
+      [nzLayout]="'horizontal'"
+      (nzResizeEnd)="onWorkbenchOuterSplitterResize($event)"
+    >
+      <nz-splitter-panel
+        *ngIf="leftPanelVisible()"
+        [nzDefaultSize]="leftPanelWidth()"
+        [nzMin]="180"
+        [nzMax]="520"
+        [nzResizable]="true"
+        [nzCollapsible]="{ end: true }"
+      >
+        <section class="wb-left-panel">
         <div class="wb-sidebar-column">
           <div class="left-header">
             <div class="left-title-row">
@@ -211,190 +225,240 @@
             <span class="lb-msg" *ngIf="gitUiMessage()">{{ gitUiMessage() }}</span>
           </div>
         </div>
-      </section>
+        </section>
+      </nz-splitter-panel>
 
-      <div class="panel-resizer vertical" *ngIf="leftPanelVisible()" (mousedown)="onLeftResizeStart($event)"></div>
-
-      <section class="wb-center-panel" (click)="hideTabContextMenu()">
-        <div class="wb-center-tabs">
-          <button
-            type="button"
-            class="tab-scroll-btn"
-            [title]="leftPanelVisible() ? '隐藏左侧项目目录' : '显示左侧项目目录'"
-            (click)="toggleLeftPanel()"
+      <nz-splitter-panel
+        [nzDefaultSize]="centerSplitterDefaultSize()"
+        [nzMin]="280"
+        [nzResizable]="true"
+        [nzCollapsible]="{ end: true }"
+      >
+        <div class="wb-middle-column">
+          <!-- Cursor：中间列仅「上编辑 / 下终端」；右侧栏为最外层第三列，与主编辑区并排、全高 -->
+          <nz-splitter
+            class="wb-splitter-main-vertical"
+            [nzLayout]="'vertical'"
+            (nzResizeEnd)="onWorkbenchInnerSplitterResize($event)"
           >
-            {{ leftPanelVisible() ? '⟨' : '⟩' }}
-          </button>
-          <button type="button" class="tab-scroll-btn" title="向左滚动" (click)="scrollTabsBy(-220)">◀</button>
-          <div class="wb-center-tabs-scroll" #tabScrollHost>
-            <div
-              *ngFor="let tab of visibleTabs()"
-              class="editor-tab"
-              [class.active]="activeTab() === tab"
-              [title]="tabTooltip(tab)"
-              (contextmenu)="onTabContextMenu(tab, $event)"
+            <nz-splitter-panel
+              [nzDefaultSize]="terminalMenuVisible() ? '72%' : '100%'"
+              [nzMin]="120"
+              [nzResizable]="terminalMenuVisible()"
+              [nzCollapsible]="{ end: true }"
             >
-              <button type="button" class="tab-label-btn" (click)="setTab(tab)">
-                <span class="tab-kind-icon" *ngIf="tab === 'Terminal - Main'" nz-icon nzType="terminal"></span>
-                {{ displayTabLabel(tab) }}
-              </button>
-              <button
-                *ngIf="tab !== 'Terminal - Main'"
-                type="button"
-                class="tab-close-btn"
-                title="关闭"
-                (click)="closeEditorTab(tab); $event.stopPropagation()"
-              >
-                ×
-              </button>
+              <section class="wb-center-panel" (click)="hideTabContextMenu()">
+                    <div class="wb-center-stack">
+                      <div class="wb-center-tabs">
+                        <div class="wb-center-tabs-scroll" #tabScrollHost>
+                          <div
+                            *ngFor="let tab of visibleTabs()"
+                            class="editor-tab"
+                            [class.active]="activeTab() === tab"
+                            [title]="tabTooltip(tab)"
+                            (contextmenu)="onTabContextMenu(tab, $event)"
+                          >
+                            <button type="button" class="tab-label-btn" (click)="setTab(tab)">
+                              <span class="tab-kind-icon" *ngIf="tab === 'Terminal - Main'" nz-icon nzType="terminal"></span>
+                              {{ displayTabLabel(tab) }}
+                            </button>
+                            <button
+                              *ngIf="tab !== 'Terminal - Main'"
+                              type="button"
+                              class="tab-close-btn"
+                              title="关闭"
+                              (click)="closeEditorTab(tab); $event.stopPropagation()"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          class="tab-overflow-btn"
+                          *ngIf="tabBarHasOverflow() && tabOverflowHiddenTabs().length > 0"
+                          nz-dropdown
+                          [nzDropdownMenu]="tabOverflowMenu"
+                          nzTrigger="click"
+                          title="被遮挡的标签页"
+                        >
+                          <span nz-icon nzType="double-right" nzTheme="outline"></span>
+                        </button>
+                        <nz-dropdown-menu #tabOverflowMenu="nzDropdownMenu">
+                          <ul nz-menu class="tab-overflow-menu">
+                            <li
+                              nz-menu-item
+                              *ngFor="let ot of tabOverflowHiddenTabs()"
+                              (click)="selectTabFromOverflowMenu(ot)"
+                            >
+                              <span class="tab-overflow-menu-label">{{ displayTabLabel(ot) }}</span>
+                            </li>
+                          </ul>
+                        </nz-dropdown-menu>
+                      </div>
+                      <div
+                        class="tab-context-menu"
+                        *ngIf="tabContextMenu() as ctx"
+                        [style.left.px]="ctx.x"
+                        [style.top.px]="ctx.y"
+                        (click)="$event.stopPropagation()"
+                      >
+                        <button type="button" class="ctx-item" (click)="closeEditorTab(ctx.tab)">关闭</button>
+                        <button type="button" class="ctx-item" (click)="closeOtherTabs(ctx.tab)">关闭其他</button>
+                        <button type="button" class="ctx-item" (click)="closeTabsToLeft(ctx.tab)">关闭左侧</button>
+                        <button type="button" class="ctx-item" (click)="closeTabsToRight(ctx.tab)">关闭右侧</button>
+                      </div>
+
+                      <ng-template #wbEditorMainBlock>
+                        <div class="wb-center-scroll-inner">
+                          <div class="wb-center-main-row">
+                            <section class="terminal-panel" [class.is-hidden]="activeTab() !== 'Terminal - Main'" (click)="focusAiTerminal()">
+                              <div class="terminal-body">
+                                <div #xtermHost class="xterm-host"></div>
+                              </div>
+                            </section>
+
+                            <div class="file-editor-stack" *ngIf="activeTab() !== 'Terminal - Main' && previewKind() === 'code'">
+                              <app-workbench-monaco-editor
+                                [value]="selectedContent()"
+                                [language]="monacoLanguage()"
+                                (valueChange)="onEditorContentChange($event)"
+                                (saveRequested)="saveCurrentFile()"
+                                (markersChange)="onEditorMarkersChange($event)"
+                              />
+                              <div class="editor-diagnostics" *ngIf="editorDiagnostics().length">
+                                <div class="editor-diagnostics-head">问题（{{ editorDiagnostics().length }}）</div>
+                                <div class="diag-row" *ngFor="let d of editorDiagnostics()" [attr.data-severity]="d.severity">
+                                  <span class="diag-pos">{{ d.severity === 'error' ? '错误' : d.severity === 'warning' ? '警告' : '提示' }} · Ln {{ d.line }}, Col {{ d.column }}</span>
+                                  <span class="diag-msg">{{ d.message }}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div
+                              class="file-preview-wrap file-preview-diff"
+                              *ngIf="activeTab() !== 'Terminal - Main' && previewKind() === 'diff'"
+                              [innerHTML]="filePreviewHtml()"
+                            ></div>
+                          </div>
+                        </div>
+                      </ng-template>
+
+                      <ng-container *ngTemplateOutlet="wbEditorMainBlock"></ng-container>
+                    </div>
+                  </section>
+                </nz-splitter-panel>
+
+            <nz-splitter-panel
+              *ngIf="terminalMenuVisible()"
+              [nzDefaultSize]="bottomPanelHeight()"
+              [nzMin]="120"
+              [nzMax]="420"
+              [nzResizable]="true"
+              [nzCollapsible]="{ start: true }"
+            >
+              <section class="powershell-panel" (click)="focusPowerShellTerminal()">
+                <div class="powershell-head">
+                  <div class="ps-tabs">
+                    <button
+                      type="button"
+                      class="ps-tab"
+                      *ngFor="let s of psSessions()"
+                      [class.active]="s.id === activePsSessionId()"
+                      (click)="switchPsSession(s.id)"
+                    >
+                      <span>{{ s.name }}</span>
+                      <span class="ps-exit-dot" *ngIf="s.exited">●</span>
+                      <span class="ps-close" (click)="closePsSession(s.id); $event.stopPropagation()">×</span>
+                    </button>
+                  </div>
+
+                  <div class="ps-toolbar">
+                    <select
+                      style="height:24px;padding:0 6px;border-radius:4px;border:1px solid #3a3f4f;background:#121826;color:#c7d2fe;font-size:11px;max-width:180px"
+                      [value]="activePsCwdPresetId()"
+                      (change)="setPsCwdPreset($any($event.target).value)"
+                      title="新终端默认目录"
+                    >
+                      <option *ngFor="let p of psCwdPresets" [value]="p.id">{{ p.label }}</option>
+                    </select>
+                    <button type="button" class="ps-btn plus-only" title="新建 PowerShell" (click)="createPsSession('powershell')">+</button>
+                    <button type="button" class="ps-btn action" title="执行 npm run start" (click)="runAutomation('run')">自动运行</button>
+                    <button type="button" class="ps-btn action" title="执行 npm run build" (click)="runAutomation('build')">自动构建</button>
+                    <button type="button" class="ps-btn action" title="在主终端填入提示词并请求助手生成提交说明并推送到远程" (click)="runAutomation('commit')">自动提交</button>
+                  </div>
+                </div>
+                <div class="powershell-body">
+                  <div #psHost class="ps-xterm-host"></div>
+                </div>
+              </section>
+            </nz-splitter-panel>
+          </nz-splitter>
+        </div>
+      </nz-splitter-panel>
+
+      <nz-splitter-panel
+        *ngIf="rightPanelVisible()"
+        [nzDefaultSize]="rightPanelWidth()"
+        [nzMin]="240"
+        [nzMax]="560"
+        [nzResizable]="true"
+        [nzCollapsible]="{ start: true }"
+      >
+        <aside class="wb-right-panel">
+          <div class="wb-right-scroll">
+            <div class="right-header">
+              <div class="panel-title vscode-section-title">任务拆解</div>
+              <div class="panel-sub">{{ formatWorkbenchModeLabel(coordinatorMode()) }} · 共 {{ stepTotal() }} 步</div>
             </div>
-          </div>
-          <button type="button" class="tab-scroll-btn" title="向右滚动" (click)="scrollTabsBy(220)">▶</button>
-        </div>
-        <div
-          class="tab-context-menu"
-          *ngIf="tabContextMenu() as ctx"
-          [style.left.px]="ctx.x"
-          [style.top.px]="ctx.y"
-          (click)="$event.stopPropagation()"
-        >
-          <button type="button" class="ctx-item" (click)="closeEditorTab(ctx.tab)">关闭</button>
-          <button type="button" class="ctx-item" (click)="closeOtherTabs(ctx.tab)">关闭其他</button>
-          <button type="button" class="ctx-item" (click)="closeTabsToLeft(ctx.tab)">关闭左侧</button>
-          <button type="button" class="ctx-item" (click)="closeTabsToRight(ctx.tab)">关闭右侧</button>
-        </div>
 
-        <div class="wb-center-scroll" [style.gridTemplateRows]="centerGridTemplateRows()">
-          <div class="wb-center-main-row">
-            <section class="terminal-panel" [class.is-hidden]="activeTab() !== 'Terminal - Main'" (click)="focusAiTerminal()">
-              <div class="terminal-body">
-                <div #xtermHost class="xterm-host"></div>
-              </div>
-            </section>
+            <div class="task-summary-bar">
+              <span class="ts-done">完成 {{ stepDone() }}</span>
+              <span class="ts-run">进行中 {{ stepInProgress() }}</span>
+              <span class="ts-todo">待处理 {{ stepPending() }}</span>
+              <span class="ts-tools">工具 {{ toolCallCount() }}</span>
+            </div>
 
-            <div class="file-editor-stack" *ngIf="activeTab() !== 'Terminal - Main' && previewKind() === 'code'">
-              <app-workbench-monaco-editor
-                [value]="selectedContent()"
-                [language]="monacoLanguage()"
-                (valueChange)="onEditorContentChange($event)"
-                (saveRequested)="saveCurrentFile()"
-                (markersChange)="onEditorMarkersChange($event)"
-              />
-              <div class="editor-diagnostics" *ngIf="editorDiagnostics().length">
-                <div class="editor-diagnostics-head">问题（{{ editorDiagnostics().length }}）</div>
-                <div class="diag-row" *ngFor="let d of editorDiagnostics()" [attr.data-severity]="d.severity">
-                  <span class="diag-pos">{{ d.severity === 'error' ? '错误' : d.severity === 'warning' ? '警告' : '提示' }} · Ln {{ d.line }}, Col {{ d.column }}</span>
-                  <span class="diag-msg">{{ d.message }}</span>
+            <div class="plan-progress-block" *ngIf="stepTotal() > 0">
+              <div class="section-label">整体进度</div>
+              <nz-progress [nzPercent]="planProgressPercent()" nzStatus="active"></nz-progress>
+              <div class="plan-progress-meta">{{ stepDone() }} / {{ stepTotal() }} 已完成 · {{ planProgressPercent() }}%</div>
+            </div>
+
+            <div class="memory-section">
+              <div class="section-label">捕获的记忆</div>
+              <p class="memory-hint" *ngIf="memoryItems().length === 0">
+                与助手对话或出现工具调用后，会显示最近会话与工具摘要（与左侧「最近会话」同源历史，约每 0.5 秒刷新）。
+              </p>
+              <div class="memory-list" *ngIf="memoryItems().length > 0">
+                <div class="memory-row" *ngFor="let m of memoryItems()" [attr.data-kind]="m.kind">
+                  <span class="memory-kind">{{ m.label }}</span>
+                  <span class="memory-snippet" [title]="m.snippet">{{ m.snippet }}</span>
+                  <span class="memory-time">{{ formatRecentTime(m.at) }}</span>
                 </div>
               </div>
             </div>
 
-            <div
-              class="file-preview-wrap file-preview-diff"
-              *ngIf="activeTab() !== 'Terminal - Main' && previewKind() === 'diff'"
-              [innerHTML]="filePreviewHtml()"
-            ></div>
-          </div>
-
-          <div class="panel-resizer horizontal" *ngIf="terminalMenuVisible()" (mousedown)="onBottomResizeStart($event)"></div>
-
-          <section
-            class="powershell-panel"
-            *ngIf="terminalMenuVisible()"
-            (click)="focusPowerShellTerminal()"
-          >
-            <div class="powershell-head">
-              <div class="ps-tabs">
-                <button
-                  type="button"
-                  class="ps-tab"
-                  *ngFor="let s of psSessions()"
-                  [class.active]="s.id === activePsSessionId()"
-                  (click)="switchPsSession(s.id)"
-                >
-                  <span>{{ s.name }}</span>
-                  <span class="ps-exit-dot" *ngIf="s.exited">●</span>
-                  <span class="ps-close" (click)="closePsSession(s.id); $event.stopPropagation()">×</span>
-                </button>
-              </div>
-
-              <div class="ps-toolbar">
-                <select
-                  style="height:24px;padding:0 6px;border-radius:4px;border:1px solid #3a3f4f;background:#121826;color:#c7d2fe;font-size:11px;max-width:180px"
-                  [value]="activePsCwdPresetId()"
-                  (change)="setPsCwdPreset($any($event.target).value)"
-                  title="新终端默认目录"
-                >
-                  <option *ngFor="let p of psCwdPresets" [value]="p.id">{{ p.label }}</option>
-                </select>
-                <button type="button" class="ps-btn plus-only" title="新建 PowerShell" (click)="createPsSession('powershell')">+</button>
-                <button type="button" class="ps-btn action" title="执行 npm run start" (click)="runAutomation('run')">自动运行</button>
-                <button type="button" class="ps-btn action" title="执行 npm run build" (click)="runAutomation('build')">自动构建</button>
-                <button type="button" class="ps-btn action" title="在主终端填入提示词并请求助手生成提交说明并推送到远程" (click)="runAutomation('commit')">自动提交</button>
-              </div>
-            </div>
-            <div class="powershell-body">
-              <div #psHost class="ps-xterm-host"></div>
-            </div>
-          </section>
-        </div>
-      </section>
-
-      <div class="panel-resizer vertical" *ngIf="rightPanelVisible()" (mousedown)="onRightResizeStart($event)"></div>
-
-      <aside class="wb-right-panel" *ngIf="rightPanelVisible()" [style.width.px]="rightPanelWidth()">
-        <div class="wb-right-scroll">
-          <div class="right-header">
-            <div class="panel-title vscode-section-title">任务拆解</div>
-            <div class="panel-sub">{{ formatWorkbenchModeLabel(coordinatorMode()) }} · 共 {{ stepTotal() }} 步</div>
-          </div>
-
-          <div class="task-summary-bar">
-            <span class="ts-done">完成 {{ stepDone() }}</span>
-            <span class="ts-run">进行中 {{ stepInProgress() }}</span>
-            <span class="ts-todo">待处理 {{ stepPending() }}</span>
-            <span class="ts-tools">工具 {{ toolCallCount() }}</span>
-          </div>
-
-          <div class="plan-progress-block" *ngIf="stepTotal() > 0">
-            <div class="section-label">整体进度</div>
-            <nz-progress [nzPercent]="planProgressPercent()" nzStatus="active"></nz-progress>
-            <div class="plan-progress-meta">{{ stepDone() }} / {{ stepTotal() }} 已完成 · {{ planProgressPercent() }}%</div>
-          </div>
-
-          <div class="memory-section">
-            <div class="section-label">捕获的记忆</div>
-            <p class="memory-hint" *ngIf="memoryItems().length === 0">
-              与助手对话或出现工具调用后，会显示最近会话与工具摘要（与左侧「最近会话」同源历史，约每 0.5 秒刷新）。
-            </p>
-            <div class="memory-list" *ngIf="memoryItems().length > 0">
-              <div class="memory-row" *ngFor="let m of memoryItems()" [attr.data-kind]="m.kind">
-                <span class="memory-kind">{{ m.label }}</span>
-                <span class="memory-snippet" [title]="m.snippet">{{ m.snippet }}</span>
-                <span class="memory-time">{{ formatRecentTime(m.at) }}</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="plan-steps-section">
-            <div class="section-label">计划步骤</div>
-            <p class="plan-empty" *ngIf="planSteps().length === 0">
-              暂无步骤。在 <strong>计划</strong> 模式（<code>/mode plan</code>）下向主终端提问时，助手若回复带编号/列表（如 <code>1. xxx</code>），会自动同步到此处。
-            </p>
-            <div class="vscode-task-list">
-              <div class="vscode-task-item" *ngFor="let s of planSteps()" [attr.data-status]="s.status">
-                <span class="task-checkbox" aria-hidden="true"></span>
-                <div class="task-item-body">
-                  <span class="task-item-title">{{ s.title }}</span>
-                  <span class="task-item-detail" *ngIf="s.detail">{{ s.detail }}</span>
+            <div class="plan-steps-section">
+              <div class="section-label">计划步骤</div>
+              <p class="plan-empty" *ngIf="planSteps().length === 0">
+                暂无步骤。在 <strong>计划</strong> 模式（<code>/mode plan</code>）下向主终端提问时，助手若回复带编号/列表（如 <code>1. xxx</code>），会自动同步到此处。
+              </p>
+              <div class="vscode-task-list">
+                <div class="vscode-task-item" *ngFor="let s of planSteps()" [attr.data-status]="s.status">
+                  <span class="task-checkbox" aria-hidden="true"></span>
+                  <div class="task-item-body">
+                    <span class="task-item-title">{{ s.title }}</span>
+                    <span class="task-item-detail" *ngIf="s.detail">{{ s.detail }}</span>
+                  </div>
+                  <span class="step-badge">{{ statusLabel(s.status) }}</span>
                 </div>
-                <span class="step-badge">{{ statusLabel(s.status) }}</span>
               </div>
             </div>
           </div>
-        </div>
-      </aside>
-    </div>
+        </aside>
+      </nz-splitter-panel>
+    </nz-splitter>
   </div>
 
   <div class="git-commit-backdrop" *ngIf="gitCommitDetailOpen()" (click)="closeCommitDetailModal()">

@@ -1,25 +1,149 @@
 :host {
   display: block;
   height: 100%;
-  background: #09090b;
+  /* 与编辑区主色一致，避免 flex 子项未铺满时出现「露底」黑缝（VS Code 工作区感） */
+  background: #1e1e1e;
   color: #d4d4d8;
   cursor: default;
 }
 
 .wb-shell {
   height: 100%;
+  width: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: #0a0b10;
+  background: #1e1e1e;
 }
 
+.wb-shell--splitter {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
-.wb-main {
-  display: grid;
+.wb-splitter-outer {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+/* 最外层必须是左右分栏：左(工程目录) | 右(编辑+侧栏+底栏)，禁止被 flex 挤成上下 */
+:host ::ng-deep .wb-splitter-outer.ant-splitter {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: stretch !important;
+  align-content: stretch !important;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  width: 100%;
+}
+
+:host ::ng-deep .wb-splitter-outer.ant-splitter > .ant-splitter-panel {
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+}
+
+/* 去掉 NG-ZORRO 默认 padding:0 1px；勿覆盖 .ant-splitter-bar-dragger 宽高，否则折叠按钮位移、拖曳手感与官方 demo 不一致 */
+:host ::ng-deep .wb-splitter-outer .ant-splitter-panel,
+:host ::ng-deep .wb-splitter-main-vertical .ant-splitter-panel {
+  padding: 0 !important;
+}
+
+/* 面板作 flex 列容器，子级铺满，避免编辑区/终端在格内「缩在中间」 */
+:host ::ng-deep .wb-splitter-outer.ant-splitter-horizontal > .ant-splitter-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+:host ::ng-deep .wb-splitter-outer.ant-splitter-horizontal > .ant-splitter-panel > .wb-left-panel,
+:host ::ng-deep .wb-splitter-outer.ant-splitter-horizontal > .ant-splitter-panel > .wb-middle-column,
+:host ::ng-deep .wb-splitter-outer.ant-splitter-horizontal > .ant-splitter-panel > .wb-right-panel {
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+}
+
+:host ::ng-deep .wb-splitter-main-vertical.ant-splitter-vertical > .ant-splitter-panel {
+  display: flex !important;
+  flex-direction: column !important;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden !important;
+}
+
+:host ::ng-deep .wb-splitter-main-vertical.ant-splitter-vertical > .ant-splitter-panel > .wb-center-panel {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+}
+
+:host ::ng-deep .wb-splitter-main-vertical.ant-splitter-vertical > .ant-splitter-panel > .powershell-panel {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.wb-middle-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/** 中间列内纵向：上编辑 / 下终端（底栏与 Cursor 一致，横跨中间列整宽） */
+.wb-splitter-main-vertical {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+:host ::ng-deep .wb-splitter-main-vertical.ant-splitter {
+  display: flex !important;
+  flex-direction: column !important;
+  flex-wrap: nowrap !important;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  width: 100%;
+}
+
+:host ::ng-deep .wb-splitter-main-vertical.ant-splitter > .ant-splitter-panel {
+  min-width: 0;
+  min-height: 0;
+}
+
+.wb-center-stack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+}
+
+.wb-center-scroll-inner {
   flex: 1;
   min-height: 0;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #1e1e1e;
 }
 
 .panel-resizer {
@@ -44,11 +168,14 @@
 }
 
 .wb-left-panel {
-  border-right: 1px solid #232432;
+  /* 与相邻列的分界由 nz-splitter 拖条承担，避免双边线+假间隙 */
+  border-right: none;
   background: #252526;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: 100%;
+  width: 100%;
   padding: 0;
 }
 
@@ -801,11 +928,14 @@
 .wb-center-panel {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
+  height: 100%;
+  width: 100%;
   padding: 0;
   background: #1e1e1e;
-  border-left: 1px solid #2b2b2b;
-  border-right: 1px solid #2b2b2b;
+  border-left: none;
+  border-right: none;
 }
 
 .wb-center-tabs {
@@ -983,17 +1113,19 @@
 .xterm-host {
   width: 100%;
   height: 100%;
-  min-height: 280px;
+  min-height: 0;
 }
 
 .wb-right-panel {
-  border-left: 1px solid #2b2b2b;
+  border-left: none;
   background: #252526;
   padding: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .wb-right-scroll {
@@ -1139,23 +1271,44 @@
 }
 
 .wb-center-tabs {
-  .tab-scroll-btn {
-    width: 22px;
-    height: 22px;
-    margin: 0 2px;
+  .tab-overflow-btn {
+    width: 26px;
+    height: 26px;
+    margin: 0 4px 0 2px;
+    padding: 0;
     border: 1px solid #3a3a3a;
     border-radius: 4px;
     background: #1f1f1f;
     color: #b8b8b8;
     cursor: pointer;
     flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     line-height: 1;
-    font-size: 11px;
 
     &:hover {
       color: #fff;
       border-color: #5a5a5a;
     }
+
+    span[nz-icon] {
+      font-size: 13px;
+    }
+  }
+
+  .tab-overflow-menu {
+    min-width: 180px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .tab-overflow-menu-label {
+    display: block;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .wb-center-tabs-scroll {
@@ -1271,8 +1424,8 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid #3c3c3c;
-  border-radius: 4px;
+  border: none;
+  border-radius: 0;
   background: #1e1e1e;
   overflow: hidden;
 }

@@ -7,6 +7,7 @@ import {
   OnDestroy,
   ViewChild,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -24,6 +25,9 @@ import {
 } from './workbench-monaco-editor.component';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
+import { NzSplitterModule } from 'ng-zorro-antd/splitter';
+import { NzDropDownModule } from 'ng-zorro-antd/dropdown';
+import { NzMenuModule } from 'ng-zorro-antd/menu';
 import { AppSettingsService } from '../../../core/app-settings.service';
 import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
 import { AgentMemoryService } from '../../../core/agent-memory.service';
@@ -213,6 +217,9 @@ function parsePlanStepsFromText(text: string): string[] {
     NzIconModule,
     NzInputModule,
     NzProgressModule,
+    NzSplitterModule,
+    NzDropDownModule,
+    NzMenuModule,
     RouterLink,
     WorkbenchMonacoEditorComponent,
   ],
@@ -401,26 +408,25 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private directiveTabCycle = 0;
 
   protected readonly leftPanelVisible = signal(true);
-  /** 为 true 时渲染底部 PTY；默认开启以便首次进入即可初始化真实 Shell */
-  protected readonly terminalMenuVisible = signal(false);
-  protected readonly rightPanelVisible = signal(false);
+  /** 为 true 时渲染底部 PowerShell 面板；与布局四区（左/中/右/下）一致，默认显示 */
+  protected readonly terminalMenuVisible = signal(true);
+  /** 右侧任务栏；默认显示，可用标题栏按钮或 Splitter 折叠隐藏 */
+  protected readonly rightPanelVisible = signal(true);
 
   protected readonly leftPanelWidth = signal(260);
   protected readonly rightPanelWidth = signal(300);
   protected readonly bottomPanelHeight = signal(180);
 
-  protected readonly mainGridTemplate = computed(() => {
-    const cols: string[] = [];
-    if (this.leftPanelVisible()) cols.push(`${this.leftPanelWidth()}px`, '4px');
-    cols.push('minmax(0, 1fr)');
-    if (this.rightPanelVisible()) cols.push('4px', `${this.rightPanelWidth()}px`);
-    return cols.join(' ');
-  });
+  /** Tab 行溢出：仅被遮挡的 tab 列入下拉 */
+  protected readonly tabOverflowHiddenTabs = signal<string[]>([]);
+  /** 是否出现横向溢出（显示双箭头溢出按钮） */
+  protected readonly tabBarHasOverflow = signal(false);
+  private tabOverflowObserver?: ResizeObserver;
 
-  /** 主内容区 + 可选底部 PowerShell：编辑文件时仍可显示底部 PTY */
-  protected readonly centerGridTemplateRows = computed(() => {
-    if (!this.terminalMenuVisible()) return 'minmax(0, 1fr)';
-    return `minmax(0, 1fr) 4px minmax(120px, ${this.bottomPanelHeight()}px)`;
+  private readonly tabOverflowSyncEffect = effect(() => {
+    this.visibleTabs();
+    this.activeTab();
+    queueMicrotask(() => this.updateTabOverflow());
   });
 
   private syncTimer?: number;
@@ -454,6 +460,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     if (!this.psTerminal) {
       setTimeout(() => void this.initPowerShellTerminal(), 0);
     }
+    queueMicrotask(() => this.setupTabOverflowObserver());
   }
 
   ngOnDestroy(): void {
@@ -481,6 +488,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     if (this.syncTimer) window.clearInterval(this.syncTimer);
     if (this.memoryStatsTimer) window.clearInterval(this.memoryStatsTimer);
     if (this.gitPollTimer) window.clearInterval(this.gitPollTimer);
+    this.teardownTabOverflowObserver();
   }
 
   private hasLlmConfigured(): boolean {
@@ -582,8 +590,103 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return tab;
   }
 
-  protected scrollTabsBy(offsetPx: number): void {
-    this.tabScrollHost?.nativeElement.scrollBy({ left: offsetPx, behavior: 'smooth' });
+  /** Cursor 式最外层横向：[左栏 | 中间编辑区+底栏 | 右侧栏] */
+  protected onWorkbenchOuterSplitterResize(sizes: number[]): void {
+    if (!sizes?.length) return;
+    const L = this.leftPanelVisible();
+    const R = this.rightPanelVisible();
+    if (L && R && sizes.length >= 3) {
+      this.leftPanelWidth.set(Math.min(520, Math.max(180, Math.round(sizes[0]))));
+      this.rightPanelWidth.set(Math.min(560, Math.max(240, Math.round(sizes[2]))));
+    } else if (L && !R && sizes.length >= 2) {
+      this.leftPanelWidth.set(Math.min(520, Math.max(180, Math.round(sizes[0]))));
+    } else if (!L && R && sizes.length >= 2) {
+      this.rightPanelWidth.set(Math.min(560, Math.max(240, Math.round(sizes[1]))));
+    }
+    queueMicrotask(() => {
+      this.fitAddon?.fit();
+      this.psFitAddon?.fit();
+      this.updateTabOverflow();
+    });
+  }
+
+  /** 仅中间列内纵向：[上 标签+编辑器 | 下 PowerShell] */
+  protected onWorkbenchInnerSplitterResize(sizes: number[]): void {
+    if (!sizes?.length || sizes.length < 2 || !this.terminalMenuVisible()) return;
+    this.bottomPanelHeight.set(Math.min(420, Math.max(120, Math.round(sizes[1]))));
+    queueMicrotask(() => {
+      this.fitAddon?.fit();
+      this.psFitAddon?.fit();
+      this.syncPowerShellSize();
+    });
+  }
+
+  /** 中间列在三种可见性下的默认占比（与 Cursor 左~15% / 中~55% / 右~30% 接近） */
+  protected centerSplitterDefaultSize(): string {
+    if (this.leftPanelVisible() && this.rightPanelVisible()) return '52%';
+    if (this.leftPanelVisible() && !this.rightPanelVisible()) return '65%';
+    if (!this.leftPanelVisible() && this.rightPanelVisible()) return '58%';
+    return '100%';
+  }
+
+  private readonly tabOverflowOnScroll = (): void => {
+    this.updateTabOverflow();
+  };
+
+  private setupTabOverflowObserver(): void {
+    const host = this.tabScrollHost?.nativeElement;
+    if (!host) return;
+    this.teardownTabOverflowObserver();
+    const run = (): void => this.updateTabOverflow();
+    this.tabOverflowObserver = new ResizeObserver(run);
+    this.tabOverflowObserver.observe(host);
+    host.addEventListener('scroll', this.tabOverflowOnScroll, { passive: true });
+    run();
+  }
+
+  private teardownTabOverflowObserver(): void {
+    const host = this.tabScrollHost?.nativeElement;
+    if (host) {
+      host.removeEventListener('scroll', this.tabOverflowOnScroll);
+    }
+    this.tabOverflowObserver?.disconnect();
+    this.tabOverflowObserver = undefined;
+  }
+
+  private updateTabOverflow(): void {
+    const host = this.tabScrollHost?.nativeElement;
+    if (!host) return;
+    const labels = this.visibleTabs();
+    const els = host.querySelectorAll<HTMLElement>('.editor-tab');
+    const hL = host.scrollLeft;
+    const hR = host.scrollLeft + host.clientWidth;
+    const hidden: string[] = [];
+    els.forEach((el, i) => {
+      const tab = labels[i];
+      if (!tab) return;
+      const left = el.offsetLeft;
+      const right = left + el.offsetWidth;
+      if (right > hR + 2 || left < hL - 2) {
+        hidden.push(tab);
+      }
+    });
+    this.tabOverflowHiddenTabs.set(hidden);
+    this.tabBarHasOverflow.set(host.scrollWidth > host.clientWidth + 2);
+    this.cdr.markForCheck();
+  }
+
+  protected selectTabFromOverflowMenu(tab: string): void {
+    this.setTab(tab);
+    queueMicrotask(() => {
+      const host = this.tabScrollHost?.nativeElement;
+      const els = host?.querySelectorAll<HTMLElement>('.editor-tab');
+      const labels = this.visibleTabs();
+      const idx = labels.indexOf(tab);
+      if (els && idx >= 0 && els[idx]) {
+        els[idx].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+      this.updateTabOverflow();
+    });
   }
 
   protected onTabContextMenu(tab: string, event: MouseEvent): void {
@@ -1318,24 +1421,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected toggleLeftPanel(): void {
     this.leftPanelVisible.update((v) => !v);
-    queueMicrotask(() => this.fitAddon?.fit());
-  }
-
-  protected onLeftResizeStart(event: MouseEvent): void {
-    event.preventDefault();
-    const startX = event.clientX;
-    const start = this.leftPanelWidth();
-    const move = (ev: MouseEvent) => {
-      const next = Math.max(180, Math.min(520, start + (ev.clientX - startX)));
-      this.leftPanelWidth.set(next);
+    queueMicrotask(() => {
       this.fitAddon?.fit();
-    };
-    const up = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
+      this.updateTabOverflow();
+    });
   }
 
   protected toggleTerminalMenu(): void {
@@ -1375,43 +1464,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.psTerminal?.focus();
   }
 
-  protected onBottomResizeStart(event: MouseEvent): void {
-    event.preventDefault();
-    const startY = event.clientY;
-    const start = this.bottomPanelHeight();
-    const move = (ev: MouseEvent) => {
-      const next = Math.max(120, Math.min(420, start - (ev.clientY - startY)));
-      this.bottomPanelHeight.set(next);
-      this.psFitAddon?.fit();
-      this.syncPowerShellSize();
-    };
-    const up = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-  }
-
   protected toggleRightPanel(): void {
     this.rightPanelVisible.update((v) => !v);
-    queueMicrotask(() => this.fitAddon?.fit());
-  }
-
-  protected onRightResizeStart(event: MouseEvent): void {
-    event.preventDefault();
-    const startX = event.clientX;
-    const start = this.rightPanelWidth();
-    const move = (ev: MouseEvent) => {
-      const next = Math.max(240, Math.min(560, start - (ev.clientX - startX)));
-      this.rightPanelWidth.set(next);
-    };
-    const up = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
+    queueMicrotask(() => {
+      this.fitAddon?.fit();
+      this.updateTabOverflow();
+    });
   }
 
   /** 右侧展示：对话 / 计划 / 执行（parallel） */
