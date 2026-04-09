@@ -22,4 +22,4 @@ Thumbs.db
 
 # 本机/IDE AI 代理配置（通常包含本地路径或敏感信息）
 .claude/settings*.json
-zyfront-desktop/.zytrader/local.config.example.json
+zyfront-desktop/.zytrader/local.config.json

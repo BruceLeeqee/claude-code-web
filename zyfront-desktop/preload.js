@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('zytrader', {
   },
   host: {
     openPath: (targetPath, opts = {}) => ipcRenderer.invoke('zytrader:host:openPath', targetPath, opts),
+    launchRegisteredApp: (appId) => ipcRenderer.invoke('zytrader:host:launchRegisteredApp', appId),
   },
   computer: {
     open: (url) => ipcRenderer.invoke('zytrader:computer:open', url),

@@ -1,4 +1,4 @@
-@import '../../shared/activity-rail.shared';
+@use '../../shared/activity-rail.shared' as *;
 
 :host {
   display: flex;

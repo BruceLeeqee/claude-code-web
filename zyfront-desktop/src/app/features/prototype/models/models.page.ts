@@ -1,6 +1,5 @@
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { AppSettingsService, type AppTheme } from '../../../core/app-settings.service';
 import { LocalBridgeService } from '../../../core/local-bridge.service';
@@ -20,7 +19,7 @@ export type ConnectionIndicator = 'untested' | 'testing' | 'ok' | 'error';
 @Component({
   selector: 'app-models-page',
   standalone: true,
-  imports: [CommonModule, RouterLink],
+  imports: [CommonModule],
   templateUrl: './models.page.html',
   styleUrl: './models.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

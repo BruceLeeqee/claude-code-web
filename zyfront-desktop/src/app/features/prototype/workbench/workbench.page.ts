@@ -42,6 +42,26 @@ import { type TurnContext } from '../../../core/memory/memory.types';
 const AUTO_COMMIT_PROMPT =
   '请根据当前工作区未提交的变更生成详细的中文提交说明（含文件与要点），然后依次执行 git add、git commit、git push 到远程仓库。';
 
+/**
+ * Electron 下附加给模型的系统提示：工具能力与「参考映射」均为决策提示，不由客户端代执行意图解析。
+ * 复杂说法（如「打开我做 PPT 常用的工具」）须由模型结合上下文决定 URL 或是否调用 web.search。
+ */
+const WORKBENCH_ELECTRON_TOOLS_SYSTEM_PROMPT = `【运行环境】ZyTrader 桌面客户端（Electron），已挂载本地工具（含 host.launch_app、computer.use、host.open_path、terminal.exec、powershell.exec、web.search、web.fetch 等）。
+
+【职责划分】
+- 意图理解、歧义消解、个性化指代由你完成；客户端不做自然语言规则代执行。
+- computer.use：仅用于在受控窗口内打开 **网页 URL**（https）。不是「启动本机安装的浏览器程序」。
+- **启动本机 Chrome / Edge 应用程序**：优先调用工具 **host.launch_app**，传入 JSON 且字段 app 为字符串 chrome 或 edge（见工具 schema；由主进程 detach 启动，确保窗口出现在用户桌面）。不要仅依赖 terminal.exec / powershell.exec 的 Start-Process（历史上曾出现「工具显示成功但未见窗口」）。
+- 若 host.launch_app 不可用或非 Windows，再尝试 host.open_path 指向 chrome.exe，或 powershell.exec。
+- host.open_path：http(s) URL、文件/文件夹、或上述 exe 路径。
+- 需要检索信息时用 web.search / web.fetch。
+
+【参考（打开网页时）】百度→https://www.baidu.com/ | 谷歌网站→https://www.google.com/ — 与「启动 Chrome 应用程序」不同，请勿混淆。
+
+【工具结果一致性】当工具返回 JSON 中 ok 为 true 时，该步已在客户端成功执行；你必须向用户如实确认成功，不得再声称「工具不可用」「环境无浏览器控制」等，除非后续工具返回 ok 为 false。
+
+【诚实性】仅当工具返回 ok 为 false 时如实转述 error。`;
+
 const RECENT_STORAGE_KEY_V2 = 'zytrader-workbench-recent-turns:v2';
 const RECENT_STORAGE_KEY_V1 = 'zytrader-workbench-recent-turns:v1';
 const SESSION_ID = 'workbench-terminal-ai';
@@ -1986,9 +2006,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
       if (route === 'natural') {
         const natural = t.startsWith('?') ? t.slice(1).trim() : t;
-        if (await this.tryHandleLocalComputerUseIntent(natural)) {
-          return;
-        }
         await this.askAssistant(natural);
         return;
       }
@@ -2239,9 +2256,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.streamRequestStartMs = Date.now();
     this.aiXtermWrite('\x1b[90m正在请求助手…\x1b[0m\r\n');
 
+    const hasZytrader = typeof (window as unknown as { zytrader?: unknown }).zytrader !== 'undefined';
     const { stream, cancel } = this.runtime.assistant.stream(SESSION_ID, {
       userInput: trimmed,
       config: this.runtime.client.getModel(),
+      ...(hasZytrader ? { systemPrompt: WORKBENCH_ELECTRON_TOOLS_SYSTEM_PROMPT } : {}),
     });
     this.streamStop = cancel;
     const reader = stream.getReader();
@@ -2305,77 +2324,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.aiXtermWrite('\r\n\x1b[90m本轮结束。\x1b[0m\r\n');
       }
     }
-  }
-
-  private async tryHandleLocalComputerUseIntent(text: string): Promise<boolean> {
-    const s = text.trim();
-    if (!s) return false;
-
-    const openMatch = s.match(/^(?:打开|访问|go to|open)\s+(.+)$/i);
-    if (openMatch?.[1]) {
-      const raw = openMatch[1].trim();
-      const asHttp = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
-      const isLikelyDomain = (t: string) => t.includes('.') && !/\s/.test(t);
-      const isBaiduWord = (t: string) => /百度/i.test(t);
-      const stripQuotes = (t: string) => t.replace(/^['"]|['"]$/g, '').trim();
-
-      const cleaned = stripQuotes(raw);
-
-      // Common Chinese intent: "打开 百度搜索 xxx" / "打开 百度 xxx"
-      // Treat it as Baidu search/home even without a dot.
-      let targetUrl = '';
-      const baiduSearch = cleaned.match(/^(?:百度(?:搜索)?)(.+)$/);
-      if (baiduSearch?.[1]) {
-        const q = baiduSearch[1].trim();
-        targetUrl = q ? `https://www.baidu.com/s?wd=${encodeURIComponent(q)}` : 'https://www.baidu.com/';
-      } else if (cleaned.startsWith('搜索')) {
-        const q = cleaned.replace(/^搜索/, '').trim();
-        if (q) targetUrl = `https://www.baidu.com/s?wd=${encodeURIComponent(q)}`;
-      } else if (isBaiduWord(cleaned) && !/^https?:\/\//i.test(cleaned)) {
-        // "打开百度" / "访问百度一下..."
-        targetUrl = 'https://www.baidu.com/';
-      } else if (/^https?:\/\//i.test(cleaned)) {
-        targetUrl = cleaned;
-      } else if (isLikelyDomain(cleaned)) {
-        targetUrl = asHttp(cleaned);
-      }
-
-      if (/^https?:\/\//i.test(targetUrl)) {
-        const res = await window.zytrader.computer.open(targetUrl);
-        this.aiXtermWrite(`\r\n[computer.use] open => ${res.ok ? 'ok' : 'failed'} ${targetUrl}\r\n`);
-        if (!res.ok && (res as { error?: string }).error) {
-          this.aiXtermWrite(`\x1b[31m${(res as { error?: string }).error}\x1b[0m\r\n`);
-        }
-        return true;
-      }
-
-      // Fallback: if user typed something non-URL after "open", interpret as Baidu search query.
-      // This keeps "打开 今天热点10个新闻" useful.
-      const fallbackQ = cleaned;
-      if (fallbackQ) {
-        targetUrl = `https://www.baidu.com/s?wd=${encodeURIComponent(fallbackQ)}`;
-        const res = await window.zytrader.computer.open(targetUrl);
-        this.aiXtermWrite(`\r\n[computer.use] open => ${res.ok ? 'ok' : 'failed'} ${targetUrl}\r\n`);
-        if (!res.ok && (res as { error?: string }).error) {
-          this.aiXtermWrite(`\x1b[31m${(res as { error?: string }).error}\x1b[0m\r\n`);
-        }
-        return true;
-      }
-    }
-
-    if (/^(?:截图|快照|snapshot)$/i.test(s)) {
-      const res = await window.zytrader.computer.snapshot();
-      this.aiXtermWrite(`\r\n[computer.use] snapshot => ${res.ok ? 'ok' : 'failed'}\r\n`);
-      if (res.ok && (res as { title?: string; url?: string }).title) {
-        this.aiXtermWrite(`title: ${(res as { title?: string }).title}\r\n`);
-      }
-      if ((res as { url?: string }).url) {
-        this.aiXtermWrite(`url: ${(res as { url?: string }).url}\r\n`);
-      }
-      return true;
-    }
-
-    return false;
   }
 
   private pushHistory(input: string): void {

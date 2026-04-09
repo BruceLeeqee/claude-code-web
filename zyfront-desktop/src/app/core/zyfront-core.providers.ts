@@ -88,6 +88,30 @@ function buildLocalTools(): AgentTool[] {
   const nowIso = (): string => new Date().toISOString();
   const makeId = (prefix: string): string => `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
+  /** 与 Electron main `normalizeComputerTargetUrl` 对齐，供 computer.use 在渲染进程侧补全 URL */
+  const normalizeComputerUrl = (raw: unknown): string => {
+    const s = String(raw ?? '').trim();
+    if (!s) return 'https://www.baidu.com';
+    if (/^https?:\/\//i.test(s)) return s;
+    return `https://${s.replace(/^\/+/, '')}`;
+  };
+
+  /** 无 Electron preload 时：用新标签打开网页（需用户允许弹窗） */
+  const openUrlInBrowserTab = (target: string): JsonValue => {
+    const opened = window.open(target, '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      return { ok: false, error: '浏览器拦截了新窗口，请允许本站弹出窗口后重试。' } as unknown as JsonValue;
+    }
+    return { ok: true, url: target, via: 'window.open' } as unknown as JsonValue;
+  };
+
+  type ZytraderComputer = {
+    open: (u: string) => Promise<unknown>;
+    navigate: (u: string) => Promise<unknown>;
+    evaluate: (s: string) => Promise<unknown>;
+    snapshot: () => Promise<unknown>;
+  };
+
   const listRecursively = async (root: string, scope: 'workspace' | 'vault', maxEntries = 2000): Promise<string[]> => {
     const out: string[] = [];
     const queue: string[] = [root];
@@ -491,12 +515,35 @@ function buildLocalTools(): AgentTool[] {
     {
       name: 'host.open_path',
       description:
-        'Open a file or folder with the OS default application (Explorer for folders, Notepad/default app for files). Use workspace-relative paths, or an absolute path under the user home directory (e.g. Desktop). Example: open a notebook file on Desktop.',
+        'Open URL in system browser (http/https), or open a file/folder/.exe with the OS (shell.openExternal / shell.openPath). Workspace-relative paths allowed; on Windows, absolute paths under Program Files or AppData may be used to launch installed apps (e.g. Google Chrome: Program Files/Google/Chrome/Application/chrome.exe). Not for embedding pages — use computer.use for that.',
       inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
       async run(input) {
         const p = String((input as Record<string, unknown> | undefined)?.['path'] ?? '').trim();
         if (!p) throw new Error('host.open_path: path is required.');
         return (await window.zytrader.host.openPath(p)) as unknown as JsonValue;
+      },
+    },
+    {
+      name: 'host.launch_app',
+      description:
+        'Launch a known desktop GUI app on Windows (Google Chrome or Edge) in a detached process so the window appears on the user desktop. Prefer this when the user asks to open Chrome/Edge/the browser application — more reliable than terminal.exec or shell.openPath alone. On non-Windows, returns ok:false.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          app: { type: 'string', enum: ['chrome', 'edge', 'google-chrome', 'msedge'] },
+        },
+        required: ['app'],
+      },
+      async run(input) {
+        const o = (input as Record<string, unknown>) ?? {};
+        const app = String(o['app'] ?? '').trim();
+        if (!app) throw new Error('host.launch_app: app is required.');
+        const z = (window as unknown as { zytrader?: { host?: { launchRegisteredApp: (id: string) => Promise<unknown> } } })
+          .zytrader?.host?.launchRegisteredApp;
+        if (typeof z !== 'function') {
+          return { ok: false, error: 'host.launchRegisteredApp unavailable (not Electron desktop)' } as unknown as JsonValue;
+        }
+        return (await z(app)) as unknown as JsonValue;
       },
     },
     {
@@ -784,7 +831,8 @@ function buildLocalTools(): AgentTool[] {
     },
     {
       name: 'computer.use',
-      description: 'Compute use tool: open/navigate/evaluate/snapshot on controlled browser window.',
+      description:
+        '受控浏览器窗口（仅执行）：open/navigate 加载调用方给出的完整 https URL；evaluate 执行 JS；snapshot 返回当前页信息。意图解析（用户想开哪个站）由上层模型完成，本工具不推断自然语言。本地程序/文件用 host.open_path。无 preload 时 open 退化为新标签。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -799,21 +847,39 @@ function buildLocalTools(): AgentTool[] {
         const action = String(o['action'] ?? '').trim();
         if (!action) throw new Error('computer.use: action is required.');
 
+        const z = (window as unknown as { zytrader?: { computer?: ZytraderComputer } }).zytrader?.computer;
+
         if (action === 'open') {
-          return (await window.zytrader.computer.open(String(o['url'] ?? 'https://www.baidu.com'))) as unknown as JsonValue;
+          const target = normalizeComputerUrl(o['url']);
+          if (z?.open) return (await z.open(target)) as unknown as JsonValue;
+          return openUrlInBrowserTab(target);
         }
         if (action === 'navigate') {
-          const url = String(o['url'] ?? '').trim();
-          if (!url) throw new Error('computer.use(navigate): url is required.');
-          return (await window.zytrader.computer.navigate(url)) as unknown as JsonValue;
+          const raw = String(o['url'] ?? '').trim();
+          if (!raw) throw new Error('computer.use(navigate): url is required.');
+          const target = normalizeComputerUrl(raw);
+          if (z?.navigate) return (await z.navigate(target)) as unknown as JsonValue;
+          return openUrlInBrowserTab(target);
         }
         if (action === 'evaluate') {
           const script = String(o['script'] ?? '').trim();
           if (!script) throw new Error('computer.use(evaluate): script is required.');
-          return (await window.zytrader.computer.evaluate(script)) as unknown as JsonValue;
+          if (!z?.evaluate) {
+            return {
+              ok: false,
+              error: 'evaluate 仅在 Electron 桌面版且已打开 Computer Use 窗口时可用。',
+            } as unknown as JsonValue;
+          }
+          return (await z.evaluate(script)) as unknown as JsonValue;
         }
         if (action === 'snapshot') {
-          return (await window.zytrader.computer.snapshot()) as unknown as JsonValue;
+          if (!z?.snapshot) {
+            return {
+              ok: false,
+              error: 'snapshot 仅在 Electron 桌面版且已打开 Computer Use 窗口时可用。',
+            } as unknown as JsonValue;
+          }
+          return (await z.snapshot()) as unknown as JsonValue;
         }
 
         return { ok: false, error: `unsupported action: ${action}` } as unknown as JsonValue;

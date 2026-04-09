@@ -346,7 +346,20 @@ function resolveHostOpenPath(inputPath, scope = 'workspace') {
           : abs.startsWith(bn) || abs.startsWith(home)
       if (under) return abs
     }
-    throw new Error('absolute path must be under workspace, vault, or user home directory')
+    // Windows：允许从 Program Files / AppData 等标准安装目录启动 .exe（如 Chrome），否则 host.open_path 无法打开本机浏览器
+    if (process.platform === 'win32') {
+      const extraRoots = [
+        process.env.ProgramFiles,
+        process.env['ProgramFiles(x86)'],
+        process.env.LocalAppData,
+        process.env.APPDATA,
+      ].filter(Boolean)
+      for (const er of extraRoots) {
+        const root = path.normalize(er)
+        if (abs.toLowerCase().startsWith(root.toLowerCase())) return abs
+      }
+    }
+    throw new Error('absolute path must be under workspace, vault, user home, or Windows install directories (Program Files, AppData, etc.)')
   }
   const relBase = scope === 'vault' ? RUNTIME.vaultRoot : RUNTIME.workspaceRoot
   const target = path.resolve(relBase, raw)
@@ -484,6 +497,61 @@ async function vaultBootstrap() {
   return { ok: true, vaultRoot: RUNTIME.vaultRoot }
 }
 
+/**
+ * Windows：用独立、分离进程启动常见 GUI 浏览器，确保窗口出现在用户桌面。
+ * shell.openPath(exe) / 带 windowsHide 的 exec 在部分环境下不可靠或不可见。
+ */
+function launchWindowsRegisteredApp(appId) {
+  const id = String(appId || '').trim().toLowerCase()
+  if (process.platform !== 'win32') {
+    return { ok: false, error: 'host.launchRegisteredApp: only implemented on Windows' }
+  }
+  const comspec = process.env.ComSpec || 'cmd.exe'
+
+  if (id === 'chrome' || id === 'google-chrome') {
+    const candidates = [
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join(
+        process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
+        'Google',
+        'Chrome',
+        'Application',
+        'chrome.exe',
+      ),
+    ]
+    for (const exe of candidates) {
+      if (existsSync(exe)) {
+        const child = spawn(exe, ['--new-window'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false,
+        })
+        child.unref()
+        return { ok: true, mode: 'spawn', path: exe }
+      }
+    }
+    const child = spawn(comspec, ['/c', 'start', '', 'chrome'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    child.unref()
+    return { ok: true, mode: 'start-alias', note: 'chrome.exe not found under Program Files; used start chrome' }
+  }
+
+  if (id === 'edge' || id === 'msedge') {
+    const child = spawn(comspec, ['/c', 'start', '', 'msedge'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    child.unref()
+    return { ok: true, mode: 'start-alias', app: 'edge' }
+  }
+
+  return { ok: false, error: `unknown app: ${appId} (supported: chrome, edge)` }
+}
+
 function registerIpcHandlers() {
   ipcMain.handle('zytrader:fs:list', async (_event, dir = '.', opts = {}) => {
     const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
@@ -540,7 +608,8 @@ function registerIpcHandlers() {
     const absCwd = resolveScopedPath(cwd, sc)
     const execOptions = {
       cwd: absCwd,
-      windowsHide: true,
+      // false：避免 Start-Process / start 启动的 GUI 子进程在部分环境下不可见
+      windowsHide: false,
       timeout: 120000,
       ...(process.platform === 'win32' ? { shell: process.env.ComSpec || 'cmd.exe' } : {}),
     }
@@ -661,9 +730,17 @@ function registerIpcHandlers() {
     }
   })
 
+  ipcMain.handle('zytrader:host:launchRegisteredApp', async (_event, appId) => {
+    try {
+      return launchWindowsRegisteredApp(appId)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
   ipcMain.handle('zytrader:computer:open', async (_event, url) => {
     try {
-      const w = createComputerWindow(String(url || 'https://www.baidu.com'))
+      const w = await loadComputerWindow(url)
       return { ok: true, url: w.webContents.getURL() }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -672,9 +749,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('zytrader:computer:navigate', async (_event, url) => {
     try {
-      const w = createComputerWindow(String(url || 'https://www.baidu.com'))
-      const target = /^https?:\/\//i.test(String(url || '')) ? String(url) : `https://${String(url || '')}`
-      await w.loadURL(target)
+      const w = await loadComputerWindow(url)
       return { ok: true, url: w.webContents.getURL() }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -819,25 +894,39 @@ function createWindow() {
   }
 }
 
-function createComputerWindow(url = 'https://www.baidu.com') {
-  if (computerWin && !computerWin.isDestroyed()) return computerWin
-  computerWin = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    show: true,
-    autoHideMenuBar: true,
-    title: 'Computer Use',
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
-  computerWin.on('closed', () => {
-    computerWin = null
-  })
-  const target = /^https?:\/\//i.test(String(url || '')) ? String(url) : `https://${String(url || 'www.baidu.com')}`
-  computerWin.loadURL(target)
+/** 与渲染进程 computer.use 一致：补全协议，空则默认百度 */
+function normalizeComputerTargetUrl(raw) {
+  const s = String(raw ?? '').trim()
+  if (!s) return 'https://www.baidu.com'
+  if (/^https?:\/\//i.test(s)) return s
+  return `https://${s.replace(/^\/+/, '')}`
+}
+
+/**
+ * 创建或复用 Computer Use 窗口，并始终 loadURL（修复：旧逻辑在窗口已存在时直接 return，导致无法打开新网址）
+ */
+async function loadComputerWindow(url) {
+  const target = normalizeComputerTargetUrl(url)
+  if (!computerWin || computerWin.isDestroyed()) {
+    computerWin = new BrowserWindow({
+      width: 1280,
+      height: 800,
+      show: true,
+      autoHideMenuBar: true,
+      title: 'Computer Use',
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    })
+    computerWin.on('closed', () => {
+      computerWin = null
+    })
+  }
+  await computerWin.loadURL(target)
+  computerWin.show()
+  computerWin.focus()
   return computerWin
 }
 

@@ -106,6 +106,9 @@ declare global {
           targetPath: string,
           opts?: { scope?: ZytraderFsScope },
         ) => Promise<{ ok: boolean; path?: string; error?: string }>
+        launchRegisteredApp: (
+          appId: string,
+        ) => Promise<{ ok: boolean; mode?: string; path?: string; note?: string; app?: string; error?: string }>
       }
       computer: {
         open: (url?: string) => Promise<{ ok: boolean; url?: string; error?: string }>

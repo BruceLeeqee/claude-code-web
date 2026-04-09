@@ -1,4 +1,4 @@
-@import './activity-rail.shared';
+@use './activity-rail.shared' as *;
 
 .global-shell-frame {
   /* 与 html/body 链一致，避免 Electron 下 100vh 与窗口客户区不一致出现底部空隙 */
