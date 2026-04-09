@@ -136,19 +136,8 @@ export class PrototypeCoreFacade {
     { id: 'plugin.pg', name: 'Postgres Explorer', desc: '查询 Schema 并建议 SQL 优化', installed: false },
   ]);
 
-  readonly tools = signal<UiTool[]>([
-    { id: 'tool.read', name: 'Read', desc: '读取文件内容（文本/图片/PDF）', category: 'file', enabled: true, source: 'builtin' },
-    { id: 'tool.write', name: 'Write', desc: '写入/覆盖文件', category: 'file', enabled: true, source: 'builtin' },
-    { id: 'tool.edit', name: 'StrReplace', desc: '按精确字符串替换文件内容', category: 'file', enabled: true, source: 'builtin' },
-    { id: 'tool.glob', name: 'Glob', desc: '按模式搜索文件路径', category: 'search', enabled: true, source: 'builtin' },
-    { id: 'tool.grep', name: 'Grep', desc: '全文检索（ripgrep）', category: 'search', enabled: true, source: 'builtin' },
-    { id: 'tool.shell', name: 'Shell', desc: '执行终端命令', category: 'terminal', enabled: true, source: 'builtin' },
-    { id: 'tool.web.search', name: 'WebSearch', desc: '联网搜索实时信息', category: 'web', enabled: true, source: 'builtin' },
-    { id: 'tool.web.fetch', name: 'WebFetch', desc: '抓取网页正文内容', category: 'web', enabled: true, source: 'builtin' },
-    { id: 'tool.todo.write', name: 'TodoWrite', desc: '维护任务清单', category: 'planning', enabled: true, source: 'builtin' },
-    { id: 'tool.ask.question', name: 'AskQuestion', desc: '结构化提问收集选项', category: 'question', enabled: true, source: 'builtin' },
-    { id: 'tool.notebook.edit', name: 'EditNotebook', desc: '编辑 Jupyter Notebook 单元', category: 'analysis', enabled: false, source: 'builtin' },
-  ]);
+  /** 展示用列表：仅由 syncToolsFromRuntime 从 CLAUDE_RUNTIME.tools（buildLocalTools 真实 IPC）同步，不再注入 echo 占位工具 */
+  readonly tools = signal<UiTool[]>([]);
 
   readonly modelUsagePercent = computed(() => Math.min(100, Math.round((this.tokenUsed() / this.tokenMax()) * 100)));
   readonly selectedNode = computed(() => this.nodes().find((n) => n.id === this.selectedNodeId()) ?? null);
@@ -160,33 +149,8 @@ export class PrototypeCoreFacade {
       this.settings.set(s);
       this.activeModel.set(s.model);
     });
-    this.ensureUiToolsRegisteredToRuntime();
     this.syncToolsFromRuntime();
-    this.runtimeToolSyncTimer = window.setInterval(() => {
-      this.ensureUiToolsRegisteredToRuntime();
-      this.syncToolsFromRuntime();
-    }, 3000);
-  }
-
-  private ensureUiToolsRegisteredToRuntime(): void {
-    const registerFn = (window as unknown as {
-      __zyfrontRegisterRuntimeTool?: (tool: {
-        name: string;
-        description: string;
-        inputSchema?: Record<string, unknown>;
-        executor?: Record<string, unknown>;
-      }) => { ok: boolean; error?: string };
-    }).__zyfrontRegisterRuntimeTool;
-
-    if (typeof registerFn !== 'function') return;
-
-    for (const t of this.tools()) {
-      registerFn({
-        name: t.name,
-        description: t.desc,
-        inputSchema: { type: 'object', properties: {} },
-      });
-    }
+    this.runtimeToolSyncTimer = window.setInterval(() => this.syncToolsFromRuntime(), 3000);
   }
 
   private syncToolsFromRuntime(): void {
@@ -342,24 +306,7 @@ export class PrototypeCoreFacade {
       next[idx] = normalized;
       return next;
     });
-
-    const registerFn = (window as unknown as {
-      __zyfrontRegisterRuntimeTool?: (tool: {
-        name: string;
-        description: string;
-        inputSchema?: Record<string, unknown>;
-        executor?: Record<string, unknown>;
-      }) => { ok: boolean; error?: string };
-    }).__zyfrontRegisterRuntimeTool;
-
-    if (typeof registerFn === 'function') {
-      registerFn({
-        name: normalized.name,
-        description: normalized.desc,
-        inputSchema: { type: 'object', properties: {} },
-      });
-      this.syncToolsFromRuntime();
-    }
+    // 不向运行时注册无 executor 的 echo 工具；若需可调用工具，应在 zyfront-core 扩展 buildLocalTools 或带 executor 的 tools.register
   }
 
   installSkillFromHub(payload: { id: string; name: string; desc: string }): void {

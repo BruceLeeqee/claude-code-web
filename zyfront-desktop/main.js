@@ -498,18 +498,20 @@ async function vaultBootstrap() {
 }
 
 /**
- * Windows：用独立、分离进程启动常见 GUI 浏览器，确保窗口出现在用户桌面。
- * shell.openPath(exe) / 带 windowsHide 的 exec 在部分环境下不可靠或不可见。
+ * Windows：启动已安装浏览器。优先 shell.openPath（与资源管理器双击一致，GUI 可见性最好）；
+ * 再尝试 spawn；并包含 %LOCALAPPDATA% 下常见用户级 Chrome 安装路径。
  */
-function launchWindowsRegisteredApp(appId) {
+async function launchWindowsRegisteredApp(appId) {
   const id = String(appId || '').trim().toLowerCase()
   if (process.platform !== 'win32') {
     return { ok: false, error: 'host.launchRegisteredApp: only implemented on Windows' }
   }
   const comspec = process.env.ComSpec || 'cmd.exe'
+  const local = process.env.LOCALAPPDATA
 
   if (id === 'chrome' || id === 'google-chrome') {
     const candidates = [
+      local && path.join(local, 'Google', 'Chrome', 'Application', 'chrome.exe'),
       path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
       path.join(
         process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
@@ -518,35 +520,106 @@ function launchWindowsRegisteredApp(appId) {
         'Application',
         'chrome.exe',
       ),
-    ]
+    ].filter(Boolean)
+
     for (const exe of candidates) {
-      if (existsSync(exe)) {
-        const child = spawn(exe, ['--new-window'], {
+      if (!existsSync(exe)) continue
+      try {
+        const errMsg = await shell.openPath(exe)
+        if (!errMsg) {
+          return { ok: true, mode: 'shell.openPath', path: exe }
+        }
+      } catch {
+        /* try next */
+      }
+    }
+
+    for (const exe of candidates) {
+      if (!existsSync(exe)) continue
+      try {
+        await new Promise((resolve, reject) => {
+          const cp = spawn(exe, ['--new-window'], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false,
+          })
+          cp.once('error', reject)
+          cp.once('spawn', () => {
+            try {
+              cp.unref()
+            } catch {}
+            resolve()
+          })
+        })
+        return { ok: true, mode: 'spawn', path: exe }
+      } catch {
+        /* try next */
+      }
+    }
+
+    try {
+      await new Promise((resolve, reject) => {
+        const cp = spawn(comspec, ['/c', 'start', '', 'chrome'], {
           detached: true,
           stdio: 'ignore',
           windowsHide: false,
         })
-        child.unref()
-        return { ok: true, mode: 'spawn', path: exe }
+        cp.once('error', reject)
+        cp.once('spawn', () => {
+          try {
+            cp.unref()
+          } catch {}
+          resolve()
+        })
+      })
+      return { ok: true, mode: 'start-alias', note: 'chrome.exe not found in common paths; used start chrome' }
+    } catch (e) {
+      return {
+        ok: false,
+        error: `Could not start Chrome: ${e instanceof Error ? e.message : String(e)}. Is Chrome installed?`,
       }
     }
-    const child = spawn(comspec, ['/c', 'start', '', 'chrome'], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-    child.unref()
-    return { ok: true, mode: 'start-alias', note: 'chrome.exe not found under Program Files; used start chrome' }
   }
 
   if (id === 'edge' || id === 'msedge') {
-    const child = spawn(comspec, ['/c', 'start', '', 'msedge'], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-    child.unref()
-    return { ok: true, mode: 'start-alias', app: 'edge' }
+    const edgeCandidates = [
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      path.join(
+        process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
+        'Microsoft',
+        'Edge',
+        'Application',
+        'msedge.exe',
+      ),
+    ]
+    for (const exe of edgeCandidates) {
+      if (!existsSync(exe)) continue
+      try {
+        const errMsg = await shell.openPath(exe)
+        if (!errMsg) return { ok: true, mode: 'shell.openPath', path: exe }
+      } catch {
+        /* continue */
+      }
+    }
+    try {
+      await new Promise((resolve, reject) => {
+        const cp = spawn(comspec, ['/c', 'start', '', 'msedge'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false,
+        })
+        cp.once('error', reject)
+        cp.once('spawn', () => {
+          try {
+            cp.unref()
+          } catch {}
+          resolve()
+        })
+      })
+      return { ok: true, mode: 'start-alias', app: 'edge' }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
   }
 
   return { ok: false, error: `unknown app: ${appId} (supported: chrome, edge)` }
@@ -732,7 +805,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('zytrader:host:launchRegisteredApp', async (_event, appId) => {
     try {
-      return launchWindowsRegisteredApp(appId)
+      return await launchWindowsRegisteredApp(appId)
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
@@ -927,6 +1000,17 @@ async function loadComputerWindow(url) {
   await computerWin.loadURL(target)
   computerWin.show()
   computerWin.focus()
+  // 避免被主窗口完全遮挡，短暂置顶便于用户发现 Computer Use 窗口
+  if (process.platform === 'win32') {
+    try {
+      computerWin.setAlwaysOnTop(true)
+      setTimeout(() => {
+        try {
+          if (computerWin && !computerWin.isDestroyed()) computerWin.setAlwaysOnTop(false)
+        } catch {}
+      }, 600)
+    } catch {}
+  }
   return computerWin
 }
 
