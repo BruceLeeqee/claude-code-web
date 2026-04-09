@@ -107,6 +107,12 @@ declare global {
           opts?: { scope?: ZytraderFsScope },
         ) => Promise<{ ok: boolean; path?: string; error?: string }>
       }
+      computer: {
+        open: (url?: string) => Promise<{ ok: boolean; url?: string; error?: string }>
+        navigate: (url: string) => Promise<{ ok: boolean; url?: string; error?: string }>
+        evaluate: (script: string) => Promise<{ ok: boolean; result?: unknown; error?: string }>
+        snapshot: () => Promise<{ ok: boolean; snapshot?: { title?: string; url?: string; text?: string }; error?: string }>
+      }
     }
   }
 }

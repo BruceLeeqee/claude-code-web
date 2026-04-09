@@ -56,6 +56,12 @@ contextBridge.exposeInMainWorld('zytrader', {
   host: {
     openPath: (targetPath, opts = {}) => ipcRenderer.invoke('zytrader:host:openPath', targetPath, opts),
   },
+  computer: {
+    open: (url) => ipcRenderer.invoke('zytrader:computer:open', url),
+    navigate: (url) => ipcRenderer.invoke('zytrader:computer:navigate', url),
+    evaluate: (script) => ipcRenderer.invoke('zytrader:computer:evaluate', script),
+    snapshot: () => ipcRenderer.invoke('zytrader:computer:snapshot'),
+  },
 })
 
 window.addEventListener('DOMContentLoaded', () => {

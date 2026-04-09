@@ -270,6 +270,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly inputHistory = signal<string[]>([]);
 
   protected readonly directives: DirectiveDefinition[] = DIRECTIVE_REGISTRY;
+  protected readonly visibleDirectives = computed(() => this.directives);
 
   protected readonly coordinatorMode = signal<'single' | 'plan' | 'parallel'>('single');
   protected readonly stepTotal = signal(0);
@@ -1896,7 +1897,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.clearSlashHintRow();
       return;
     }
-    const matches = DIRECTIVE_REGISTRY.filter((d) => d.name.startsWith(line));
+    const matches = this.visibleDirectives().filter((d) => d.name.startsWith(line));
     const hint =
       matches.length > 0
         ? `\x1b[90m${matches.map((d) => d.name).join('  ')}\x1b[0m`
@@ -1941,7 +1942,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private tryDirectiveTabComplete(): void {
     const line = this.mainLineBuffer;
     if (!line.startsWith('/') || line.includes(' ')) return;
-    const matches = DIRECTIVE_REGISTRY.filter((d) => d.name.startsWith(line));
+    const matches = this.visibleDirectives().filter((d) => d.name.startsWith(line));
     if (matches.length === 0) return;
     const pick = matches[this.directiveTabCycle % matches.length]!;
     this.directiveTabCycle = (this.directiveTabCycle + 1) % matches.length;
@@ -1984,7 +1985,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         return;
       }
       if (route === 'natural') {
-        await this.askAssistant(t.startsWith('?') ? t.slice(1).trim() : t);
+        const natural = t.startsWith('?') ? t.slice(1).trim() : t;
+        if (await this.tryHandleLocalComputerUseIntent(natural)) {
+          return;
+        }
+        await this.askAssistant(natural);
         return;
       }
       await this.runShell(t.startsWith('!') ? t.slice(1).trim() : t);
@@ -2096,7 +2101,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     switch (parsed.def.kind) {
       case 'help':
         this.aiXtermWrite('\r\n[help] 可用指令（自然语言直接回车即可提问助手）：\r\n');
-        this.directives.forEach((d) => this.aiXtermWrite(` - ${d.name.padEnd(20)} ${d.desc}\r\n`));
+        this.visibleDirectives().forEach((d) => this.aiXtermWrite(` - ${d.name.padEnd(20)} ${d.desc}\r\n`));
         return;
 
       case 'plugin_list': {
@@ -2132,6 +2137,51 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
       case 'superpower': {
         await this.askAssistant('请根据当前 workspace 根目录，简要分析项目结构与关键入口。');
+        return;
+      }
+
+      case 'doctor': {
+        const listFn = (window as unknown as {
+          __zyfrontListRuntimeTools?: () => Array<Record<string, unknown>>;
+        }).__zyfrontListRuntimeTools;
+        const tools = typeof listFn === 'function' ? listFn() : [];
+
+        const degraded = new Set([
+          'web.search',
+          'ask.question',
+          'files.edit',
+          'files.glob',
+          'files.grep',
+          'skill.run',
+          'lsp.query',
+          'mcp.list_resources',
+          'mcp.read_resource',
+          'workflow.run',
+          'remote.trigger',
+          'monitor.snapshot',
+          'worktree.enter',
+          'worktree.exit',
+          'terminal.capture',
+          'ctx.inspect',
+          'agent.run',
+          'notify.push',
+          'userfile.send',
+          'pr.subscribe',
+        ]);
+
+        const total = tools.length;
+        const degradedCount = tools.filter((t) => degraded.has(String(t['name'] ?? ''))).length;
+        const nativeCount = Math.max(0, total - degradedCount);
+
+        this.aiXtermWrite(`\r\n[doctor] total=${total} native=${nativeCount} degraded=${degradedCount}\r\n`);
+        tools
+          .slice()
+          .sort((a, b) => String(a['name'] ?? '').localeCompare(String(b['name'] ?? '')))
+          .forEach((t) => {
+            const name = String(t['name'] ?? '');
+            const cap = degraded.has(name) ? 'degraded' : 'native';
+            this.aiXtermWrite(` - ${name.padEnd(24)} ${cap}\r\n`);
+          });
         return;
       }
 
@@ -2255,6 +2305,77 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.aiXtermWrite('\r\n\x1b[90m本轮结束。\x1b[0m\r\n');
       }
     }
+  }
+
+  private async tryHandleLocalComputerUseIntent(text: string): Promise<boolean> {
+    const s = text.trim();
+    if (!s) return false;
+
+    const openMatch = s.match(/^(?:打开|访问|go to|open)\s+(.+)$/i);
+    if (openMatch?.[1]) {
+      const raw = openMatch[1].trim();
+      const asHttp = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
+      const isLikelyDomain = (t: string) => t.includes('.') && !/\s/.test(t);
+      const isBaiduWord = (t: string) => /百度/i.test(t);
+      const stripQuotes = (t: string) => t.replace(/^['"]|['"]$/g, '').trim();
+
+      const cleaned = stripQuotes(raw);
+
+      // Common Chinese intent: "打开 百度搜索 xxx" / "打开 百度 xxx"
+      // Treat it as Baidu search/home even without a dot.
+      let targetUrl = '';
+      const baiduSearch = cleaned.match(/^(?:百度(?:搜索)?)(.+)$/);
+      if (baiduSearch?.[1]) {
+        const q = baiduSearch[1].trim();
+        targetUrl = q ? `https://www.baidu.com/s?wd=${encodeURIComponent(q)}` : 'https://www.baidu.com/';
+      } else if (cleaned.startsWith('搜索')) {
+        const q = cleaned.replace(/^搜索/, '').trim();
+        if (q) targetUrl = `https://www.baidu.com/s?wd=${encodeURIComponent(q)}`;
+      } else if (isBaiduWord(cleaned) && !/^https?:\/\//i.test(cleaned)) {
+        // "打开百度" / "访问百度一下..."
+        targetUrl = 'https://www.baidu.com/';
+      } else if (/^https?:\/\//i.test(cleaned)) {
+        targetUrl = cleaned;
+      } else if (isLikelyDomain(cleaned)) {
+        targetUrl = asHttp(cleaned);
+      }
+
+      if (/^https?:\/\//i.test(targetUrl)) {
+        const res = await window.zytrader.computer.open(targetUrl);
+        this.aiXtermWrite(`\r\n[computer.use] open => ${res.ok ? 'ok' : 'failed'} ${targetUrl}\r\n`);
+        if (!res.ok && (res as { error?: string }).error) {
+          this.aiXtermWrite(`\x1b[31m${(res as { error?: string }).error}\x1b[0m\r\n`);
+        }
+        return true;
+      }
+
+      // Fallback: if user typed something non-URL after "open", interpret as Baidu search query.
+      // This keeps "打开 今天热点10个新闻" useful.
+      const fallbackQ = cleaned;
+      if (fallbackQ) {
+        targetUrl = `https://www.baidu.com/s?wd=${encodeURIComponent(fallbackQ)}`;
+        const res = await window.zytrader.computer.open(targetUrl);
+        this.aiXtermWrite(`\r\n[computer.use] open => ${res.ok ? 'ok' : 'failed'} ${targetUrl}\r\n`);
+        if (!res.ok && (res as { error?: string }).error) {
+          this.aiXtermWrite(`\x1b[31m${(res as { error?: string }).error}\x1b[0m\r\n`);
+        }
+        return true;
+      }
+    }
+
+    if (/^(?:截图|快照|snapshot)$/i.test(s)) {
+      const res = await window.zytrader.computer.snapshot();
+      this.aiXtermWrite(`\r\n[computer.use] snapshot => ${res.ok ? 'ok' : 'failed'}\r\n`);
+      if (res.ok && (res as { title?: string; url?: string }).title) {
+        this.aiXtermWrite(`title: ${(res as { title?: string }).title}\r\n`);
+      }
+      if ((res as { url?: string }).url) {
+        this.aiXtermWrite(`url: ${(res as { url?: string }).url}\r\n`);
+      }
+      return true;
+    }
+
+    return false;
   }
 
   private pushHistory(input: string): void {

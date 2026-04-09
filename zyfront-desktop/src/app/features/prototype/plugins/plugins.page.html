@@ -3,7 +3,7 @@
     <header class="plugins-hero">
       <div>
         <h1>插件管理</h1>
-        <p>本页仅负责插件管理：从 ClawHub 下载插件、查看插件安装状态。</p>
+        <p>本页负责插件安装与可用工具展示。</p>
       </div>
       <p class="hub-error" *ngIf="hubError()">{{ hubError() }}</p>
     </header>
@@ -71,6 +71,58 @@
           <div class="meta">{{ plugin.installed ? '状态：已安装' : '状态：未安装' }}</div>
         </article>
       </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>当前可用工具</h2>
+        <span class="section-sub">仅展示能力，不做停用和映射管理</span>
+      </div>
+
+      <div class="search-row tool-search-row">
+        <input
+          nz-input
+          [value]="toolQuery()"
+          (input)="toolQuery.set($any($event.target).value)"
+          placeholder="搜索工具（按名称 / ID / 描述）..."
+        />
+      </div>
+
+      <div class="tool-filter-row">
+        <button nz-button [nzType]="toolCategoryFilter() === 'all' ? 'primary' : 'default'" (click)="setToolCategoryFilter('all')">全部</button>
+        <button nz-button [nzType]="toolCategoryFilter() === 'file' ? 'primary' : 'default'" (click)="setToolCategoryFilter('file')">文件</button>
+        <button nz-button [nzType]="toolCategoryFilter() === 'search' ? 'primary' : 'default'" (click)="setToolCategoryFilter('search')">搜索</button>
+        <button nz-button [nzType]="toolCategoryFilter() === 'web' ? 'primary' : 'default'" (click)="setToolCategoryFilter('web')">联网</button>
+        <button nz-button [nzType]="toolCategoryFilter() === 'terminal' ? 'primary' : 'default'" (click)="setToolCategoryFilter('terminal')">终端</button>
+        <button nz-button [nzType]="toolCategoryFilter() === 'planning' ? 'primary' : 'default'" (click)="setToolCategoryFilter('planning')">任务</button>
+        <button nz-button [nzType]="toolCategoryFilter() === 'analysis' ? 'primary' : 'default'" (click)="setToolCategoryFilter('analysis')">分析</button>
+        <button nz-button [nzType]="toolCategoryFilter() === 'question' ? 'primary' : 'default'" (click)="setToolCategoryFilter('question')">问答</button>
+      </div>
+
+      <div class="tool-grid">
+        <article class="tool-card tool-card--installed" *ngFor="let tool of availableTools()">
+          <div class="tool-top">
+            <div>
+              <h3>{{ tool.name }}</h3>
+              <p>{{ tool.desc }}</p>
+            </div>
+          </div>
+          <div class="tool-meta">
+            <span class="chip">{{ categoryLabel(tool.category) }}</span>
+            <span class="chip">{{ tool.source }}</span>
+            <span class="chip" [class.chip--degraded]="toolCapability(tool) === 'degraded'">{{ toolCapability(tool) }}</span>
+            <span class="meta">{{ toolCapabilityLabel(tool) }}</span>
+          </div>
+          <div class="tool-detail-list">
+            <p class="tool-detail" *ngFor="let line of toolDetailLines(tool)">{{ line }}</p>
+          </div>
+          <div class="clawhub-foot">
+            <span>ID：{{ tool.id }}</span>
+          </div>
+        </article>
+      </div>
+
+      <p class="empty-hint" *ngIf="availableTools().length === 0">当前筛选下无工具。</p>
     </section>
 
     <section class="section">

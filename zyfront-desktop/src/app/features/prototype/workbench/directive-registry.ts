@@ -1,6 +1,6 @@
 import type { CoordinationMode } from 'zyfront-core';
 
-export type DirectiveKind = 'help' | 'status' | 'mode' | 'plugin_list' | 'plugin_run' | 'superpower';
+export type DirectiveKind = 'help' | 'status' | 'mode' | 'plugin_list' | 'plugin_run' | 'superpower' | 'doctor';
 
 export interface DirectiveDefinition {
   name: string;
@@ -40,6 +40,12 @@ export const DIRECTIVE_REGISTRY: DirectiveDefinition[] = [
     desc: '触发头脑风暴模板',
     template: '/superpowers:brainstorm',
     kind: 'superpower',
+  },
+  {
+    name: '/doctor',
+    desc: '执行 tools.doctor 并输出工具健康度',
+    template: '/doctor',
+    kind: 'doctor',
   },
 ];
 
