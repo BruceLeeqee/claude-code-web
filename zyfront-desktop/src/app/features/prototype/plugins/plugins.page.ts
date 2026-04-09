@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import type { UiTool } from '../../../shared/prototype-core.facade';
 import { NgFor, NgIf } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
@@ -34,16 +35,27 @@ export class PluginsPrototypePageComponent {
   protected readonly facade = inject(PrototypeCoreFacade);
 
   protected readonly pluginQuery = signal('openclaw plugin');
+  protected readonly toolQuery = signal('');
   protected readonly loadingPlugins = signal(false);
   protected readonly installingPluginIds = signal<Record<string, boolean>>({});
   protected readonly hubError = signal('');
   protected readonly commandLog = signal('');
+  protected readonly toolCategoryFilter = signal<'all' | UiTool['category']>('all');
 
   protected readonly clawHubPlugins = signal<HubPluginItem[]>([]);
 
   protected readonly filteredPlugins = computed(() => {
     const q = this.pluginQuery().trim().toLowerCase();
     return this.clawHubPlugins().filter((x) => !q || `${x.id} ${x.name} ${x.desc}`.toLowerCase().includes(q));
+  });
+
+  protected readonly availableTools = computed(() => {
+    const q = this.toolQuery().trim().toLowerCase();
+    const cat = this.toolCategoryFilter();
+    return this.facade.tools().filter((x) => {
+      if (cat !== 'all' && x.category !== cat) return false;
+      return !q || `${x.id} ${x.name} ${x.desc} ${x.category}`.toLowerCase().includes(q);
+    });
   });
 
   constructor() {
@@ -107,6 +119,102 @@ export class PluginsPrototypePageComponent {
         return next;
       });
     }
+  }
+
+  protected setToolCategoryFilter(v: 'all' | UiTool['category']): void {
+    this.toolCategoryFilter.set(v);
+  }
+
+  protected categoryLabel(c: UiTool['category']): string {
+    const m: Record<UiTool['category'], string> = {
+      file: '文件',
+      search: '搜索',
+      web: '联网',
+      terminal: '终端',
+      planning: '任务',
+      analysis: '分析',
+      question: '问答',
+    };
+    return m[c] ?? c;
+  }
+
+  protected toolDetailLines(tool: UiTool): string[] {
+    const byId: Record<string, string[]> = {
+      'tool.files.read': ['作用：读取文件内容。', '典型场景：查看源码/日志。', '注意：大文件建议分段读取。'],
+      'tool.files.write': ['作用：写入或覆盖文件。', '典型场景：生成配置/脚本。', '注意：覆盖写入不可逆。'],
+      'tool.files.edit': ['作用：精确替换文件片段。', '典型场景：补丁修改。', '注意：oldString 必须精确命中。'],
+      'tool.files.glob': ['作用：按模式查找路径。', '典型场景：批量定位文件。', '注意：当前为轻量 glob 语义。'],
+      'tool.files.grep': ['作用：全文搜索匹配行。', '典型场景：定位调用点。', '注意：当前为简化 grep 能力。'],
+      'tool.web.search': ['作用：联网检索信息。', '典型场景：查询最新资料。', '注意：当前为降级搜索实现。'],
+      'tool.web.fetch': ['作用：抓取网页正文。', '典型场景：提取文档文本。', '注意：受网络/CORS/站点限制。'],
+      'tool.todo.write': ['作用：维护任务清单。', '典型场景：复杂任务拆解。', '注意：支持 merge/replace。'],
+      'tool.ask.question': ['作用：结构化提问。', '典型场景：收集选项决策。', '注意：当前为降级回填实现。'],
+      'tool.plan.enter': ['作用：进入计划模式。', '典型场景：先计划再执行。', '注意：依赖运行时协调器。'],
+      'tool.plan.exit': ['作用：退出计划模式。', '典型场景：计划完成后恢复执行。', '注意：会切回 single 模式。'],
+      'tool.task.stop': ['作用：请求停止当前任务。', '典型场景：中断错误流程。', '注意：为协作式中断。'],
+      'tool.tool.search': ['作用：搜索可用工具。', '典型场景：模型工具路由前检索。', '注意：按名称/描述关键词匹配。'],
+      'tool.tools.doctor': ['作用：输出工具健康度总览。', '典型场景：查看 native/degraded 数量。', '注意：用于运行时能力盘点。'],
+      'tool.notebook.edit': ['作用：编辑 ipynb 指定单元。', '典型场景：自动修改实验笔记本。', '注意：当前支持最小 JSON 单元写入。'],
+      'tool.brief.generate': ['作用：生成简要摘要。', '典型场景：快速压缩长文本信息。', '注意：可用 maxChars 控制摘要长度。'],
+      'tool.skill.run': ['作用：执行技能模板（降级）。', '典型场景：串联技能流程验证。', '注意：当前为本地降级执行。'],
+      'tool.mcp.list_resources': ['作用：列出 MCP 资源（降级）。', '典型场景：先做资源目录探查。', '注意：当前依赖本地注册表回退。'],
+      'tool.mcp.read_resource': ['作用：读取 MCP 资源（降级）。', '典型场景：按 ID 获取资源详情。', '注意：当前依赖本地注册表回退。'],
+      'tool.lsp.query': ['作用：执行 LSP 查询（降级）。', '典型场景：桥接前先给出结构化占位结果。', '注意：需接入宿主 LSP IPC 才能全量可用。'],
+      'tool.powershell.exec': ['作用：执行 PowerShell 命令。', '典型场景：Windows 管理脚本执行。', '注意：当前通过 terminal.exec 转发。'],
+      'tool.workflow.run': ['作用：运行工作流（降级）。', '典型场景：预演 workflow 编排输入输出。', '注意：当前为占位执行，待接工作流引擎。'],
+      'tool.cron.create': ['作用：创建定时触发器。', '典型场景：计划任务调度。', '注意：当前存储于本地运行时注册表。'],
+      'tool.cron.delete': ['作用：删除定时触发器。', '典型场景：清理无效调度。', '注意：按 id 删除。'],
+      'tool.cron.list': ['作用：列出定时触发器。', '典型场景：核对当前调度配置。', '注意：用于调度可观测。'],
+      'tool.remote.trigger': ['作用：登记远程触发请求。', '典型场景：模拟 webhook/远程事件。', '注意：当前为本地队列实现。'],
+      'tool.monitor.snapshot': ['作用：采集运行时快照。', '典型场景：查看本地状态与 key 数量。', '注意：轻量监控，不替代 APM。'],
+      'tool.worktree.enter': ['作用：进入 worktree 模式（降级）。', '典型场景：多分支工作目录切换。', '注意：待接入 git worktree 实执行。'],
+      'tool.worktree.exit': ['作用：退出 worktree 模式（降级）。', '典型场景：回收临时工作树。', '注意：待接入 git worktree 实执行。'],
+      'tool.terminal.capture': ['作用：终端输出捕获（降级）。', '典型场景：采集执行日志快照。', '注意：待接入终端会话抓取能力。'],
+      'tool.ctx.inspect': ['作用：上下文检查（降级）。', '典型场景：查看运行时上下文摘要。', '注意：待接上下文压缩内核。'],
+      'tool.snip.create': ['作用：创建片段记录。', '典型场景：保存关键输出或命令。', '注意：写入本地运行时片段库。'],
+      'tool.sleep': ['作用：延时等待。', '典型场景：轮询前等待、节流。', '注意：单位毫秒。'],
+      'tool.agent.run': ['作用：Agent 任务执行（降级）。', '典型场景：先打通任务路由。', '注意：待接入真实多 Agent 执行层。'],
+      'tool.task.output': ['作用：写入任务输出日志。', '典型场景：持续记录阶段结果。', '注意：按 taskId 追踪。'],
+      'tool.notify.push': ['作用：推送通知（降级）。', '典型场景：结果完成提醒。', '注意：待接宿主通知通道。'],
+      'tool.userfile.send': ['作用：发送用户文件（降级）。', '典型场景：交付附件或导出产物。', '注意：待接真实传输通道。'],
+      'tool.pr.subscribe': ['作用：订阅 PR 事件（降级）。', '典型场景：跟踪 PR webhook 更新。', '注意：待接 GitHub webhook 基建。'],
+    };
+
+    return (
+      byId[tool.id] ?? [
+        '作用：提供可编排的能力扩展。',
+        '典型场景：按工具类别在 Agent 流程中调用。',
+        '注意：请结合具体工具输入参数使用。',
+      ]
+    );
+  }
+
+  protected toolCapability(tool: UiTool): 'native' | 'degraded' {
+    const degraded = new Set([
+      'tool.files.edit',
+      'tool.files.glob',
+      'tool.files.grep',
+      'tool.web.search',
+      'tool.ask.question',
+      'tool.skill.run',
+      'tool.lsp.query',
+      'tool.mcp.list_resources',
+      'tool.mcp.read_resource',
+      'tool.workflow.run',
+      'tool.worktree.enter',
+      'tool.worktree.exit',
+      'tool.terminal.capture',
+      'tool.ctx.inspect',
+      'tool.agent.run',
+      'tool.notify.push',
+      'tool.userfile.send',
+      'tool.pr.subscribe',
+    ]);
+    return degraded.has(tool.id) ? 'degraded' : 'native';
+  }
+
+  protected toolCapabilityLabel(tool: UiTool): string {
+    return this.toolCapability(tool) === 'native' ? '状态：原生可用' : '状态：降级可用';
   }
 
   private async searchHub(query: string): Promise<string> {

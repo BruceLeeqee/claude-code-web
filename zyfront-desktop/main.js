@@ -3,7 +3,7 @@ const electronModule = require('electron')
 const path = require('path')
 const os = require('os')
 const fs = require('fs/promises')
-const { existsSync, readFileSync } = require('fs')
+const { existsSync, readFileSync, mkdirSync } = require('fs')
 const { exec, spawn } = require('child_process')
 const pty = require('node-pty')
 
@@ -35,6 +35,21 @@ if (!electronModule?.app || typeof electronModule.app.whenReady !== 'function') 
 const { app, BrowserWindow, ipcMain, shell, dialog } = electronModule
 
 let win
+let computerWin
+
+// Fix "Unable to move/create cache: Access denied (0x5)" on some Windows environments by
+// forcing Chromium cache directories into Electron's writable userData.
+try {
+  const cacheRoot = path.join(app.getPath('userData'), 'chromium-cache')
+  mkdirSync(cacheRoot, { recursive: true })
+  mkdirSync(path.join(cacheRoot, 'disk'), { recursive: true })
+  mkdirSync(path.join(cacheRoot, 'gpu'), { recursive: true })
+  app.commandLine.appendSwitch('disk-cache-dir', path.join(cacheRoot, 'disk'))
+  app.commandLine.appendSwitch('gpu-cache-dir', path.join(cacheRoot, 'gpu'))
+  app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
+} catch (e) {
+  // If this fails we still allow app startup; computer.use may degrade.
+}
 
 /** @type {{ workspaceRoot: string, vaultRoot: string, vaultMode: string, projectKey: string, workspaceFromEnv: boolean, vaultConfigured: boolean }} */
 const RUNTIME = {
@@ -631,10 +646,59 @@ function registerIpcHandlers() {
 
   ipcMain.handle('zytrader:host:openPath', async (_event, inputPath, opts = {}) => {
     try {
+      const raw = String(inputPath ?? '').trim()
+      if (/^https?:\/\//i.test(raw) || /^www\./i.test(raw)) {
+        const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
+        await shell.openExternal(url)
+        return { ok: true, path: url }
+      }
       const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
       const abs = resolveHostOpenPath(inputPath, scope)
       const err = await shell.openPath(abs)
       return { ok: !err, path: abs, error: err || undefined }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('zytrader:computer:open', async (_event, url) => {
+    try {
+      const w = createComputerWindow(String(url || 'https://www.baidu.com'))
+      return { ok: true, url: w.webContents.getURL() }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('zytrader:computer:navigate', async (_event, url) => {
+    try {
+      const w = createComputerWindow(String(url || 'https://www.baidu.com'))
+      const target = /^https?:\/\//i.test(String(url || '')) ? String(url) : `https://${String(url || '')}`
+      await w.loadURL(target)
+      return { ok: true, url: w.webContents.getURL() }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('zytrader:computer:evaluate', async (_event, script) => {
+    try {
+      if (!computerWin || computerWin.isDestroyed()) return { ok: false, error: 'computer window not open' }
+      const result = await computerWin.webContents.executeJavaScript(String(script || ''), true)
+      return { ok: true, result }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('zytrader:computer:snapshot', async () => {
+    try {
+      if (!computerWin || computerWin.isDestroyed()) return { ok: false, error: 'computer window not open' }
+      const dataUrl = await computerWin.webContents.executeJavaScript(
+        `(() => ({ title: document.title, url: location.href, text: (document.body?.innerText || '').slice(0, 4000) }))()`,
+        true,
+      )
+      return { ok: true, snapshot: dataUrl }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
@@ -753,6 +817,28 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, 'dist/zyfront-desktop-web/browser/index.html'))
   }
+}
+
+function createComputerWindow(url = 'https://www.baidu.com') {
+  if (computerWin && !computerWin.isDestroyed()) return computerWin
+  computerWin = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    show: true,
+    autoHideMenuBar: true,
+    title: 'Computer Use',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  computerWin.on('closed', () => {
+    computerWin = null
+  })
+  const target = /^https?:\/\//i.test(String(url || '')) ? String(url) : `https://${String(url || 'www.baidu.com')}`
+  computerWin.loadURL(target)
+  return computerWin
 }
 
 app.whenReady().then(async () => {

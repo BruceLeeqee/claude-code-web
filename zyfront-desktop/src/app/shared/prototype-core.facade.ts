@@ -33,6 +33,15 @@ export interface UiNode {
   links: string[];
 }
 
+export interface UiTool {
+  id: string;
+  name: string;
+  desc: string;
+  category: 'file' | 'search' | 'web' | 'terminal' | 'planning' | 'analysis' | 'question';
+  enabled: boolean;
+  source: 'builtin' | 'hub';
+}
+
 @Injectable({ providedIn: 'root' })
 export class PrototypeCoreFacade {
   private readonly runtime = inject<ClaudeCoreRuntime>(CLAUDE_RUNTIME);
@@ -127,14 +136,104 @@ export class PrototypeCoreFacade {
     { id: 'plugin.pg', name: 'Postgres Explorer', desc: '查询 Schema 并建议 SQL 优化', installed: false },
   ]);
 
+  readonly tools = signal<UiTool[]>([
+    { id: 'tool.read', name: 'Read', desc: '读取文件内容（文本/图片/PDF）', category: 'file', enabled: true, source: 'builtin' },
+    { id: 'tool.write', name: 'Write', desc: '写入/覆盖文件', category: 'file', enabled: true, source: 'builtin' },
+    { id: 'tool.edit', name: 'StrReplace', desc: '按精确字符串替换文件内容', category: 'file', enabled: true, source: 'builtin' },
+    { id: 'tool.glob', name: 'Glob', desc: '按模式搜索文件路径', category: 'search', enabled: true, source: 'builtin' },
+    { id: 'tool.grep', name: 'Grep', desc: '全文检索（ripgrep）', category: 'search', enabled: true, source: 'builtin' },
+    { id: 'tool.shell', name: 'Shell', desc: '执行终端命令', category: 'terminal', enabled: true, source: 'builtin' },
+    { id: 'tool.web.search', name: 'WebSearch', desc: '联网搜索实时信息', category: 'web', enabled: true, source: 'builtin' },
+    { id: 'tool.web.fetch', name: 'WebFetch', desc: '抓取网页正文内容', category: 'web', enabled: true, source: 'builtin' },
+    { id: 'tool.todo.write', name: 'TodoWrite', desc: '维护任务清单', category: 'planning', enabled: true, source: 'builtin' },
+    { id: 'tool.ask.question', name: 'AskQuestion', desc: '结构化提问收集选项', category: 'question', enabled: true, source: 'builtin' },
+    { id: 'tool.notebook.edit', name: 'EditNotebook', desc: '编辑 Jupyter Notebook 单元', category: 'analysis', enabled: false, source: 'builtin' },
+  ]);
+
   readonly modelUsagePercent = computed(() => Math.min(100, Math.round((this.tokenUsed() / this.tokenMax()) * 100)));
   readonly selectedNode = computed(() => this.nodes().find((n) => n.id === this.selectedNodeId()) ?? null);
+
+  private runtimeToolSyncTimer?: number;
 
   constructor() {
     this.settingsService.settings$.subscribe((s) => {
       this.settings.set(s);
       this.activeModel.set(s.model);
     });
+    this.ensureUiToolsRegisteredToRuntime();
+    this.syncToolsFromRuntime();
+    this.runtimeToolSyncTimer = window.setInterval(() => {
+      this.ensureUiToolsRegisteredToRuntime();
+      this.syncToolsFromRuntime();
+    }, 3000);
+  }
+
+  private ensureUiToolsRegisteredToRuntime(): void {
+    const registerFn = (window as unknown as {
+      __zyfrontRegisterRuntimeTool?: (tool: {
+        name: string;
+        description: string;
+        inputSchema?: Record<string, unknown>;
+        executor?: Record<string, unknown>;
+      }) => { ok: boolean; error?: string };
+    }).__zyfrontRegisterRuntimeTool;
+
+    if (typeof registerFn !== 'function') return;
+
+    for (const t of this.tools()) {
+      registerFn({
+        name: t.name,
+        description: t.desc,
+        inputSchema: { type: 'object', properties: {} },
+      });
+    }
+  }
+
+  private syncToolsFromRuntime(): void {
+    const anyTools = this.runtime.tools as unknown as { list?: () => unknown; getAll?: () => unknown };
+    const raw = (typeof anyTools.list === 'function' ? anyTools.list() : typeof anyTools.getAll === 'function' ? anyTools.getAll() : []) as unknown;
+    if (!Array.isArray(raw) || raw.length === 0) return;
+
+    const normalized = raw
+      .map((it): UiTool | null => {
+        const rec = it as Record<string, unknown>;
+        const name = String(rec['name'] ?? rec['id'] ?? '').trim();
+        if (!name) return null;
+        const desc = String(rec['description'] ?? rec['desc'] ?? '本地运行时工具').trim();
+        return {
+          id: `tool.${name}`,
+          name,
+          desc,
+          category: this.inferToolCategory(name, desc),
+          enabled: true,
+          source: 'builtin',
+        };
+      })
+      .filter((x): x is UiTool => x !== null);
+
+    if (normalized.length === 0) return;
+
+    const merged = [...this.tools()];
+    for (const t of normalized) {
+      const idx = merged.findIndex((x) => x.name === t.name || x.id === t.id);
+      if (idx >= 0) {
+        merged[idx] = { ...merged[idx], name: t.name, desc: t.desc, category: t.category, enabled: true };
+      } else {
+        merged.push(t);
+      }
+    }
+    this.tools.set(merged);
+  }
+
+  private inferToolCategory(name: string, desc: string): UiTool['category'] {
+    const s = `${name} ${desc}`.toLowerCase();
+    if (s.includes('memory') || s.includes('plan') || s.includes('todo')) return 'planning';
+    if (s.includes('terminal') || s.includes('shell') || s.includes('exec')) return 'terminal';
+    if (s.includes('web') || s.includes('http') || s.includes('fetch')) return 'web';
+    if (s.includes('search') || s.includes('grep') || s.includes('glob')) return 'search';
+    if (s.includes('question')) return 'question';
+    if (s.includes('notebook') || s.includes('analysis')) return 'analysis';
+    return 'file';
   }
 
   saveModelSettings(patch: Partial<AppSettings>): void {
@@ -214,6 +313,53 @@ export class PrototypeCoreFacade {
 
   togglePlugin(id: string): void {
     this.plugins.update((items) => items.map((it) => (it.id === id ? { ...it, installed: !it.installed } : it)));
+  }
+
+  toggleTool(id: string): void {
+    this.tools.update((items) => items.map((it) => (it.id === id ? { ...it, enabled: !it.enabled } : it)));
+  }
+
+  setToolEnabled(id: string, enabled: boolean): void {
+    this.tools.update((items) => items.map((it) => (it.id === id ? { ...it, enabled } : it)));
+  }
+
+  upsertTool(payload: Omit<UiTool, 'source'> & { source?: UiTool['source'] }): void {
+    const id = payload.id.trim();
+    if (!id) return;
+
+    const normalized: UiTool = {
+      ...payload,
+      id,
+      name: payload.name.trim() || id,
+      desc: payload.desc.trim() || '自定义工具',
+      source: payload.source ?? 'hub',
+    };
+
+    this.tools.update((items) => {
+      const idx = items.findIndex((it) => it.id === id);
+      if (idx < 0) return [normalized, ...items];
+      const next = [...items];
+      next[idx] = normalized;
+      return next;
+    });
+
+    const registerFn = (window as unknown as {
+      __zyfrontRegisterRuntimeTool?: (tool: {
+        name: string;
+        description: string;
+        inputSchema?: Record<string, unknown>;
+        executor?: Record<string, unknown>;
+      }) => { ok: boolean; error?: string };
+    }).__zyfrontRegisterRuntimeTool;
+
+    if (typeof registerFn === 'function') {
+      registerFn({
+        name: normalized.name,
+        description: normalized.desc,
+        inputSchema: { type: 'object', properties: {} },
+      });
+      this.syncToolsFromRuntime();
+    }
   }
 
   installSkillFromHub(payload: { id: string; name: string; desc: string }): void {

@@ -1271,46 +1271,6 @@
 }
 
 .wb-center-tabs {
-  .tab-overflow-btn {
-    width: 26px;
-    height: 26px;
-    margin: 0 4px 0 2px;
-    padding: 0;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
-    background: #1f1f1f;
-    color: #b8b8b8;
-    cursor: pointer;
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-
-    &:hover {
-      color: #fff;
-      border-color: #5a5a5a;
-    }
-
-    span[nz-icon] {
-      font-size: 13px;
-    }
-  }
-
-  .tab-overflow-menu {
-    min-width: 180px;
-    max-height: 320px;
-    overflow-y: auto;
-  }
-
-  .tab-overflow-menu-label {
-    display: block;
-    max-width: 260px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .wb-center-tabs-scroll {
     flex: 1;
     min-width: 0;
@@ -1320,6 +1280,67 @@
     display: flex;
     align-items: stretch;
     scrollbar-width: thin;
+  }
+
+  .tab-overflow-wrap {
+    position: relative;
+    flex: 0 0 auto;
+    margin-left: 4px;
+  }
+
+  .tab-overflow-btn {
+    width: 26px;
+    height: 26px;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    background: #1f1f1f;
+    color: #b8b8b8;
+    cursor: pointer;
+    line-height: 1;
+    font-size: 14px;
+    padding: 0;
+
+    &:hover {
+      color: #fff;
+      border-color: #5a5a5a;
+    }
+  }
+
+  .tab-overflow-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    min-width: 220px;
+    max-width: 320px;
+    max-height: 320px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    background: #252526;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 70;
+  }
+
+  .tab-overflow-item {
+    border: none;
+    background: transparent;
+    color: #e4e4e7;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &:hover {
+      background: #094771;
+    }
   }
 
   .editor-tab {

@@ -281,6 +281,87 @@
   justify-content: flex-end;
 }
 
+.tool-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tool-card {
+  border: 1px solid #3f3f46;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #1e2430 0%, #181d28 100%);
+  padding: 12px;
+  min-height: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tool-card--installed {
+  background: linear-gradient(180deg, #222933 0%, #1d2430 100%);
+}
+
+.tool-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.tool-top h3 {
+  margin: 0;
+  color: #eef2ff;
+  font-size: 14px;
+}
+
+.tool-top p {
+  margin: 6px 0 0;
+  color: #a8afc0;
+  font-size: 12px;
+}
+
+.tool-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.tool-search-row {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.tool-detail-list {
+  margin-top: 2px;
+  border-top: 1px dashed #364152;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tool-detail {
+  margin: 0;
+  color: #c3ccdf;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chip--degraded {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #fbbf24;
+}
+
 .cmd-log {
   margin: 0;
   border: 1px solid #2f3547;

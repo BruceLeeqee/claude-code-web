@@ -225,89 +225,58 @@
             <span class="lb-msg" *ngIf="gitUiMessage()">{{ gitUiMessage() }}</span>
           </div>
         </div>
-        </section>
-      </nz-splitter-panel>
+      </section>
 
-      <nz-splitter-panel
-        [nzDefaultSize]="centerSplitterDefaultSize()"
-        [nzMin]="280"
-        [nzResizable]="true"
-        [nzCollapsible]="{ end: true }"
-      >
-        <div class="wb-middle-column">
-          <!-- Cursor：中间列仅「上编辑 / 下终端」；右侧栏为最外层第三列，与主编辑区并排、全高 -->
-          <nz-splitter
-            class="wb-splitter-main-vertical"
-            [nzLayout]="'vertical'"
-            (nzResizeEnd)="onWorkbenchInnerSplitterResize($event)"
+      <div class="panel-resizer vertical" *ngIf="leftPanelVisible()" (mousedown)="onLeftResizeStart($event)"></div>
+
+      <section class="wb-center-panel" (click)="hideTabContextMenu()">
+        <div class="wb-center-tabs">
+          <button
+            type="button"
+            class="tab-scroll-btn"
+            [title]="leftPanelVisible() ? '隐藏左侧项目目录' : '显示左侧项目目录'"
+            (click)="toggleLeftPanel()"
           >
-            <nz-splitter-panel
-              [nzDefaultSize]="terminalMenuVisible() ? '72%' : '100%'"
-              [nzMin]="120"
-              [nzResizable]="terminalMenuVisible()"
-              [nzCollapsible]="{ end: true }"
+            {{ leftPanelVisible() ? '⟨' : '⟩' }}
+          </button>
+          <button type="button" class="tab-scroll-btn" title="向左滚动" (click)="scrollTabsBy(-220)">◀</button>
+          <div class="wb-center-tabs-scroll" #tabScrollHost>
+            <div
+              *ngFor="let tab of visibleTabs()"
+              class="editor-tab"
+              [class.active]="activeTab() === tab"
+              [title]="tabTooltip(tab)"
+              (contextmenu)="onTabContextMenu(tab, $event)"
             >
-              <section class="wb-center-panel" (click)="hideTabContextMenu()">
-                    <div class="wb-center-stack">
-                      <div class="wb-center-tabs">
-                        <div class="wb-center-tabs-scroll" #tabScrollHost>
-                          <div
-                            *ngFor="let tab of visibleTabs()"
-                            class="editor-tab"
-                            [class.active]="activeTab() === tab"
-                            [title]="tabTooltip(tab)"
-                            (contextmenu)="onTabContextMenu(tab, $event)"
-                          >
-                            <button type="button" class="tab-label-btn" (click)="setTab(tab)">
-                              <span class="tab-kind-icon" *ngIf="tab === 'Terminal - Main'" nz-icon nzType="terminal"></span>
-                              {{ displayTabLabel(tab) }}
-                            </button>
-                            <button
-                              *ngIf="tab !== 'Terminal - Main'"
-                              type="button"
-                              class="tab-close-btn"
-                              title="关闭"
-                              (click)="closeEditorTab(tab); $event.stopPropagation()"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          class="tab-overflow-btn"
-                          *ngIf="tabBarHasOverflow() && tabOverflowHiddenTabs().length > 0"
-                          nz-dropdown
-                          [nzDropdownMenu]="tabOverflowMenu"
-                          nzTrigger="click"
-                          title="被遮挡的标签页"
-                        >
-                          <span nz-icon nzType="double-right" nzTheme="outline"></span>
-                        </button>
-                        <nz-dropdown-menu #tabOverflowMenu="nzDropdownMenu">
-                          <ul nz-menu class="tab-overflow-menu">
-                            <li
-                              nz-menu-item
-                              *ngFor="let ot of tabOverflowHiddenTabs()"
-                              (click)="selectTabFromOverflowMenu(ot)"
-                            >
-                              <span class="tab-overflow-menu-label">{{ displayTabLabel(ot) }}</span>
-                            </li>
-                          </ul>
-                        </nz-dropdown-menu>
-                      </div>
-                      <div
-                        class="tab-context-menu"
-                        *ngIf="tabContextMenu() as ctx"
-                        [style.left.px]="ctx.x"
-                        [style.top.px]="ctx.y"
-                        (click)="$event.stopPropagation()"
-                      >
-                        <button type="button" class="ctx-item" (click)="closeEditorTab(ctx.tab)">关闭</button>
-                        <button type="button" class="ctx-item" (click)="closeOtherTabs(ctx.tab)">关闭其他</button>
-                        <button type="button" class="ctx-item" (click)="closeTabsToLeft(ctx.tab)">关闭左侧</button>
-                        <button type="button" class="ctx-item" (click)="closeTabsToRight(ctx.tab)">关闭右侧</button>
-                      </div>
+              <button type="button" class="tab-label-btn" (click)="setTab(tab)">
+                <span class="tab-kind-icon" *ngIf="tab === 'Terminal - Main'" nz-icon nzType="terminal"></span>
+                {{ displayTabLabel(tab) }}
+              </button>
+              <button
+                *ngIf="tab !== 'Terminal - Main'"
+                type="button"
+                class="tab-close-btn"
+                title="关闭"
+                (click)="closeEditorTab(tab); $event.stopPropagation()"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <button type="button" class="tab-scroll-btn" title="向右滚动" (click)="scrollTabsBy(220)">▶</button>
+        </div>
+        <div
+          class="tab-context-menu"
+          *ngIf="tabContextMenu() as ctx"
+          [style.left.px]="ctx.x"
+          [style.top.px]="ctx.y"
+          (click)="$event.stopPropagation()"
+        >
+          <button type="button" class="ctx-item" (click)="closeEditorTab(ctx.tab)">关闭</button>
+          <button type="button" class="ctx-item" (click)="closeOtherTabs(ctx.tab)">关闭其他</button>
+          <button type="button" class="ctx-item" (click)="closeTabsToLeft(ctx.tab)">关闭左侧</button>
+          <button type="button" class="ctx-item" (click)="closeTabsToRight(ctx.tab)">关闭右侧</button>
+        </div>
 
                       <ng-template #wbEditorMainBlock>
                         <div class="wb-center-scroll-inner">
