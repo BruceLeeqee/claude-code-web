@@ -46,6 +46,7 @@ export class SettingsPageComponent {
     compactToMessages: [20, [Validators.required, Validators.min(1)]],
     maxSessionCostUsd: [5, [Validators.required, Validators.min(0)]],
     warnThresholdUsd: [3, [Validators.required, Validators.min(0)]],
+    promptV2Enabled: [true],
     theme: ['dark' as AppTheme, Validators.required],
   });
 
