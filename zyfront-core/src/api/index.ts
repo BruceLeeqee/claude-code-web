@@ -110,7 +110,10 @@ export class ClaudeApiClient {
       signal: opts.signal ?? null,
     });
 
-    if (!res.ok) throw new Error(`Claude API error: ${res.status}`);
+    if (!res.ok) {
+      const bodySnippet = await this.readErrorBodySnippet(res);
+      throw new Error(`Claude API error: ${res.status}${bodySnippet ? ` - ${bodySnippet}` : ''}`);
+    }
     const raw = (await res.json()) as JsonValue;
     if (!this.isAnthropicCompatible(activeConfig)) {
       return raw as unknown as ChatResponse;
@@ -170,7 +173,11 @@ export class ClaudeApiClient {
           });
 
           if (!res.ok || !res.body) {
-            controller.enqueue({ type: 'error', error: `Stream request failed: ${res.status}` });
+            const bodySnippet = await this.readErrorBodySnippet(res);
+            controller.enqueue({
+              type: 'error',
+              error: `Stream request failed: ${res.status}${bodySnippet ? ` - ${bodySnippet}` : ''}`,
+            });
             controller.close();
             return;
           }
@@ -267,6 +274,16 @@ export class ClaudeApiClient {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async readErrorBodySnippet(res: Response): Promise<string> {
+    try {
+      const raw = await res.text();
+      if (!raw) return '';
+      return raw.replace(/\s+/g, ' ').trim().slice(0, 320);
+    } catch {
+      return '';
+    }
   }
 
   /** 解析真实请求 URL（是否走代理 baseUrl） */

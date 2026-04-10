@@ -17,6 +17,7 @@ import type {
 } from '../types/index.js';
 import {
   ANTHROPIC_WIRE_KEY,
+  getAnthropicWire,
   toolResultBlocks,
   toolsFromAgentTools,
 } from '../api/anthropic-messages.js';
@@ -69,6 +70,7 @@ export class AssistantRuntime {
   readonly coordinator: CoordinatorEngine;
   private readonly ids = new SimpleIdGenerator();
   private autoCompactPolicy: AutoCompactPolicy | undefined;
+  private static readonly FALLBACK_MAX_MESSAGES = 40;
 
   constructor(private readonly opts: AssistantRuntimeOptions) {
     this.context = new ContextManager(opts.storage);
@@ -159,10 +161,15 @@ export class AssistantRuntime {
       const autoCompacted = this.autoCompactPolicy
         ? this.opts.compactor?.autoCompact(hist, this.autoCompactPolicy)
         : null;
-      const compacted = compactV2?.result.kept ?? autoCompacted?.kept ?? this.opts.compactor?.compact(hist).kept ?? hist;
+      const compacted =
+        compactV2?.result.kept ??
+        autoCompacted?.kept ??
+        this.opts.compactor?.compact(hist).kept ??
+        this.fallbackTrimHistory(hist);
+      const normalizedMessages = this.dropDanglingToolResults(compacted);
 
       const payload: Omit<ChatRequest, 'config'> & { config?: ChatRequest['config'] } = {
-        messages: compacted,
+        messages: normalizedMessages,
       };
       if (request.contextId) payload.contextId = request.contextId;
       payload.metadata = {
@@ -297,11 +304,16 @@ export class AssistantRuntime {
             const autoCompacted = this.autoCompactPolicy
               ? this.opts.compactor?.autoCompact(hist, this.autoCompactPolicy)
               : null;
-            const compacted = compactV2?.result.kept ?? autoCompacted?.kept ?? this.opts.compactor?.compact(hist).kept ?? hist;
+            const compacted =
+              compactV2?.result.kept ??
+              autoCompacted?.kept ??
+              this.opts.compactor?.compact(hist).kept ??
+              this.fallbackTrimHistory(hist);
+            const normalizedMessages = this.dropDanglingToolResults(compacted);
 
             const streamReq: Omit<ChatRequest, 'config'> & { config?: ModelConfig } = {
               ...request,
-              messages: compacted,
+              messages: normalizedMessages,
               config: request.config,
               metadata: {
                 ...(request.metadata ?? {}),
@@ -505,5 +517,66 @@ export class AssistantRuntime {
     return this.tools.execute(toolCall, {
       sessionId,
     });
+  }
+
+  /**
+   * 在未注入 compactor 的情况下做兜底裁剪，避免历史无限增长导致上游 400（上下文过长/无效）。
+   */
+  private fallbackTrimHistory(messages: ChatMessage[]): ChatMessage[] {
+    if (messages.length <= AssistantRuntime.FALLBACK_MAX_MESSAGES) {
+      return messages;
+    }
+    return messages.slice(-AssistantRuntime.FALLBACK_MAX_MESSAGES);
+  }
+
+  /**
+   * 过滤掉没有对应 tool_use 的 tool_result 消息，避免 Anthropic 兼容接口 400。
+   */
+  private dropDanglingToolResults(messages: ChatMessage[]): ChatMessage[] {
+    const seenToolUseIds = new Set<string>();
+    const kept: ChatMessage[] = [];
+
+    for (const msg of messages) {
+      const wire = getAnthropicWire(msg);
+      if (!wire || !Array.isArray(wire.content)) {
+        kept.push(msg);
+        continue;
+      }
+
+      if (wire.role === 'assistant') {
+        for (const block of wire.content) {
+          if (!block || typeof block !== 'object') continue;
+          const b = block as Record<string, unknown>;
+          if (b['type'] === 'tool_use' && typeof b['id'] === 'string' && b['id']) {
+            seenToolUseIds.add(b['id']);
+          }
+        }
+        kept.push(msg);
+        continue;
+      }
+
+      if (wire.role === 'user') {
+        let hasToolResult = false;
+        let allMatched = true;
+        for (const block of wire.content) {
+          if (!block || typeof block !== 'object') continue;
+          const b = block as Record<string, unknown>;
+          if (b['type'] !== 'tool_result') continue;
+          hasToolResult = true;
+          const toolUseId = typeof b['tool_use_id'] === 'string' ? b['tool_use_id'] : '';
+          if (!toolUseId || !seenToolUseIds.has(toolUseId)) {
+            allMatched = false;
+            break;
+          }
+        }
+        if (hasToolResult && !allMatched) {
+          continue;
+        }
+      }
+
+      kept.push(msg);
+    }
+
+    return kept;
   }
 }
