@@ -81,6 +81,16 @@
           <option value="custom">Custom</option>
         </select>
       </label>
+      <label class="conn-field">
+        <span>启用代理</span>
+        <select
+          [value]="st.proxy.enabled ? '1' : '0'"
+          (change)="onProxyEnabledChange($any($event.target).value === '1')"
+        >
+          <option value="1">启用</option>
+          <option value="0">禁用</option>
+        </select>
+      </label>
       <div class="conn-field conn-field--endpoint">
         <span>请求地址</span>
         <div class="endpoint-row">
@@ -102,6 +112,15 @@
           />
         </div>
       </div>
+      <label class="conn-field">
+        <span>代理 Token</span>
+        <input
+          type="password"
+          [value]="st.proxy.authToken"
+          (input)="onProxyAuthTokenInput($any($event.target).value)"
+          placeholder="token"
+        />
+      </label>
     </div>
     <label class="conn-field conn-field--json">
       <span>配置 JSON</span>
@@ -111,6 +130,83 @@
         placeholder='{"max_tokens":32,"temperature":0.2}'
       ></textarea>
     </label>
+  </section>
+
+  <section class="card-panel conn-panel">
+    <h3 class="panel-title">上下文压缩策略</h3>
+    <p class="panel-sub">修改后即时写入运行时（含 token 阈值触发）。</p>
+    <div class="conn-grid">
+      <label class="conn-field">
+        <span>启用自动压缩</span>
+        <select
+          [value]="st.compression.enabled ? '1' : '0'"
+          (change)="onCompressionEnabledChange($any($event.target).value === '1')"
+        >
+          <option value="1">启用</option>
+          <option value="0">禁用</option>
+        </select>
+      </label>
+      <label class="conn-field">
+        <span>触发阈值（消息条数）</span>
+        <input
+          type="number"
+          min="1"
+          [value]="st.compression.maxMessagesBeforeCompact"
+          (input)="onCompressionNumberChange('maxMessagesBeforeCompact', $any($event.target).value)"
+        />
+      </label>
+      <label class="conn-field">
+        <span>压缩后保留条数</span>
+        <input
+          type="number"
+          min="1"
+          [value]="st.compression.compactToMessages"
+          (input)="onCompressionNumberChange('compactToMessages', $any($event.target).value)"
+        />
+      </label>
+      <label class="conn-field">
+        <span>触发阈值（估算 tokens）</span>
+        <input
+          type="number"
+          min="500"
+          [value]="st.compression.maxEstimatedTokens"
+          (input)="onCompressionNumberChange('maxEstimatedTokens', $any($event.target).value)"
+        />
+      </label>
+    </div>
+  </section>
+
+  <section class="card-panel conn-panel">
+    <h3 class="panel-title">成本与主题</h3>
+    <div class="conn-grid">
+      <label class="conn-field">
+        <span>会话成本上限（USD）</span>
+        <input
+          type="number"
+          min="0"
+          step="0.1"
+          [value]="st.cost.maxSessionCostUsd"
+          (input)="onCostNumberChange('maxSessionCostUsd', $any($event.target).value)"
+        />
+      </label>
+      <label class="conn-field">
+        <span>预警阈值（USD）</span>
+        <input
+          type="number"
+          min="0"
+          step="0.1"
+          [value]="st.cost.warnThresholdUsd"
+          (input)="onCostNumberChange('warnThresholdUsd', $any($event.target).value)"
+        />
+      </label>
+      <label class="conn-field">
+        <span>主题</span>
+        <select [value]="st.theme" (change)="onThemeChange($any($event.target).value)">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </label>
+    </div>
   </section>
 
   <div class="models-hub-grid">

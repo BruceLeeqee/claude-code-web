@@ -10,12 +10,8 @@ export class GlobalPromptConfigService {
   async bootstrap(): Promise<void> {
     const content = await this.resolveGlobalConfigContent();
     if (!content) return;
-
-    await this.runtime.context.set('prompt.globalConfig', {
-      content,
-      loadedAt: Date.now(),
-      source: 'zyfront.md',
-    });
+    // zyfront-core 在请求时会通过 `loadPromptGlobalConfig(localStorage)` 读取该配置；
+    // 本服务只需确保 localStorage 中的约定 key 已存在即可。
   }
 
   private async resolveGlobalConfigContent(): Promise<string | null> {

@@ -18,6 +18,13 @@ export class RuntimeSettingsSyncService {
           maxTokens: this.runtime.client.getModel().maxTokens ?? 4096,
         },
       });
+
+      this.runtime.assistant.setAutoCompactPolicy({
+        enabled: Boolean(settings.compression.enabled),
+        maxMessagesBeforeCompact: Number(settings.compression.maxMessagesBeforeCompact ?? 50),
+        compactToMessages: Number(settings.compression.compactToMessages ?? 20),
+        maxEstimatedTokens: Number(settings.compression.maxEstimatedTokens ?? 24000),
+      });
     });
   }
 }

@@ -996,8 +996,53 @@ async function loadComputerWindow(url) {
     computerWin.on('closed', () => {
       computerWin = null
     })
+
+    // 某些站点在 Electron 内会出现重定向循环或 TLS 握手失败；
+    // 主文档失败时给出可读提示，避免重复空白重试。
+    computerWin.webContents.on('did-fail-load', async (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return
+      if (!computerWin || computerWin.isDestroyed()) return
+
+      const knownNetIssue = errorCode === -310 || errorCode === -100 || errorCode === -103
+      if (!knownNetIssue) return
+
+      const html = `
+        <html>
+          <head><meta charset="utf-8"><title>Computer Use 加载失败</title></head>
+          <body style="font-family: Segoe UI, Arial, sans-serif; background:#111827; color:#e5e7eb; padding:24px;">
+            <h2 style="margin:0 0 12px;">页面加载失败</h2>
+            <p style="margin:0 0 8px;">URL: ${String(validatedURL || '').replace(/</g, '&lt;')}</p>
+            <p style="margin:0 0 8px;">错误: ${String(errorDescription || 'unknown')}</p>
+            <p style="margin:0;">建议：更换站点、检查代理/网络，或改用系统浏览器打开该网址。</p>
+          </body>
+        </html>
+      `
+      try {
+        await computerWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+      } catch {
+        // ignore
+      }
+    })
   }
-  await computerWin.loadURL(target)
+  try {
+    await computerWin.loadURL(target)
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    if (/ERR_TOO_MANY_REDIRECTS/i.test(msg)) {
+      // 重定向循环站点优先交给系统浏览器，避免 Electron 内持续握手/重试噪音
+      await shell.openExternal(target)
+      await computerWin.loadURL(
+        `data:text/html;charset=utf-8,${encodeURIComponent(
+          `<html><body style="font-family: Segoe UI, Arial; background:#111827; color:#e5e7eb; padding:24px;">
+             <h2>已在系统浏览器打开</h2>
+             <p>目标网址在 Electron 内出现重定向循环：${target}</p>
+           </body></html>`,
+        )}`,
+      )
+    } else {
+      throw error
+    }
+  }
   computerWin.show()
   computerWin.focus()
   // 避免被主窗口完全遮挡，短暂置顶便于用户发现 Computer Use 窗口

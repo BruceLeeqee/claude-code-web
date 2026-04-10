@@ -2,6 +2,8 @@
  * 会话压缩：按条数截断历史，可选保留 system；支持基于阈值的自动压缩策略。
  */
 import type { ChatMessage } from '../types/index.js';
+export * from './compact-v2.js';
+export * from './auto-compact-v2.js';
 
 /** 截断策略：最多保留非 system 消息条数 */
 export interface CompactStrategy {
@@ -21,6 +23,11 @@ export interface AutoCompactPolicy {
   enabled: boolean;
   maxMessagesBeforeCompact: number;
   compactToMessages: number;
+  /**
+   * 估算 token 达到该阈值也会触发压缩（v2 策略）。
+   * 未提供时由 v2 默认值接管。
+   */
+  maxEstimatedTokens?: number;
 }
 
 /** 按策略对消息数组做截断 */

@@ -139,7 +139,7 @@ export class ModelsPrototypePageComponent {
       model: effectiveModel,
       modelProvider: provider,
       proxy: {
-        enabled: endpoint.length > 0,
+        enabled: Boolean(this.settings().proxy.enabled),
         baseUrl: endpoint,
         authToken: this.settings().proxy.authToken ?? '',
       },
@@ -364,6 +364,72 @@ export class ModelsPrototypePageComponent {
 
   protected onApiKeyInput(value: string): void {
     this.settingsService.update({ apiKey: value });
+  }
+
+  protected onProxyEnabledChange(enabled: boolean): void {
+    this.settingsService.update({
+      proxy: {
+        ...this.settingsService.value.proxy,
+        enabled,
+      },
+    });
+  }
+
+  protected onProxyAuthTokenInput(value: string): void {
+    this.settingsService.update({
+      proxy: {
+        ...this.settingsService.value.proxy,
+        authToken: value,
+      },
+    });
+  }
+
+  protected onThemeChange(theme: string): void {
+    const next = theme === 'light' ? 'light' : 'dark';
+    this.settingsService.update({ theme: next });
+  }
+
+  protected onCostNumberChange(key: 'maxSessionCostUsd' | 'warnThresholdUsd', raw: string): void {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    const safe = Math.max(0, n);
+    this.settingsService.update({
+      cost: {
+        ...this.settingsService.value.cost,
+        [key]: safe,
+      },
+    });
+  }
+
+  protected onCompressionEnabledChange(enabled: boolean): void {
+    const cur = this.settingsService.value.compression;
+    this.settingsService.update({
+      compression: {
+        ...cur,
+        enabled,
+      },
+    });
+  }
+
+  protected onCompressionNumberChange(
+    key: 'maxMessagesBeforeCompact' | 'compactToMessages' | 'maxEstimatedTokens',
+    raw: string,
+  ): void {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+
+    const safeValue =
+      key === 'maxEstimatedTokens'
+        ? Math.max(500, Math.floor(n))
+        : Math.max(1, Math.floor(n));
+    const cur = this.settingsService.value.compression;
+
+    this.settingsService.update({
+      compression: {
+        ...cur,
+        [key]: safeValue,
+      },
+    });
   }
 
   private loadCustomModelIds(): string[] {

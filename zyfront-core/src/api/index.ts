@@ -162,7 +162,7 @@ export class ClaudeApiClient {
           const streamHeaders = this.resolveStreamHeaders(activeConfig);
 
           const streamEndpoint = this.resolveMessageEndpoint(activeConfig, true);
-          const res = await this.fetchImpl(this.resolveUrl(streamEndpoint), {
+          const res = await this.fetchStreamWithRetry(this.resolveUrl(streamEndpoint), {
             method: 'POST',
             headers: streamHeaders,
             body: JSON.stringify(streamBody),
@@ -217,6 +217,56 @@ export class ClaudeApiClient {
       stream,
       cancel: () => abortController.abort(),
     };
+  }
+
+  /** 流式请求轻量重试：覆盖网络抖动、429、5xx 等短暂失败 */
+  private async fetchStreamWithRetry(url: string, init: RequestInit): Promise<Response> {
+    const maxAttempts = 3;
+    const baseDelayMs = 350;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const res = await this.fetchImpl(url, init);
+        if (res.ok || !this.shouldRetryStreamStatus(res.status) || attempt >= maxAttempts) {
+          return res;
+        }
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxAttempts || !this.shouldRetryStreamError(error)) {
+          throw error;
+        }
+      }
+
+      const jitter = Math.floor(Math.random() * 120);
+      const delayMs = baseDelayMs * Math.pow(2, attempt - 1) + jitter;
+      await this.sleep(delayMs);
+    }
+
+    if (lastError instanceof Error) throw lastError;
+    throw new Error('Stream request failed after retries');
+  }
+
+  private shouldRetryStreamStatus(status: number): boolean {
+    return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+  }
+
+  private shouldRetryStreamError(error: unknown): boolean {
+    if (!(error instanceof Error)) return true;
+    const msg = (error.message || '').toLowerCase();
+    return (
+      msg.includes('network') ||
+      msg.includes('fetch') ||
+      msg.includes('timeout') ||
+      msg.includes('abort') ||
+      msg.includes('socket') ||
+      msg.includes('tls') ||
+      msg.includes('handshake')
+    );
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /** 解析真实请求 URL（是否走代理 baseUrl） */

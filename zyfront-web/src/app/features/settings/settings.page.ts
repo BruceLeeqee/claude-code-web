@@ -44,6 +44,7 @@ export class SettingsPageComponent {
     compressionEnabled: [true],
     maxMessagesBeforeCompact: [50, [Validators.required, Validators.min(1)]],
     compactToMessages: [20, [Validators.required, Validators.min(1)]],
+    maxEstimatedTokens: [24000, [Validators.required, Validators.min(500)]],
     maxSessionCostUsd: [5, [Validators.required, Validators.min(0)]],
     warnThresholdUsd: [3, [Validators.required, Validators.min(0)]],
     promptV2Enabled: [true],
@@ -64,6 +65,7 @@ export class SettingsPageComponent {
           compressionEnabled: settings.compression.enabled,
           maxMessagesBeforeCompact: settings.compression.maxMessagesBeforeCompact,
           compactToMessages: settings.compression.compactToMessages,
+          maxEstimatedTokens: settings.compression.maxEstimatedTokens,
           maxSessionCostUsd: settings.cost.maxSessionCostUsd,
           warnThresholdUsd: settings.cost.warnThresholdUsd,
           theme: settings.theme,
@@ -94,6 +96,7 @@ export class SettingsPageComponent {
         enabled: Boolean(value.compressionEnabled),
         maxMessagesBeforeCompact: Number(value.maxMessagesBeforeCompact ?? 50),
         compactToMessages: Number(value.compactToMessages ?? 20),
+        maxEstimatedTokens: Number(value.maxEstimatedTokens ?? 24000),
       },
       cost: {
         maxSessionCostUsd: Number(value.maxSessionCostUsd ?? 5),

@@ -19,6 +19,7 @@ export interface CompressionSettings {
   enabled: boolean;
   maxMessagesBeforeCompact: number;
   compactToMessages: number;
+  maxEstimatedTokens: number;
 }
 
 /** 会话成本告警阈值（美元） */
@@ -53,6 +54,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     enabled: true,
     maxMessagesBeforeCompact: 50,
     compactToMessages: 20,
+    maxEstimatedTokens: 24000,
   },
   cost: {
     maxSessionCostUsd: 5,

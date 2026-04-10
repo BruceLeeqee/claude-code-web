@@ -25,7 +25,7 @@ import { ContextManager } from '../context/index.js';
 import { InMemoryHistoryStore, type HistoryStore } from '../history/index.js';
 import { SkillRegistry } from '../skills/index.js';
 import { ToolRegistry } from '../tools/index.js';
-import { SessionCompactor, type AutoCompactPolicy } from '../compact/index.js';
+import { SessionCompactor, autoCompactIfNeededV2, type AutoCompactPolicy, type CompactV2Policy } from '../compact/index.js';
 import { CoordinatorEngine } from '../coordinator/index.js';
 import { composePrompt } from '../prompt/composer.js';
 import { buildEffectiveSystemPrompt } from '../prompt/effective-system-prompt.js';
@@ -52,7 +52,9 @@ export interface AssistantChatInput extends Omit<ChatRequest, 'messages'> {
 }
 
 /** 多轮工具调用上限；复杂任务易超过 16 轮导致「Tool round limit exceeded」 */
-const MAX_TOOL_ROUNDS = 48;
+const MAX_TOOL_ROUNDS = 100;
+/** 单轮流式请求失败重试上限（网络抖动/网关偶发错误） */
+const MAX_STREAM_REQUEST_RETRIES = 5;
 
 export class AssistantRuntime {
   /** 会话上下文持久化（与 history 分离存储键空间） */
@@ -66,6 +68,7 @@ export class AssistantRuntime {
   /** UI/计划模式协调状态 */
   readonly coordinator: CoordinatorEngine;
   private readonly ids = new SimpleIdGenerator();
+  private autoCompactPolicy: AutoCompactPolicy | undefined;
 
   constructor(private readonly opts: AssistantRuntimeOptions) {
     this.context = new ContextManager(opts.storage);
@@ -73,6 +76,12 @@ export class AssistantRuntime {
     this.skills = opts.skills ?? new SkillRegistry();
     this.tools = opts.tools ?? new ToolRegistry();
     this.coordinator = opts.coordinator ?? new CoordinatorEngine();
+    this.autoCompactPolicy = opts.autoCompactPolicy;
+  }
+
+  /** 允许运行时动态更新压缩策略（设置即生效） */
+  setAutoCompactPolicy(policy: AutoCompactPolicy | undefined): void {
+    this.autoCompactPolicy = policy;
   }
 
   /** 非流式对话，仅返回最终助手消息 */
@@ -133,10 +142,24 @@ export class AssistantRuntime {
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const hist = await this.history.list(sessionId);
-      const autoCompacted = this.opts.autoCompactPolicy
-        ? this.opts.compactor?.autoCompact(hist, this.opts.autoCompactPolicy)
+      const compactV2 = this.autoCompactPolicy
+        ? (() => {
+            const p: Partial<CompactV2Policy> = {
+              enabled: this.autoCompactPolicy!.enabled,
+              maxMessagesBeforeCompact: this.autoCompactPolicy!.maxMessagesBeforeCompact,
+              compactToMessages: this.autoCompactPolicy!.compactToMessages,
+              keepSystemMessages: true,
+            };
+            if (this.autoCompactPolicy!.maxEstimatedTokens !== undefined) {
+              p.maxEstimatedTokens = this.autoCompactPolicy!.maxEstimatedTokens;
+            }
+            return autoCompactIfNeededV2({ messages: hist, policy: p });
+          })()
         : null;
-      const compacted = autoCompacted?.kept ?? this.opts.compactor?.compact(hist).kept ?? hist;
+      const autoCompacted = this.autoCompactPolicy
+        ? this.opts.compactor?.autoCompact(hist, this.autoCompactPolicy)
+        : null;
+      const compacted = compactV2?.result.kept ?? autoCompacted?.kept ?? this.opts.compactor?.compact(hist).kept ?? hist;
 
       const payload: Omit<ChatRequest, 'config'> & { config?: ChatRequest['config'] } = {
         messages: compacted,
@@ -150,6 +173,13 @@ export class AssistantRuntime {
           hasGlobalConfig: Boolean(globalConfigPrompt),
           effectiveSource: effective.source,
           finalPromptLength: prompt.finalPrompt.length,
+          compactV2: {
+            enabled: Boolean(this.autoCompactPolicy?.enabled),
+            reason: compactV2?.result.reason ?? 'threshold_not_met',
+            droppedCount: compactV2?.result.droppedCount ?? 0,
+            estimatedTokensBefore: compactV2?.result.estimatedTokensBefore ?? null,
+            estimatedTokensAfter: compactV2?.result.estimatedTokensAfter ?? null,
+          },
         },
       };
       if (prompt.finalPrompt) payload.systemPrompt = prompt.finalPrompt;
@@ -250,10 +280,24 @@ export class AssistantRuntime {
 
           toolRound: for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
             const hist = await this.history.list(sessionId);
-            const autoCompacted = this.opts.autoCompactPolicy
-              ? this.opts.compactor?.autoCompact(hist, this.opts.autoCompactPolicy)
+            const compactV2 = this.autoCompactPolicy
+              ? (() => {
+                  const p: Partial<CompactV2Policy> = {
+                    enabled: this.autoCompactPolicy!.enabled,
+                    maxMessagesBeforeCompact: this.autoCompactPolicy!.maxMessagesBeforeCompact,
+                    compactToMessages: this.autoCompactPolicy!.compactToMessages,
+                    keepSystemMessages: true,
+                  };
+                  if (this.autoCompactPolicy!.maxEstimatedTokens !== undefined) {
+                    p.maxEstimatedTokens = this.autoCompactPolicy!.maxEstimatedTokens;
+                  }
+                  return autoCompactIfNeededV2({ messages: hist, policy: p });
+                })()
               : null;
-            const compacted = autoCompacted?.kept ?? this.opts.compactor?.compact(hist).kept ?? hist;
+            const autoCompacted = this.autoCompactPolicy
+              ? this.opts.compactor?.autoCompact(hist, this.autoCompactPolicy)
+              : null;
+            const compacted = compactV2?.result.kept ?? autoCompacted?.kept ?? this.opts.compactor?.compact(hist).kept ?? hist;
 
             const streamReq: Omit<ChatRequest, 'config'> & { config?: ModelConfig } = {
               ...request,
@@ -267,41 +311,94 @@ export class AssistantRuntime {
                   hasGlobalConfig: Boolean(globalConfigPrompt),
                   effectiveSource: effective.source,
                   finalPromptLength: prompt.finalPrompt.length,
+                  compactV2: {
+                    enabled: Boolean(this.autoCompactPolicy?.enabled),
+                    reason: compactV2?.result.reason ?? 'threshold_not_met',
+                    droppedCount: compactV2?.result.droppedCount ?? 0,
+                    estimatedTokensBefore: compactV2?.result.estimatedTokensBefore ?? null,
+                    estimatedTokensAfter: compactV2?.result.estimatedTokensAfter ?? null,
+                  },
                 },
               },
             };
             if (prompt.finalPrompt) streamReq.systemPrompt = prompt.finalPrompt;
             if (toolDefs.length > 0) streamReq.tools = toolDefs;
+            for (let attempt = 1; attempt <= MAX_STREAM_REQUEST_RETRIES; attempt++) {
+              const upstream = this.opts.api.createMessageStream(streamReq, {
+                signal: cancelController.signal,
+              });
+              const reader = upstream.stream.getReader();
+              let assistantText = '';
+              let sawAnthropicTurn = false;
+              let pendingToolContinuation = false;
+              let retryableError: string | null = null;
 
-            const upstream = this.opts.api.createMessageStream(streamReq, {
-              signal: cancelController.signal,
-            });
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
 
-            let assistantText = '';
-            const reader = upstream.stream.getReader();
-            let sawAnthropicTurn = false;
-            let pendingToolContinuation = false;
+                  if (value.type === 'delta') {
+                    assistantText += value.textDelta;
+                    controller.enqueue(value);
+                    continue;
+                  }
 
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
+                  if (value.type === 'anthropic_turn') {
+                    sawAnthropicTurn = true;
+                    const t = value.turn;
 
-                if (value.type === 'delta') {
-                  assistantText += value.textDelta;
-                  controller.enqueue(value);
-                  continue;
-                }
+                    if (t.toolCalls.length > 0) {
+                      const assistantMsg: ChatMessage = {
+                        id: this.ids.next('msg'),
+                        role: 'assistant',
+                        content: t.assistantText || '（已调用本地工具）',
+                        timestamp: Date.now(),
+                        metadata: {
+                          [ANTHROPIC_WIRE_KEY]: {
+                            role: 'assistant',
+                            content:
+                              t.assistantContentBlocks.length > 0
+                                ? t.assistantContentBlocks
+                                : ([{ type: 'text', text: t.assistantText || '' }] as JsonArray),
+                          },
+                        },
+                      };
+                      await this.history.append(sessionId, assistantMsg);
+                      this.coordinator.ingestAssistantMessage(assistantMsg);
 
-                if (value.type === 'anthropic_turn') {
-                  sawAnthropicTurn = true;
-                  const t = value.turn;
+                      const rows: Array<{ toolCallId: string; ok: boolean; output: JsonValue; error?: string }> = [];
+                      for (const tc of t.toolCalls) {
+                        const toolResult = await this.executeTool(sessionId, tc);
+                        controller.enqueue({ type: 'tool_call', toolCall: tc });
+                        controller.enqueue({ type: 'tool_result', toolResult });
+                        const row: { toolCallId: string; ok: boolean; output: JsonValue; error?: string } = {
+                          toolCallId: toolResult.toolCallId,
+                          ok: toolResult.ok,
+                          output: toolResult.output,
+                        };
+                        if (toolResult.error !== undefined) row.error = toolResult.error;
+                        rows.push(row);
+                      }
 
-                  if (t.toolCalls.length > 0) {
-                    const assistantMsg: ChatMessage = {
+                      const toolUserMsg: ChatMessage = {
+                        id: this.ids.next('msg'),
+                        role: 'user',
+                        content: '（工具结果）',
+                        timestamp: Date.now(),
+                        metadata: {
+                          [ANTHROPIC_WIRE_KEY]: { role: 'user', content: toolResultBlocks(rows) },
+                        },
+                      };
+                      await this.history.append(sessionId, toolUserMsg);
+                      pendingToolContinuation = true;
+                      break;
+                    }
+
+                    const finalMsg: ChatMessage = {
                       id: this.ids.next('msg'),
                       role: 'assistant',
-                      content: t.assistantText || '（已调用本地工具）',
+                      content: t.assistantText || assistantText,
                       timestamp: Date.now(),
                       metadata: {
                         [ANTHROPIC_WIRE_KEY]: {
@@ -309,85 +406,39 @@ export class AssistantRuntime {
                           content:
                             t.assistantContentBlocks.length > 0
                               ? t.assistantContentBlocks
-                              : ([{ type: 'text', text: t.assistantText || '' }] as JsonArray),
+                              : ([{ type: 'text', text: t.assistantText || assistantText || '' }] as JsonArray),
                         },
                       },
                     };
-                    await this.history.append(sessionId, assistantMsg);
-                    this.coordinator.ingestAssistantMessage(assistantMsg);
-
-                    const rows: Array<{ toolCallId: string; ok: boolean; output: JsonValue; error?: string }> = [];
-                    for (const tc of t.toolCalls) {
-                      const toolResult = await this.executeTool(sessionId, tc);
-                      controller.enqueue({ type: 'tool_call', toolCall: tc });
-                      controller.enqueue({ type: 'tool_result', toolResult });
-                      const row: { toolCallId: string; ok: boolean; output: JsonValue; error?: string } = {
-                        toolCallId: toolResult.toolCallId,
-                        ok: toolResult.ok,
-                        output: toolResult.output,
-                      };
-                      if (toolResult.error !== undefined) row.error = toolResult.error;
-                      rows.push(row);
+                    await this.history.append(sessionId, finalMsg);
+                    this.coordinator.ingestAssistantMessage(finalMsg);
+                    if (t.usage) {
+                      controller.enqueue({ type: 'done', usage: t.usage });
+                    } else {
+                      controller.enqueue({ type: 'done' });
                     }
+                    controller.close();
+                    return;
+                  }
 
-                    const toolUserMsg: ChatMessage = {
-                      id: this.ids.next('msg'),
-                      role: 'user',
-                      content: '（工具结果）',
-                      timestamp: Date.now(),
-                      metadata: {
-                        [ANTHROPIC_WIRE_KEY]: { role: 'user', content: toolResultBlocks(rows) },
-                      },
-                    };
-                    await this.history.append(sessionId, toolUserMsg);
-                    pendingToolContinuation = true;
+                  if (value.type === 'error') {
+                    retryableError = value.error || 'Stream request failed';
                     break;
                   }
 
-                  const finalMsg: ChatMessage = {
-                    id: this.ids.next('msg'),
-                    role: 'assistant',
-                    content: t.assistantText || assistantText,
-                    timestamp: Date.now(),
-                    metadata: {
-                      [ANTHROPIC_WIRE_KEY]: {
-                        role: 'assistant',
-                        content:
-                          t.assistantContentBlocks.length > 0
-                            ? t.assistantContentBlocks
-                            : ([{ type: 'text', text: t.assistantText || assistantText || '' }] as JsonArray),
-                      },
-                    },
-                  };
-                  await this.history.append(sessionId, finalMsg);
-                  this.coordinator.ingestAssistantMessage(finalMsg);
-                  if (t.usage) {
-                    controller.enqueue({ type: 'done', usage: t.usage });
-                  } else {
-                    controller.enqueue({ type: 'done' });
+                  if (value.type !== 'done') {
+                    controller.enqueue(value);
                   }
-                  controller.close();
-                  return;
                 }
-
-                if (value.type === 'error') {
-                  controller.enqueue(value);
-                  controller.close();
-                  return;
-                }
-
-                if (value.type !== 'done') {
-                  controller.enqueue(value);
-                }
+              } catch (error) {
+                retryableError = error instanceof Error ? error.message : 'Stream error';
+              } finally {
+                reader.releaseLock();
               }
-            } finally {
-              reader.releaseLock();
-            }
 
-            if (pendingToolContinuation) continue toolRound;
+              if (pendingToolContinuation) continue toolRound;
 
-            if (!sawAnthropicTurn) {
-              if (assistantText.length > 0) {
+              if (!sawAnthropicTurn && assistantText.length > 0) {
                 const finalAssistantMessage: ChatMessage = {
                   id: this.ids.next('msg'),
                   role: 'assistant',
@@ -396,15 +447,38 @@ export class AssistantRuntime {
                 };
                 await this.history.append(sessionId, finalAssistantMessage);
                 this.coordinator.ingestAssistantMessage(finalAssistantMessage);
+                controller.enqueue({ type: 'done' });
+                controller.close();
+                return;
               }
-              controller.enqueue({ type: 'done' });
+
+              if (!retryableError) {
+                retryableError = 'Stream ended without a final assistant turn';
+              }
+
+              if (cancelController.signal.aborted) {
+                controller.enqueue({ type: 'error', error: 'Stream aborted' });
+                controller.close();
+                return;
+              }
+
+              if (attempt < MAX_STREAM_REQUEST_RETRIES) {
+                controller.enqueue({
+                  type: 'delta',
+                  textDelta: `\n[重试] 流式请求失败，正在重试（${attempt}/${MAX_STREAM_REQUEST_RETRIES}）：${retryableError}\n`,
+                });
+                const waitMs = Math.min(5000, 200 * attempt + Math.floor(Math.random() * 120));
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+                continue;
+              }
+
+              controller.enqueue({
+                type: 'error',
+                error: `Stream request failed after ${MAX_STREAM_REQUEST_RETRIES} retries: ${retryableError}`,
+              });
               controller.close();
               return;
             }
-
-            controller.enqueue({ type: 'error', error: 'Stream ended without a final assistant turn' });
-            controller.close();
-            return;
           }
 
           controller.enqueue({ type: 'error', error: 'Tool round limit exceeded' });
