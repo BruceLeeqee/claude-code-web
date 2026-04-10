@@ -27,6 +27,10 @@ import { SkillRegistry } from '../skills/index.js';
 import { ToolRegistry } from '../tools/index.js';
 import { SessionCompactor, type AutoCompactPolicy } from '../compact/index.js';
 import { CoordinatorEngine } from '../coordinator/index.js';
+import { composePrompt } from '../prompt/composer.js';
+import { buildEffectiveSystemPrompt } from '../prompt/effective-system-prompt.js';
+import { loadPromptGlobalConfig, resolveGlobalPromptByLanguage } from '../prompt/global-config.js';
+import { resolveModelCountry, resolvePromptLanguage } from '../prompt/language.js';
 import { SimpleIdGenerator } from '../utils/index.js';
 
 /** 构造 `AssistantRuntime` 所需的依赖 */
@@ -100,7 +104,29 @@ export class AssistantRuntime {
 
     await this.history.append(sessionId, userMessage);
 
-    const combinedPrompt = [request.systemPrompt, promptPatch].filter(Boolean).join('\n');
+    const mode = this.coordinator.getState().mode;
+    const country = resolveModelCountry(request.config);
+    const language = resolvePromptLanguage(request.config);
+    const globalConfig = typeof localStorage !== 'undefined' ? await loadPromptGlobalConfig(localStorage) : null;
+    const globalConfigPrompt = resolveGlobalPromptByLanguage(globalConfig, language);
+    const effective = buildEffectiveSystemPrompt({
+      mode,
+      language,
+      baseSystemPrompt: request.systemPrompt,
+    });
+
+    const prompt = composePrompt({
+      baseSystemPrompt: effective.prompt,
+      promptPatch,
+      userInput: request.userInput,
+      mode,
+      language,
+      globalConfigPrompt,
+      env: {
+        model: request.config?.model,
+      },
+    });
+
     const toolDefs = toolsFromAgentTools(this.tools.list());
 
     let lastResponse: ChatResponse | undefined;
@@ -116,8 +142,17 @@ export class AssistantRuntime {
         messages: compacted,
       };
       if (request.contextId) payload.contextId = request.contextId;
-      if (request.metadata) payload.metadata = request.metadata;
-      if (combinedPrompt) payload.systemPrompt = combinedPrompt;
+      payload.metadata = {
+        ...(request.metadata ?? {}),
+        promptDebug: {
+          ...prompt.debug,
+          modelCountry: country,
+          hasGlobalConfig: Boolean(globalConfigPrompt),
+          effectiveSource: effective.source,
+          finalPromptLength: prompt.finalPrompt.length,
+        },
+      };
+      if (prompt.finalPrompt) payload.systemPrompt = prompt.finalPrompt;
       if (toolDefs.length > 0) payload.tools = toolDefs;
 
       const response = await this.opts.api.createMessage({
@@ -180,7 +215,28 @@ export class AssistantRuntime {
             .map((s) => s.output.promptPatch)
             .filter((v): v is string => typeof v === 'string' && v.length > 0)
             .join('\n');
-          const combinedPrompt = [request.systemPrompt, promptPatch].filter(Boolean).join('\n');
+          const mode = this.coordinator.getState().mode;
+          const country = resolveModelCountry(request.config);
+          const language = resolvePromptLanguage(request.config);
+          const globalConfig = typeof localStorage !== 'undefined' ? await loadPromptGlobalConfig(localStorage) : null;
+          const globalConfigPrompt = resolveGlobalPromptByLanguage(globalConfig, language);
+          const effective = buildEffectiveSystemPrompt({
+            mode,
+            language,
+            baseSystemPrompt: request.systemPrompt,
+          });
+
+          const prompt = composePrompt({
+            baseSystemPrompt: effective.prompt,
+            promptPatch,
+            userInput: request.userInput,
+            mode,
+            language,
+            globalConfigPrompt,
+            env: {
+              model: request.config?.model,
+            },
+          });
 
           const userMessage: ChatMessage = {
             id: this.ids.next('msg'),
@@ -203,8 +259,18 @@ export class AssistantRuntime {
               ...request,
               messages: compacted,
               config: request.config,
+              metadata: {
+                ...(request.metadata ?? {}),
+                promptDebug: {
+                  ...prompt.debug,
+                  modelCountry: country,
+                  hasGlobalConfig: Boolean(globalConfigPrompt),
+                  effectiveSource: effective.source,
+                  finalPromptLength: prompt.finalPrompt.length,
+                },
+              },
             };
-            if (combinedPrompt) streamReq.systemPrompt = combinedPrompt;
+            if (prompt.finalPrompt) streamReq.systemPrompt = prompt.finalPrompt;
             if (toolDefs.length > 0) streamReq.tools = toolDefs;
 
             const upstream = this.opts.api.createMessageStream(streamReq, {

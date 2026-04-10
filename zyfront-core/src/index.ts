@@ -13,6 +13,7 @@ export * from './history/index.js';
 export * from './tools/index.js';
 export * from './skills/index.js';
 export * from './plugins/index.js';
+export * from './prompt/index.js';
 export * from './mcp/index.js';
 export * from './voice/index.js';
 export * from './vim/index.js';
