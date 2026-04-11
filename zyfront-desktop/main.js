@@ -63,6 +63,23 @@ const RUNTIME = {
 
 const APP_CONFIG_FILENAME = 'zytrader-workspace.json'
 
+/** 避免 executeJavaScript / 页面挂起导致 IPC 永不返回（如 SSL 握手重试） */
+function promiseWithTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    promise.then(
+      (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(t)
+        reject(e)
+      },
+    )
+  })
+}
+
 const DEFAULT_DIRECTORY_CONFIG = {
   version: 1,
   keys: {
@@ -832,7 +849,11 @@ function registerIpcHandlers() {
   ipcMain.handle('zytrader:computer:evaluate', async (_event, script) => {
     try {
       if (!computerWin || computerWin.isDestroyed()) return { ok: false, error: 'computer window not open' }
-      const result = await computerWin.webContents.executeJavaScript(String(script || ''), true)
+      const result = await promiseWithTimeout(
+        computerWin.webContents.executeJavaScript(String(script || ''), true),
+        45_000,
+        'zytrader:computer:evaluate',
+      )
       return { ok: true, result }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -842,9 +863,13 @@ function registerIpcHandlers() {
   ipcMain.handle('zytrader:computer:snapshot', async () => {
     try {
       if (!computerWin || computerWin.isDestroyed()) return { ok: false, error: 'computer window not open' }
-      const dataUrl = await computerWin.webContents.executeJavaScript(
-        `(() => ({ title: document.title, url: location.href, text: (document.body?.innerText || '').slice(0, 4000) }))()`,
-        true,
+      const dataUrl = await promiseWithTimeout(
+        computerWin.webContents.executeJavaScript(
+          `(() => ({ title: document.title, url: location.href, text: (document.body?.innerText || '').slice(0, 4000) }))()`,
+          true,
+        ),
+        30_000,
+        'zytrader:computer:snapshot',
       )
       return { ok: true, snapshot: dataUrl }
     } catch (error) {

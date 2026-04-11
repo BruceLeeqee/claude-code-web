@@ -14,6 +14,7 @@ import type {
   StorageAdapter,
   StreamChunk,
   ToolCall,
+  ToolResult,
 } from '../types/index.js';
 import {
   ANTHROPIC_WIRE_KEY,
@@ -44,6 +45,11 @@ export interface AssistantRuntimeOptions {
   compactor?: SessionCompactor;
   autoCompactPolicy?: AutoCompactPolicy;
   coordinator?: CoordinatorEngine;
+  /**
+   * 单次工具执行上限（毫秒）。超时则返回 `ok: false` 的工具结果并进入下一轮，避免 SSL/页面脚本等导致整轮对话永久挂起。
+   * 默认 120000（2 分钟）。
+   */
+  toolTimeoutMs?: number;
 }
 
 /** 单次用户输入 + 可选上下文键值，由运行时拼成完整 `ChatRequest` */
@@ -71,6 +77,7 @@ export class AssistantRuntime {
   private readonly ids = new SimpleIdGenerator();
   private autoCompactPolicy: AutoCompactPolicy | undefined;
   private static readonly FALLBACK_MAX_MESSAGES = 40;
+  private readonly toolTimeoutMs: number;
 
   constructor(private readonly opts: AssistantRuntimeOptions) {
     this.context = new ContextManager(opts.storage);
@@ -79,6 +86,7 @@ export class AssistantRuntime {
     this.tools = opts.tools ?? new ToolRegistry();
     this.coordinator = opts.coordinator ?? new CoordinatorEngine();
     this.autoCompactPolicy = opts.autoCompactPolicy;
+    this.toolTimeoutMs = opts.toolTimeoutMs ?? 120_000;
   }
 
   /** 允许运行时动态更新压缩策略（设置即生效） */
@@ -512,11 +520,28 @@ export class AssistantRuntime {
     };
   }
 
-  /** 委托 `ToolRegistry.execute` 执行单次工具 */
-  private async executeTool(sessionId: string, toolCall: ToolCall) {
-    return this.tools.execute(toolCall, {
-      sessionId,
+  /** 委托 `ToolRegistry.execute` 执行单次工具（带超时，避免单步卡死整轮） */
+  private async executeTool(sessionId: string, toolCall: ToolCall): Promise<ToolResult> {
+    const ms = this.toolTimeoutMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const run = this.tools.execute(toolCall, { sessionId });
+    const timeoutPromise = new Promise<ToolResult>((resolve) => {
+      timer = setTimeout(
+        () =>
+          resolve({
+            toolCallId: toolCall.id,
+            ok: false,
+            output: null,
+            error: `工具执行超时（${Math.round(ms / 1000)}s）：${toolCall.toolName}。已跳过该步，请根据结果继续或换策略。`,
+          }),
+        ms,
+      );
     });
+    try {
+      return await Promise.race([run, timeoutPromise]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   /**

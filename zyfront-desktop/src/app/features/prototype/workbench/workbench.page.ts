@@ -407,6 +407,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly activePsCwdPresetId = signal<PsCwdPresetId>('vault-root');
   /** ??? Backspace?????????? xterm/?? IME ? onData ????? */
   private xtermBackspaceKeydown?: (e: Event) => void;
+  private aiXtermContextMenu?: (e: Event) => void;
+  private psXtermContextMenu?: (e: Event) => void;
   /** ? onData ? \\b ????????? */
   private backspaceHandledTs = 0;
 
@@ -499,12 +501,20 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       window.removeEventListener('keydown', this.xtermBackspaceKeydown, true);
       this.xtermBackspaceKeydown = undefined;
     }
+    if (this.aiXtermContextMenu && this.xtermHost?.nativeElement) {
+      this.xtermHost.nativeElement.removeEventListener('contextmenu', this.aiXtermContextMenu);
+      this.aiXtermContextMenu = undefined;
+    }
     this.resizeObserver?.disconnect();
     this.xterm?.dispose();
 
     this.psResizeObserver?.disconnect();
     this.detachPsData?.();
     this.detachPsExit?.();
+    if (this.psXtermContextMenu && this.psHost?.nativeElement) {
+      this.psHost.nativeElement.removeEventListener('contextmenu', this.psXtermContextMenu);
+      this.psXtermContextMenu = undefined;
+    }
     for (const s of this.psSessions()) {
       void window.zytrader.terminal.kill({ id: s.id });
     }
@@ -1744,6 +1754,23 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     };
     window.addEventListener('keydown', this.xtermBackspaceKeydown, true);
 
+    this.aiXtermContextMenu = (ev: Event) => {
+      const e = ev as MouseEvent;
+      e.preventDefault();
+      const term = this.xterm;
+      if (!term) return;
+      const sel = term.getSelection();
+      if (sel.length > 0) {
+        void navigator.clipboard.writeText(sel);
+        term.clearSelection();
+        return;
+      }
+      void navigator.clipboard.readText().then((t) => {
+        if (t) this.feedMainTerminalInput(t);
+      });
+    };
+    host.addEventListener('contextmenu', this.aiXtermContextMenu);
+
     host.addEventListener('keydown', (e) => {
       if (e.shiftKey && e.code === 'Tab') {
         e.preventDefault();
@@ -1758,7 +1785,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       if (e.ctrlKey && e.code === 'KeyF') {
         e.preventDefault();
         this.aiXtermWrite(
-          '\r\n\x1b[33m[提示]\x1b[0m Ctrl+C 中断 · Ctrl+Shift+C 复制 · Ctrl+Shift+V 粘贴 · Ctrl+L 清屏 · Shift+Tab 切换模式\r\n',
+          '\r\n\x1b[33m[提示]\x1b[0m Ctrl+C 中断 · Ctrl+Shift+C 复制 · Ctrl+Shift+V 粘贴 · 右键：有选区复制/无选区粘贴 · Ctrl+L 清屏 · Shift+Tab 切换模式\r\n',
         );
         this.writeMainTerminalPrompt();
         this.redrawInputLine();
@@ -2394,6 +2421,25 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
       return true;
     });
+
+    this.psXtermContextMenu = (ev: Event) => {
+      const e = ev as MouseEvent;
+      e.preventDefault();
+      const term = this.psTerminal;
+      if (!term) return;
+      const id = this.activePsSessionId();
+      if (!id) return;
+      const sel = term.getSelection();
+      if (sel.length > 0) {
+        void navigator.clipboard.writeText(sel);
+        term.clearSelection();
+        return;
+      }
+      void navigator.clipboard.readText().then((t) => {
+        if (t) void window.zytrader.terminal.write({ id, data: t });
+      });
+    };
+    host.addEventListener('contextmenu', this.psXtermContextMenu);
 
     this.detachPsData = window.zytrader.terminal.onData((payload) => {
       if (payload.id !== this.activePsSessionId()) return;
