@@ -190,13 +190,14 @@ export class ClaudeApiClient {
             const acc = new AnthropicSseTurnAccumulator();
             const onLine = (line: string) => acc.consumeLine(line);
             const push = (t: string) => controller.enqueue({ type: 'delta', textDelta: t });
+            const pushThinking = (t: string) => controller.enqueue({ type: 'thinking_delta', textDelta: t });
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
               const text = decoder.decode(value, { stream: true });
-              if (text.length > 0) feedSseChunkWithLines(sse, text, push, onLine);
+              if (text.length > 0) feedSseChunkWithLines(sse, text, push, pushThinking, onLine);
             }
-            flushSseBufferWithLines(sse, push, onLine);
+            flushSseBufferWithLines(sse, push, pushThinking, onLine);
             controller.enqueue({ type: 'anthropic_turn', turn: acc.finalize() });
           } else {
             while (true) {

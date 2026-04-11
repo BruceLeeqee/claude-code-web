@@ -23,6 +23,28 @@ function roughUsage(u: unknown): Usage | undefined {
   return { inputTokens: input, outputTokens: output };
 }
 
+const SAFE_TOOL_ID_RE = /^[a-z0-9_]+$/;
+
+function randomLowerAlphaNum(len = 10): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  for (let i = 0; i < len; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)] ?? 'a';
+  }
+  return out;
+}
+
+function sanitizeToolUseId(raw: string | undefined, seq: number): string {
+  const base = (raw ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (base && SAFE_TOOL_ID_RE.test(base)) return base;
+  return `call_${randomLowerAlphaNum(8)}_${seq}`;
+}
+
 export class AnthropicSseTurnAccumulator {
   private readonly blocks = new Map<number, BlockState>();
   private stopReason: string | null = null;
@@ -94,6 +116,7 @@ export class AnthropicSseTurnAccumulator {
     const textParts: string[] = [];
     const toolCalls: ToolCall[] = [];
 
+    let seq = 1;
     for (const idx of indices) {
       const b = this.blocks.get(idx);
       if (!b) continue;
@@ -107,15 +130,19 @@ export class AnthropicSseTurnAccumulator {
         } catch {
           input = {};
         }
+
+        if (!b.name) continue;
+        const safeId = sanitizeToolUseId(b.id, seq);
+        seq += 1;
+
         assistantContentBlocks.push({
           type: 'tool_use',
-          id: b.id,
+          id: safeId,
           name: b.name,
           input,
         } as JsonValue);
-        if (b.id && b.name) {
-          toolCalls.push({ id: b.id, toolName: b.name, input });
-        }
+
+        toolCalls.push({ id: safeId, toolName: b.name, input });
       }
     }
 

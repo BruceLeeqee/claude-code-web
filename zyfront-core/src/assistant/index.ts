@@ -122,6 +122,7 @@ export class AssistantRuntime {
     };
 
     await this.history.append(sessionId, userMessage);
+    await this.reconcileUserGoalByModel(sessionId, request.userInput, request.config);
 
     const mode = this.coordinator.getState().mode;
     const country = resolveModelCountry(request.config);
@@ -290,6 +291,7 @@ export class AssistantRuntime {
             timestamp: Date.now(),
           };
           await this.history.append(sessionId, userMessage);
+          await this.reconcileUserGoalByModel(sessionId, request.userInput, request.config);
 
           const toolDefs = toolsFromAgentTools(this.tools.list());
 
@@ -520,6 +522,172 @@ export class AssistantRuntime {
     };
   }
 
+  /**
+   * 两层判定：
+   * 1) 轻量规则快速裁决（低成本、低延迟）
+   * 2) 规则不确定时，再调用模型兜底
+   */
+  private async reconcileUserGoalByModel(
+    sessionId: string,
+    currentUserGoal: string,
+    config?: ModelConfig,
+  ): Promise<void> {
+    const _sessionId = sessionId;
+    void _sessionId;
+    const state = this.coordinator.getState();
+    const previousGoal = state.lastUserGoal;
+
+    if (!previousGoal || previousGoal.trim().length === 0) {
+      this.coordinator.recordUserGoal(currentUserGoal);
+      return;
+    }
+
+    const hasActivePlan = state.mode !== 'single' || state.steps.length > 0;
+    if (!hasActivePlan) {
+      this.coordinator.recordUserGoal(currentUserGoal);
+      return;
+    }
+
+    const quick = this.quickGoalConflictDecision(previousGoal, currentUserGoal);
+    if (quick === 'conflict') {
+      this.coordinator.forceResetForNewGoal(currentUserGoal);
+      return;
+    }
+    if (quick === 'same_or_continuation') {
+      this.coordinator.recordUserGoal(currentUserGoal);
+      return;
+    }
+
+    const judgeSystem =
+      'You are a strict intent-conflict judge. Output JSON only with shape: {"conflict": boolean, "reason": string}. No markdown.';
+
+    const judgeUser = [
+      'Determine whether the new user goal conflicts with the previous goal in a way that requires dropping the current plan and switching target.',
+      'Return conflict=true when the new goal is a different target, domain, app, or objective that should supersede the old one.',
+      'Return conflict=false when it is a refinement, continuation, or clarification of the same goal.',
+      '',
+      `previous_goal: ${JSON.stringify(previousGoal)}`,
+      `current_goal: ${JSON.stringify(currentUserGoal)}`,
+      `current_mode: ${JSON.stringify(state.mode)}`,
+      `current_steps_count: ${state.steps.length}`,
+    ].join('\n');
+
+    try {
+      const judgeReq: Omit<ChatRequest, 'config'> & { config?: ModelConfig } = {
+        messages: [
+          {
+            id: this.ids.next('msg'),
+            role: 'user',
+            content: judgeUser,
+            timestamp: Date.now(),
+          },
+        ],
+        systemPrompt: judgeSystem,
+      };
+      if (config) {
+        judgeReq.config = config;
+      }
+
+      const judgeResp = await this.opts.api.createMessage(judgeReq);
+
+      let conflict = false;
+      const text = judgeResp.message.content || '';
+      try {
+        const parsed = JSON.parse(text) as { conflict?: unknown };
+        conflict = parsed?.conflict === true;
+      } catch {
+        const normalized = text.toLowerCase();
+        conflict = normalized.includes('"conflict": true') || normalized.includes('conflict=true');
+      }
+
+      if (conflict) {
+        this.coordinator.forceResetForNewGoal(currentUserGoal);
+        return;
+      }
+
+      this.coordinator.recordUserGoal(currentUserGoal);
+    } catch {
+      this.coordinator.recordUserGoal(currentUserGoal);
+    }
+  }
+
+  private quickGoalConflictDecision(
+    previousGoal: string,
+    currentGoal: string,
+  ): 'conflict' | 'same_or_continuation' | 'uncertain' {
+    const prev = previousGoal.trim().toLowerCase();
+    const curr = currentGoal.trim().toLowerCase();
+    if (!prev || !curr) return 'uncertain';
+    if (prev === curr) return 'same_or_continuation';
+
+    const strongSwitchIntent = [
+      '打开',
+      '去',
+      '换',
+      '取消',
+      '停止',
+      '算了',
+      '改成',
+      '改为',
+      '别弄了',
+      '不用了',
+      'stop',
+      'cancel',
+      'switch',
+      'instead',
+      'forget that',
+      'never mind',
+    ];
+
+    const hasStrongSwitch = strongSwitchIntent.some((kw) => curr.includes(kw));
+    if (hasStrongSwitch) {
+      if (curr.includes('取消') || curr.includes('停止') || curr.includes('算了') || curr.includes('不用了') || curr.includes('cancel') || curr.includes('stop') || curr.includes('never mind')) {
+        return 'conflict';
+      }
+      if (!(curr.includes(prev) || prev.includes(curr))) {
+        return 'conflict';
+      }
+    }
+
+    if (curr.includes(prev) || prev.includes(curr)) return 'same_or_continuation';
+
+    const prevTokens = this.goalTokens(prev);
+    const currTokens = this.goalTokens(curr);
+    if (prevTokens.size === 0 || currTokens.size === 0) return 'uncertain';
+
+    let inter = 0;
+    for (const t of prevTokens) {
+      if (currTokens.has(t)) inter += 1;
+    }
+    const union = prevTokens.size + currTokens.size - inter;
+    const jaccard = union > 0 ? inter / union : 0;
+
+    if (jaccard <= 0.08) return 'conflict';
+    if (jaccard >= 0.55) return 'same_or_continuation';
+    return 'uncertain';
+  }
+
+  private goalTokens(text: string): Set<string> {
+    const normalized = text
+      .replace(/https?:\/\/\S+/g, ' ')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!normalized) return new Set<string>();
+
+    const base = normalized.split(' ').filter((v) => v.length >= 2);
+    const cjk2: string[] = [];
+    for (const token of base) {
+      if (/^[\p{Script=Han}]+$/u.test(token) && token.length >= 2) {
+        for (let i = 0; i < token.length - 1; i += 1) {
+          cjk2.push(token.slice(i, i + 2));
+        }
+      }
+    }
+
+    return new Set([...base, ...cjk2]);
+  }
+
   /** 委托 `ToolRegistry.execute` 执行单次工具（带超时，避免单步卡死整轮） */
   private async executeTool(sessionId: string, toolCall: ToolCall): Promise<ToolResult> {
     const ms = this.toolTimeoutMs;
@@ -555,12 +723,52 @@ export class AssistantRuntime {
   }
 
   /**
-   * 过滤掉没有对应 tool_use 的 tool_result 消息，避免 Anthropic 兼容接口 400。
+   * 规范化工具回放链路，避免 Anthropic 兼容接口 400：
+   * - 丢弃无对应 tool_use 的 tool_result
+   * - 丢弃“未完成的 tool_use”（没有对应 tool_result）
    */
   private dropDanglingToolResults(messages: ChatMessage[]): ChatMessage[] {
-    const seenToolUseIds = new Set<string>();
-    const kept: ChatMessage[] = [];
+    const SAFE_TOOL_ID_RE = /^[a-z0-9_]+$/;
 
+    const assistantToolUseByMsg = new Map<string, string[]>();
+    const resultIds = new Set<string>();
+
+    for (const msg of messages) {
+      const wire = getAnthropicWire(msg);
+      if (!wire || !Array.isArray(wire.content)) continue;
+
+      if (wire.role === 'assistant') {
+        const ids: string[] = [];
+        for (const block of wire.content) {
+          if (!block || typeof block !== 'object') continue;
+          const b = block as Record<string, unknown>;
+          if (b['type'] !== 'tool_use') continue;
+          const id = typeof b['id'] === 'string' ? b['id'] : '';
+          if (id && SAFE_TOOL_ID_RE.test(id)) ids.push(id);
+        }
+        if (ids.length > 0) assistantToolUseByMsg.set(msg.id, ids);
+        continue;
+      }
+
+      if (wire.role === 'user') {
+        for (const block of wire.content) {
+          if (!block || typeof block !== 'object') continue;
+          const b = block as Record<string, unknown>;
+          if (b['type'] !== 'tool_result') continue;
+          const toolUseId = typeof b['tool_use_id'] === 'string' ? b['tool_use_id'] : '';
+          if (toolUseId && SAFE_TOOL_ID_RE.test(toolUseId)) resultIds.add(toolUseId);
+        }
+      }
+    }
+
+    const completedToolUseIds = new Set<string>();
+    for (const ids of assistantToolUseByMsg.values()) {
+      for (const id of ids) {
+        if (resultIds.has(id)) completedToolUseIds.add(id);
+      }
+    }
+
+    const kept: ChatMessage[] = [];
     for (const msg of messages) {
       const wire = getAnthropicWire(msg);
       if (!wire || !Array.isArray(wire.content)) {
@@ -569,12 +777,21 @@ export class AssistantRuntime {
       }
 
       if (wire.role === 'assistant') {
+        let hasToolUse = false;
+        let allCompleted = true;
         for (const block of wire.content) {
           if (!block || typeof block !== 'object') continue;
           const b = block as Record<string, unknown>;
-          if (b['type'] === 'tool_use' && typeof b['id'] === 'string' && b['id']) {
-            seenToolUseIds.add(b['id']);
+          if (b['type'] !== 'tool_use') continue;
+          hasToolUse = true;
+          const id = typeof b['id'] === 'string' ? b['id'] : '';
+          if (!id || !SAFE_TOOL_ID_RE.test(id) || !completedToolUseIds.has(id)) {
+            allCompleted = false;
+            break;
           }
+        }
+        if (hasToolUse && !allCompleted) {
+          continue;
         }
         kept.push(msg);
         continue;
@@ -589,7 +806,7 @@ export class AssistantRuntime {
           if (b['type'] !== 'tool_result') continue;
           hasToolResult = true;
           const toolUseId = typeof b['tool_use_id'] === 'string' ? b['tool_use_id'] : '';
-          if (!toolUseId || !seenToolUseIds.has(toolUseId)) {
+          if (!toolUseId || !SAFE_TOOL_ID_RE.test(toolUseId) || !completedToolUseIds.has(toolUseId)) {
             allMatched = false;
             break;
           }

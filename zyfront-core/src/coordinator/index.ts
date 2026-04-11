@@ -19,6 +19,7 @@ export interface PlanState {
   mode: CoordinationMode;
   steps: CoordinationStep[];
   updatedAt: number;
+  lastUserGoal?: string;
 }
 
 /** 内存中的计划/模式状态机 */
@@ -74,6 +75,28 @@ export class CoordinatorEngine {
   detectPlanModeHint(message: ChatMessage): boolean {
     const normalized = message.content.toLowerCase();
     return normalized.includes('plan') || normalized.includes('步骤') || normalized.includes('phase');
+  }
+
+  /** 仅保存最新用户目标，不在这里做冲突判定（由模型结论驱动） */
+  recordUserGoal(userGoal: string): void {
+    const normalized = userGoal.trim();
+    if (!normalized) return;
+    this.state = {
+      ...this.state,
+      lastUserGoal: normalized,
+      updatedAt: Date.now(),
+    };
+  }
+
+  /** 按模型结论强制重置计划状态 */
+  forceResetForNewGoal(nextUserGoal: string): void {
+    const normalized = nextUserGoal.trim() || this.state.lastUserGoal;
+    this.state = {
+      mode: 'single',
+      steps: [],
+      updatedAt: Date.now(),
+      ...(normalized ? { lastUserGoal: normalized } : {}),
+    };
   }
 
   /** 在 single 模式下消费一条助手消息，必要时自动切到 plan */

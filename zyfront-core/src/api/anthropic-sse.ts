@@ -5,36 +5,57 @@
  * 关联场景：流式调用时处理底层网络数据流的解析。
  */
 
-/** 从单条流事件对象提取可展示的文本增量，无时返回 null */
-function extractTextFromStreamEvent(obj: unknown): string | null {
-  if (!obj || typeof obj !== 'object') return null;
-  const o = obj as Record<string, unknown>;
+function parseSsePayload(line: string): Record<string, unknown> | null {
+  const trimmed = line.replace(/\r$/, '').trim();
+  if (!trimmed.startsWith('data:')) return null;
+  const payload = trimmed.slice(5).trim();
+  if (!payload || payload === '[DONE]') return null;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
 
-  if (o['type'] === 'content_block_delta' && o['delta'] && typeof o['delta'] === 'object') {
-    const d = o['delta'] as Record<string, unknown>;
+/** 从单条流事件对象提取可展示的文本增量，无时返回 null */
+function extractTextFromStreamEvent(obj: Record<string, unknown>): string | null {
+  if (obj['type'] === 'content_block_delta' && obj['delta'] && typeof obj['delta'] === 'object') {
+    const d = obj['delta'] as Record<string, unknown>;
     if (d['type'] === 'text_delta' && typeof d['text'] === 'string') return d['text'];
     return null;
   }
 
-  if (o['type'] === 'message_delta' && o['delta'] && typeof o['delta'] === 'object') {
-    const d = o['delta'] as Record<string, unknown>;
+  if (obj['type'] === 'message_delta' && obj['delta'] && typeof obj['delta'] === 'object') {
+    const d = obj['delta'] as Record<string, unknown>;
     if (typeof d['text'] === 'string') return d['text'];
   }
 
   return null;
 }
 
+function extractThinkingFromStreamEvent(obj: Record<string, unknown>): string | null {
+  if (obj['type'] !== 'content_block_delta' || !obj['delta'] || typeof obj['delta'] !== 'object') return null;
+  const d = obj['delta'] as Record<string, unknown>;
+  if (d['type'] !== 'thinking_delta') return null;
+  if (typeof d['thinking'] === 'string') return d['thinking'];
+  if (typeof d['text'] === 'string') return d['text'];
+  return null;
+}
+
 /** 解析单行 `data:` 为文本增量 */
 export function tryExtractTextDeltaFromSseLine(line: string): string | null {
-  const trimmed = line.replace(/\r$/, '').trim();
-  if (!trimmed.startsWith('data:')) return null;
-  const payload = trimmed.slice(5).trim();
-  if (!payload || payload === '[DONE]') return null;
-  try {
-    return extractTextFromStreamEvent(JSON.parse(payload) as unknown);
-  } catch {
-    return null;
-  }
+  const payload = parseSsePayload(line);
+  if (!payload) return null;
+  return extractTextFromStreamEvent(payload);
+}
+
+/** 解析单行 `data:` 为 thinking 增量 */
+export function tryExtractThinkingDeltaFromSseLine(line: string): string | null {
+  const payload = parseSsePayload(line);
+  if (!payload) return null;
+  return extractThinkingFromStreamEvent(payload);
 }
 
 /** 未完结的半行缓冲 */
@@ -68,6 +89,7 @@ export function feedSseChunkWithLines(
   buffer: SseLineBuffer,
   chunk: string,
   onTextDelta: (t: string) => void,
+  onThinkingDelta: (t: string) => void,
   onSseLine: (line: string) => void,
 ): void {
   buffer.remainder += chunk;
@@ -77,6 +99,8 @@ export function feedSseChunkWithLines(
     onSseLine(line);
     const piece = tryExtractTextDeltaFromSseLine(line);
     if (piece) onTextDelta(piece);
+    const thinking = tryExtractThinkingDeltaFromSseLine(line);
+    if (thinking) onThinkingDelta(thinking);
   }
 }
 
@@ -84,6 +108,7 @@ export function feedSseChunkWithLines(
 export function flushSseBufferWithLines(
   buffer: SseLineBuffer,
   onTextDelta: (t: string) => void,
+  onThinkingDelta: (t: string) => void,
   onSseLine: (line: string) => void,
 ): void {
   const tail = buffer.remainder;
@@ -94,5 +119,7 @@ export function flushSseBufferWithLines(
     onSseLine(line);
     const piece = tryExtractTextDeltaFromSseLine(line);
     if (piece) onTextDelta(piece);
+    const thinking = tryExtractThinkingDeltaFromSseLine(line);
+    if (thinking) onThinkingDelta(thinking);
   }
 }
