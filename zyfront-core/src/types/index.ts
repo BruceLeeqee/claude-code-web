@@ -64,6 +64,7 @@ export interface AnthropicTurnSnapshot {
 /** 流式通道向下游推送的分片类型联合 */
 export type StreamChunk =
   | { type: 'delta'; textDelta: string }
+  | { type: 'thinking_delta'; textDelta: string }
   | { type: 'done'; message?: ChatMessage; usage?: Usage }
   | { type: 'error'; error: string }
   | { type: 'tool_call'; toolCall: ToolCall }

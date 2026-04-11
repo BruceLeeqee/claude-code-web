@@ -26,6 +26,7 @@ import {
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { AppSettingsService } from '../../../core/app-settings.service';
+import { REQUEST_CFG_JSON_KEY } from '../../../core/runtime-settings-sync.service';
 import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
 import { AgentMemoryService } from '../../../core/agent-memory.service';
 import { Terminal } from 'xterm';
@@ -407,6 +408,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly activePsCwdPresetId = signal<PsCwdPresetId>('vault-root');
   /** ??? Backspace?????????? xterm/?? IME ? onData ????? */
   private xtermBackspaceKeydown?: (e: Event) => void;
+  private aiXtermContextMenu?: (e: Event) => void;
+  private psXtermContextMenu?: (e: Event) => void;
   /** ? onData ? \\b ????????? */
   private backspaceHandledTs = 0;
 
@@ -420,6 +423,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private streamStop?: () => void;
   private streamReader: ReadableStreamDefaultReader<StreamChunk> | null = null;
   private streamInterruptRequested = false;
+  /** 当前轮 thinking 实时输出状态（仅展示，不入命令行输入缓冲） */
+  private thinkingHeaderShown = false;
+  private answerHeaderShown = false;
+  private thinkingCollapsed = true;
+  private thinkingBuffer = '';
+  private thinkingPrintedLen = 0;
+  private thinkingFoldHintShown = false;
+  private thinkingHasNonChinese = false;
   private directiveTabCycle = 0;
 
   protected readonly leftPanelVisible = signal(true);
@@ -499,12 +510,21 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       window.removeEventListener('keydown', this.xtermBackspaceKeydown, true);
       this.xtermBackspaceKeydown = undefined;
     }
+    if (this.aiXtermContextMenu && this.xtermHost?.nativeElement) {
+      this.xtermHost.nativeElement.removeEventListener('contextmenu', this.aiXtermContextMenu);
+      this.aiXtermContextMenu = undefined;
+    }
+
     this.resizeObserver?.disconnect();
     this.xterm?.dispose();
 
     this.psResizeObserver?.disconnect();
     this.detachPsData?.();
     this.detachPsExit?.();
+    if (this.psXtermContextMenu && this.psHost?.nativeElement) {
+      this.psHost.nativeElement.removeEventListener('contextmenu', this.psXtermContextMenu);
+      this.psXtermContextMenu = undefined;
+    }
     for (const s of this.psSessions()) {
       void window.zytrader.terminal.kill({ id: s.id });
     }
@@ -1405,8 +1425,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.aiXtermWrite(`${body}\r\n`);
         continue;
       }
-      const toolPreview = text.length > 800 ? `${text.slice(0, 800)}…` : text;
-      this.aiXtermWrite(`\x1b[36m[工具]\x1b[0m ${toolPreview.replace(/\r?\n/g, ' ')}\r\n`);
+      const stepPreview = text.length > 800 ? `${text.slice(0, 800)}…` : text;
+      this.aiXtermWrite(`\x1b[36m[步骤]\x1b[0m ${stepPreview.replace(/\r?\n/g, ' ')}\r\n`);
     }
 
     this.writeMainTerminalPrompt();
@@ -1647,25 +1667,67 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private handleStreamChunk(value: StreamChunk): void {
+    const cfg = this.readModelRequestUiConfig();
+
     if (value.type === 'delta') {
+      if (cfg.layoutSplitThinkingAnswer && !this.answerHeaderShown) {
+        this.aiXtermWrite(`\r\n\x1b[35m[Answer]\x1b[0m `);
+        this.answerHeaderShown = true;
+      }
       this.aiXtermWrite(value.textDelta);
+      return;
+    }
+    if (value.type === 'thinking_delta') {
+      if (!cfg.showThinking) return;
+      this.thinkingBuffer += value.textDelta;
+      if (/[A-Za-z]{3,}/.test(value.textDelta)) {
+        this.thinkingHasNonChinese = true;
+      }
+
+      if (!this.thinkingHeaderShown) {
+        this.thinkingCollapsed = cfg.thinkingVerboseMode ? false : cfg.thinkingCollapsedByDefault;
+        this.persistThinkingCollapsePreference(this.thinkingCollapsed);
+
+        if (this.thinkingCollapsed) {
+          this.aiXtermWrite(`\r\n\x1b[90m[Thinking]\x1b[0m … \x1b[2m(${cfg.thinkingToggleShortcut} 展开)\x1b[0m\r\n`);
+          this.thinkingFoldHintShown = true;
+        } else {
+          this.aiXtermWrite(`\r\n\x1b[90m[Thinking]\x1b[0m `);
+        }
+        this.thinkingHeaderShown = true;
+      }
+
+      if (!this.thinkingCollapsed) {
+        const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
+        if (rest) {
+          const visible = this.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(rest) : rest;
+          this.aiXtermWrite(this.highlightThinkingSteps(visible));
+          this.thinkingPrintedLen = this.thinkingBuffer.length;
+        }
+      }
       return;
     }
     if (value.type === 'tool_call') {
       this.toolCallCount.update((v) => v + 1);
       const name = value.toolCall.toolName ?? 'tool';
       this.bumpPlanOnToolStart();
-      this.pushToolMemory(`调用 ${name}`);
-      this.aiXtermWrite(`\r\n\x1b[36m[工具]\x1b[0m \x1b[1m${name}\x1b[0m\x1b[90m …\x1b[0m`);
+      this.pushToolMemory(`步骤：准备执行 ${name}`);
+      if (cfg.showToolActivity) {
+        this.aiXtermWrite(`\r\n\x1b[90m[Tool]\x1b[0m ${name} ...\r\n`);
+      }
       return;
     }
     if (value.type === 'tool_result') {
       const { ok, error } = value.toolResult;
-      const tag = ok ? '\x1b[32m完成\x1b[0m' : '\x1b[31m失败\x1b[0m';
-      const detail = !ok && error ? ` \x1b[90m${error.slice(0, 200)}\x1b[0m` : '';
       this.bumpPlanOnToolDone(ok);
-      this.pushToolMemory(ok ? '工具调用完成' : `工具失败：${(error ?? '').slice(0, 80)}`);
-      this.aiXtermWrite(`\r\n\x1b[36m[工具结果]\x1b[0m ${tag}${detail}\r\n`);
+      if (ok) {
+        this.pushToolMemory('步骤完成');
+        if (cfg.showToolActivity) this.aiXtermWrite(`\x1b[90m[Tool]\x1b[0m done\r\n`);
+      } else {
+        const detail = error ? `：${error.slice(0, 200)}` : '';
+        this.pushToolMemory(`步骤失败${detail.slice(0, 80)}`);
+        if (cfg.showToolActivity) this.aiXtermWrite(`\x1b[90m[Tool]\x1b[0m failed${detail}\r\n`);
+      }
       return;
     }
     if (value.type === 'done') {
@@ -1673,12 +1735,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         const model = this.runtime.client.getModel().model;
         this.usageLedger.record(value.usage, model, Date.now() - this.streamRequestStartMs);
       }
+      this.resetThinkingStreamState();
       return;
     }
     if (value.type === 'anthropic_turn') {
       return;
     }
     if (value.type === 'error') {
+      this.resetThinkingStreamState();
       return;
     }
   }
@@ -1744,6 +1808,24 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     };
     window.addEventListener('keydown', this.xtermBackspaceKeydown, true);
 
+    this.aiXtermContextMenu = (ev: Event) => {
+      const e = ev as MouseEvent;
+      e.preventDefault();
+      const term = this.xterm;
+      if (!term) return;
+      const sel = term.getSelection();
+      if (sel.length > 0) {
+        void navigator.clipboard.writeText(sel);
+        term.clearSelection();
+        return;
+      }
+      void navigator.clipboard.readText().then((t) => {
+        if (t) this.feedMainTerminalInput(t);
+      });
+    };
+    host.addEventListener('contextmenu', this.aiXtermContextMenu);
+
+
     host.addEventListener('keydown', (e) => {
       if (e.shiftKey && e.code === 'Tab') {
         e.preventDefault();
@@ -1757,11 +1839,23 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
       if (e.ctrlKey && e.code === 'KeyF') {
         e.preventDefault();
+        const cfg = this.readModelRequestUiConfig();
         this.aiXtermWrite(
-          '\r\n\x1b[33m[提示]\x1b[0m Ctrl+C 中断 · Ctrl+Shift+C 复制 · Ctrl+Shift+V 粘贴 · Ctrl+L 清屏 · Shift+Tab 切换模式\r\n',
+          `\r\n\x1b[33m[提示]\x1b[0m Ctrl+C 中断 · ${cfg.thinkingToggleShortcut} 切换 Thinking 折叠 · ${cfg.thinkingToggleAllShortcut} 全局折叠/展开 · Ctrl+Shift+C 复制 · Ctrl+Shift+V 粘贴 · 右键：有选区复制/无选区粘贴 · Ctrl+L 清屏 · Shift+Tab 切换模式\r\n`,
         );
         this.writeMainTerminalPrompt();
         this.redrawInputLine();
+        return;
+      }
+      const cfg = this.readModelRequestUiConfig();
+      if (this.matchesShortcut(e, cfg.thinkingToggleShortcut)) {
+        e.preventDefault();
+        this.toggleThinkingCollapse();
+        return;
+      }
+      if (this.matchesShortcut(e, cfg.thinkingToggleAllShortcut)) {
+        e.preventDefault();
+        this.toggleThinkingCollapseAll();
         return;
       }
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
@@ -1816,7 +1910,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         } else if (m.role === 'assistant') {
           this.aiXtermWrite(`\x1b[35m[助手]\x1b[0m\r\n${content}\r\n`);
         } else if (m.role === 'tool') {
-          this.aiXtermWrite(`\x1b[36m[工具]\x1b[0m ${content.replace(/\r?\n/g, ' ')}\r\n`);
+          this.aiXtermWrite(`\x1b[36m[步骤]\x1b[0m ${content.replace(/\r?\n/g, ' ')}\r\n`);
         }
       }
       this.aiXtermWrite('\x1b[90m--- 恢复结束 ---\x1b[0m\r\n');
@@ -1930,6 +2024,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private handleTerminalControlC(): void {
     if (this.streamStop) {
       this.streamInterruptRequested = true;
+      this.resetThinkingStreamState();
       try {
         this.streamStop();
       } catch {
@@ -1957,6 +2052,51 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.clearSlashHintRow();
     this.aiXtermWrite(`\r\x1b[2K\x1b[32m>\x1b[0m ${this.mainLineBuffer}`);
     this.syncSlashCompletionRow();
+  }
+
+  private toggleThinkingCollapse(): void {
+    if (!this.thinkingHeaderShown) return;
+    if (this.countThinkingLines(this.thinkingBuffer) <= 1) return;
+
+    this.thinkingCollapsed = !this.thinkingCollapsed;
+    this.persistThinkingCollapsePreference(this.thinkingCollapsed);
+
+    if (!this.thinkingCollapsed) {
+      this.aiXtermWrite(`\r\n\x1b[90m[Thinking 展开]\x1b[0m\r\n`);
+      if (this.thinkingBuffer) {
+        const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
+        if (rest) {
+          const visible = this.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(rest) : rest;
+          this.aiXtermWrite(this.highlightThinkingSteps(visible));
+        }
+      }
+      this.aiXtermWrite('\r\n');
+      this.thinkingPrintedLen = this.thinkingBuffer.length;
+      this.thinkingFoldHintShown = false;
+    } else {
+      this.aiXtermWrite(`\r\n\x1b[90m[Thinking 已折叠]\x1b[0m\r\n`);
+      this.thinkingFoldHintShown = true;
+    }
+    this.writeMainTerminalPrompt();
+    this.redrawInputLine();
+  }
+
+  private toggleThinkingCollapseAll(): void {
+    if (!this.thinkingHeaderShown || this.countThinkingLines(this.thinkingBuffer) <= 1) return;
+    this.thinkingCollapsed = !this.thinkingCollapsed;
+    this.persistThinkingCollapsePreference(this.thinkingCollapsed);
+    this.aiXtermWrite(
+      this.thinkingCollapsed
+        ? `\r\n\x1b[90m[Thinking 全局]\x1b[0m 已折叠（当前会话新块默认折叠）\r\n`
+        : `\r\n\x1b[90m[Thinking 全局]\x1b[0m 已展开（当前会话新块默认展开）\r\n`,
+    );
+    if (!this.thinkingCollapsed) {
+      const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
+      if (rest) this.aiXtermWrite(this.highlightThinkingSteps(rest));
+      this.thinkingPrintedLen = this.thinkingBuffer.length;
+    }
+    this.writeMainTerminalPrompt();
+    this.redrawInputLine();
   }
 
   private tryDirectiveTabComplete(): void {
@@ -2252,6 +2392,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
 
     this.streamInterruptRequested = false;
+    this.resetThinkingStreamState();
     this.terminalBusy.set(true);
     this.streamRequestStartMs = Date.now();
     this.aiXtermWrite('\x1b[90m正在请求助手…\x1b[0m\r\n');
@@ -2301,6 +2442,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.streamReader = null;
       this.streamStop = undefined;
       this.terminalBusy.set(false);
+      this.resetThinkingStreamState();
 
       if (this.streamInterruptRequested) {
         this.aiXtermWrite('\r\n\x1b[33m[已中断]\x1b[0m\r\n');
@@ -2394,6 +2536,25 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
       return true;
     });
+
+    this.psXtermContextMenu = (ev: Event) => {
+      const e = ev as MouseEvent;
+      e.preventDefault();
+      const term = this.psTerminal;
+      if (!term) return;
+      const id = this.activePsSessionId();
+      if (!id) return;
+      const sel = term.getSelection();
+      if (sel.length > 0) {
+        void navigator.clipboard.writeText(sel);
+        term.clearSelection();
+        return;
+      }
+      void navigator.clipboard.readText().then((t) => {
+        if (t) void window.zytrader.terminal.write({ id, data: t });
+      });
+    };
+    host.addEventListener('contextmenu', this.psXtermContextMenu);
 
     this.detachPsData = window.zytrader.terminal.onData((payload) => {
       if (payload.id !== this.activePsSessionId()) return;
@@ -2529,6 +2690,158 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.directiveTabCycle = 0;
     this.aiXtermWrite(`\r\n\x1b[32m>\x1b[0m ${line}\r\n`);
     await this.dispatchMainTerminalLine(line);
+  }
+
+  private readModelRequestUiConfig(): {
+    showThinking: boolean;
+    showToolActivity: boolean;
+    thinkingCollapsedByDefault: boolean;
+    thinkingVerboseMode: boolean;
+    layoutSplitThinkingAnswer: boolean;
+    thinkingToggleShortcut: string;
+    thinkingToggleAllShortcut: string;
+  } {
+    const defaults = {
+      showThinking: true,
+      showToolActivity: false,
+      thinkingCollapsedByDefault: true,
+      thinkingVerboseMode: false,
+      layoutSplitThinkingAnswer: true,
+      thinkingToggleShortcut: 'Ctrl+O',
+      thinkingToggleAllShortcut: 'Ctrl+Shift+O',
+    };
+
+    try {
+      const raw = localStorage.getItem(REQUEST_CFG_JSON_KEY);
+      const parsed = raw?.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
+
+      const showThinking = parsed['show_thinking'] !== false && parsed['showThinking'] !== false;
+      const showToolActivity = parsed['show_tool_activity'] === true || parsed['showToolActivity'] === true;
+      const thinkingCollapsedByDefault =
+        parsed['thinking_collapsed_by_default'] !== false && parsed['thinkingCollapsedByDefault'] !== false;
+      const thinkingVerboseMode =
+        parsed['thinking_verbose_mode'] === true || parsed['thinkingVerboseMode'] === true;
+      const layoutSplitThinkingAnswer =
+        parsed['layout_split_thinking_answer'] !== false && parsed['layoutSplitThinkingAnswer'] !== false;
+
+      const thinkingToggleShortcut =
+        typeof parsed['thinking_toggle_shortcut'] === 'string' && parsed['thinking_toggle_shortcut'].trim()
+          ? parsed['thinking_toggle_shortcut'].trim()
+          : typeof parsed['thinkingToggleShortcut'] === 'string' && parsed['thinkingToggleShortcut'].trim()
+            ? parsed['thinkingToggleShortcut'].trim()
+            : defaults.thinkingToggleShortcut;
+
+      const thinkingToggleAllShortcut =
+        typeof parsed['thinking_toggle_all_shortcut'] === 'string' && parsed['thinking_toggle_all_shortcut'].trim()
+          ? parsed['thinking_toggle_all_shortcut'].trim()
+          : typeof parsed['thinkingToggleAllShortcut'] === 'string' && parsed['thinkingToggleAllShortcut'].trim()
+            ? parsed['thinkingToggleAllShortcut'].trim()
+            : defaults.thinkingToggleAllShortcut;
+
+      const next = {
+        showThinking,
+        showToolActivity,
+        thinkingCollapsedByDefault,
+        thinkingVerboseMode,
+        layoutSplitThinkingAnswer,
+        thinkingToggleShortcut,
+        thinkingToggleAllShortcut,
+      };
+
+      const normalizedForStore = {
+        ...(parsed as Record<string, unknown>),
+        show_thinking: next.showThinking,
+        show_tool_activity: next.showToolActivity,
+        thinking_collapsed_by_default: next.thinkingCollapsedByDefault,
+        thinking_verbose_mode: next.thinkingVerboseMode,
+        layout_split_thinking_answer: next.layoutSplitThinkingAnswer,
+        thinking_toggle_shortcut: next.thinkingToggleShortcut,
+        thinking_toggle_all_shortcut: next.thinkingToggleAllShortcut,
+      };
+      localStorage.setItem(REQUEST_CFG_JSON_KEY, JSON.stringify(normalizedForStore, null, 2));
+      return next;
+    } catch {
+      const fallbackStore = {
+        show_thinking: defaults.showThinking,
+        show_tool_activity: defaults.showToolActivity,
+        thinking_collapsed_by_default: defaults.thinkingCollapsedByDefault,
+        thinking_verbose_mode: defaults.thinkingVerboseMode,
+        layout_split_thinking_answer: defaults.layoutSplitThinkingAnswer,
+        thinking_toggle_shortcut: defaults.thinkingToggleShortcut,
+        thinking_toggle_all_shortcut: defaults.thinkingToggleAllShortcut,
+      };
+      localStorage.setItem(REQUEST_CFG_JSON_KEY, JSON.stringify(fallbackStore, null, 2));
+      return defaults;
+    }
+  }
+
+  private resetThinkingStreamState(): void {
+    this.thinkingHeaderShown = false;
+    this.answerHeaderShown = false;
+    this.thinkingCollapsed = true;
+    this.thinkingBuffer = '';
+    this.thinkingPrintedLen = 0;
+    this.thinkingFoldHintShown = false;
+    this.thinkingHasNonChinese = false;
+  }
+
+  private countThinkingLines(text: string): number {
+    if (!text) return 0;
+    return text.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+  }
+
+  private highlightThinkingSteps(text: string): string {
+    if (!text) return text;
+    return text
+      .replace(/(第\s*[一二三四五六七八九十\d]+\s*步)/g, '\x1b[36m$1\x1b[0m')
+      .replace(/(step\s*\d+)/gi, '\x1b[36m$1\x1b[0m');
+  }
+
+  private sanitizeThinkingForDisplay(text: string): string {
+    if (!text) return text;
+    const lines = text.split(/\r?\n/);
+    const cleaned = lines
+      .map((line) => {
+        const t = line.trim();
+        if (!t) return line;
+        const hasHan = /[\u4e00-\u9fff]/.test(t);
+        const asciiWords = t.match(/[A-Za-z]{3,}/g)?.length ?? 0;
+        if (!hasHan && asciiWords >= 4) return '[内容已折叠：英文思考段]';
+        return line;
+      })
+      .join('\n');
+    return cleaned;
+  }
+
+  private persistThinkingCollapsePreference(collapsed: boolean): void {
+    try {
+      const raw = localStorage.getItem(REQUEST_CFG_JSON_KEY);
+      const parsed = raw?.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      parsed['thinking_collapsed_by_default'] = collapsed;
+      localStorage.setItem(REQUEST_CFG_JSON_KEY, JSON.stringify(parsed, null, 2));
+    } catch {
+      // ignore persistence failures
+    }
+  }
+
+  private matchesShortcut(event: KeyboardEvent, shortcut: string): boolean {
+    const norm = shortcut.toLowerCase().replace(/\s+/g, '');
+    const parts = norm.split('+').filter(Boolean);
+    const wantsCtrl = parts.includes('ctrl') || parts.includes('control');
+    const wantsShift = parts.includes('shift');
+    const wantsAlt = parts.includes('alt');
+    const wantsMeta = parts.includes('meta') || parts.includes('cmd') || parts.includes('command');
+    const keyToken = parts.find((p) => !['ctrl', 'control', 'shift', 'alt', 'meta', 'cmd', 'command'].includes(p));
+    if (!keyToken) return false;
+
+    if (Boolean(event.ctrlKey) !== wantsCtrl) return false;
+    if (Boolean(event.shiftKey) !== wantsShift) return false;
+    if (Boolean(event.altKey) !== wantsAlt) return false;
+    if (Boolean(event.metaKey) !== wantsMeta) return false;
+
+    const evtKey = event.key.toLowerCase();
+    if (keyToken.length === 1) return evtKey === keyToken;
+    return evtKey === keyToken || event.code.toLowerCase() === `key${keyToken}`;
   }
 
   private aiXtermWrite(text: string): void {

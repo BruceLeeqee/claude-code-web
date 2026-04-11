@@ -13,6 +13,8 @@ export type UiRequestKind = 'anthropic' | 'openai' | 'custom';
 const LAST_MODEL_TEST_KEY = 'claude-web:last-model-test';
 const CUSTOM_MODELS_KEY = 'zyfront:custom-model-ids';
 const REQUEST_CFG_JSON_KEY = 'zyfront:model-request-config-json';
+const DEFAULT_MODEL_MAX_TOKENS = 81920;
+const LEGACY_DEFAULT_MAX_TOKENS = 32;
 
 export type ConnectionIndicator = 'untested' | 'testing' | 'ok' | 'error';
 
@@ -108,7 +110,21 @@ export class ModelsPrototypePageComponent {
     this.endpointInput.set(cfg.proxy.baseUrl || this.defaultBaseUrlForUi(uiKind));
     try {
       const raw = localStorage.getItem(REQUEST_CFG_JSON_KEY);
-      this.requestConfigJson.set(raw?.trim() ? raw : this.defaultRequestJsonForUi(uiKind));
+      if (!raw?.trim()) {
+        const def = this.defaultRequestJsonForUi(uiKind);
+        this.requestConfigJson.set(def);
+        localStorage.setItem(REQUEST_CFG_JSON_KEY, def);
+      } else {
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const normalized = this.normalizeRequestConfig(parsed as Record<string, unknown>);
+          const text = JSON.stringify(normalized, null, 2);
+          this.requestConfigJson.set(text);
+          localStorage.setItem(REQUEST_CFG_JSON_KEY, text);
+        } else {
+          this.requestConfigJson.set(this.defaultRequestJsonForUi(uiKind));
+        }
+      }
     } catch {
       this.requestConfigJson.set(this.defaultRequestJsonForUi(uiKind));
     }
@@ -134,6 +150,10 @@ export class ModelsPrototypePageComponent {
     const parsedCfg = this.parseRequestJsonOrSetError();
     if (!parsedCfg) return;
     const effectiveModel = typeof parsedCfg['model'] === 'string' && parsedCfg['model'].trim() ? String(parsedCfg['model']).trim() : cur.id;
+    const nextCompression = this.resolveCompressionFromConfig(parsedCfg);
+    const nextCost = this.resolveCostFromConfig(parsedCfg);
+    const nextTheme = this.resolveThemeFromConfig(parsedCfg, this.settings().theme ?? 'dark');
+
     this.settingsService.update({
       apiKey: this.settings().apiKey,
       model: effectiveModel,
@@ -143,10 +163,13 @@ export class ModelsPrototypePageComponent {
         baseUrl: endpoint,
         authToken: this.settings().proxy.authToken ?? '',
       },
-      theme: (this.settings().theme ?? 'dark') as AppTheme,
+      compression: nextCompression,
+      cost: nextCost,
+      theme: nextTheme,
     });
     try {
-      localStorage.setItem(REQUEST_CFG_JSON_KEY, this.requestConfigJson());
+      localStorage.setItem(REQUEST_CFG_JSON_KEY, JSON.stringify(parsedCfg, null, 2));
+      this.requestConfigJson.set(JSON.stringify(parsedCfg, null, 2));
     } catch {
       /* ignore */
     }
@@ -318,7 +341,7 @@ export class ModelsPrototypePageComponent {
     if (!this.endpointInput().trim()) {
       this.endpointInput.set(this.defaultBaseUrlForUi(k));
     }
-    this.requestConfigJson.set(this.defaultRequestJsonForUi(k));
+    this.requestConfigJson.set(this.adaptRequestJsonForType(k));
     this.cdr.markForCheck();
   }
 
@@ -344,7 +367,7 @@ export class ModelsPrototypePageComponent {
       return JSON.stringify(
         {
           provider: 'openai',
-          max_tokens: 32,
+          max_tokens: DEFAULT_MODEL_MAX_TOKENS,
           temperature: 0.2,
         },
         null,
@@ -354,7 +377,7 @@ export class ModelsPrototypePageComponent {
     return JSON.stringify(
       {
         provider: 'anthropic',
-        max_tokens: 32,
+        max_tokens: DEFAULT_MODEL_MAX_TOKENS,
         temperature: 0.2,
       },
       null,
@@ -445,18 +468,91 @@ export class ModelsPrototypePageComponent {
 
   private parseRequestJsonOrSetError(): Record<string, unknown> | null {
     const raw = this.requestConfigJson().trim();
-    if (!raw) return {};
+    if (!raw) {
+      return this.normalizeRequestConfig({});
+    }
     try {
       const parsed = JSON.parse(raw) as unknown;
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        this.validationMessage.set('配置 JSON 必须是对象，例如 {"max_tokens":32}');
+        this.validationMessage.set(`配置 JSON 必须是对象，例如 {"max_tokens":${DEFAULT_MODEL_MAX_TOKENS}}`);
         return null;
       }
-      return parsed as Record<string, unknown>;
+      return this.normalizeRequestConfig(parsed as Record<string, unknown>);
     } catch {
       this.validationMessage.set('配置 JSON 不是合法 JSON，请先修正。');
       return null;
     }
+  }
+
+  private normalizeRequestConfig(input: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...input };
+    const maxTokensFromSnake = Number(out['max_tokens']);
+    const maxTokensFromCamel = Number(out['maxTokens']);
+    const snakeValid = Number.isFinite(maxTokensFromSnake) && maxTokensFromSnake > 0;
+    const camelValid = Number.isFinite(maxTokensFromCamel) && maxTokensFromCamel > 0;
+    const resolvedMaxTokens = snakeValid
+      ? Math.floor(maxTokensFromSnake)
+      : camelValid
+        ? Math.floor(maxTokensFromCamel)
+        : DEFAULT_MODEL_MAX_TOKENS;
+    out['max_tokens'] = resolvedMaxTokens === LEGACY_DEFAULT_MAX_TOKENS ? DEFAULT_MODEL_MAX_TOKENS : resolvedMaxTokens;
+    return out;
+  }
+
+  private adaptRequestJsonForType(kind: UiRequestKind): string {
+    const raw = this.requestConfigJson().trim();
+    if (!raw) return this.defaultRequestJsonForUi(kind);
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return this.defaultRequestJsonForUi(kind);
+      }
+      const normalized = this.normalizeRequestConfig(parsed as Record<string, unknown>);
+      if (kind === 'openai') normalized['provider'] = 'openai';
+      else if (kind === 'anthropic') normalized['provider'] = 'anthropic';
+      return JSON.stringify(normalized, null, 2);
+    } catch {
+      return this.defaultRequestJsonForUi(kind);
+    }
+  }
+
+  private resolveCompressionFromConfig(parsedCfg: Record<string, unknown>): AppSettings['compression'] {
+    const current = this.settings().compression;
+    const obj = parsedCfg['compression'];
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return current;
+    const c = obj as Record<string, unknown>;
+    const enabled = typeof c['enabled'] === 'boolean' ? c['enabled'] : current.enabled;
+    const maxMessagesBeforeCompact = Number.isFinite(Number(c['maxMessagesBeforeCompact']))
+      ? Math.max(1, Math.floor(Number(c['maxMessagesBeforeCompact'])))
+      : current.maxMessagesBeforeCompact;
+    const compactToMessages = Number.isFinite(Number(c['compactToMessages']))
+      ? Math.max(1, Math.floor(Number(c['compactToMessages'])))
+      : current.compactToMessages;
+    const maxEstimatedTokens = Number.isFinite(Number(c['maxEstimatedTokens']))
+      ? Math.max(500, Math.floor(Number(c['maxEstimatedTokens'])))
+      : current.maxEstimatedTokens;
+    return { enabled, maxMessagesBeforeCompact, compactToMessages, maxEstimatedTokens };
+  }
+
+  private resolveCostFromConfig(parsedCfg: Record<string, unknown>): AppSettings['cost'] {
+    const current = this.settings().cost;
+    const obj = parsedCfg['cost'];
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return current;
+    const c = obj as Record<string, unknown>;
+    const maxSessionCostUsd = Number.isFinite(Number(c['maxSessionCostUsd']))
+      ? Math.max(0, Number(c['maxSessionCostUsd']))
+      : current.maxSessionCostUsd;
+    const warnThresholdUsd = Number.isFinite(Number(c['warnThresholdUsd']))
+      ? Math.max(0, Number(c['warnThresholdUsd']))
+      : current.warnThresholdUsd;
+    return { maxSessionCostUsd, warnThresholdUsd };
+  }
+
+  private resolveThemeFromConfig(parsedCfg: Record<string, unknown>, fallback: AppTheme): AppTheme {
+    const t = parsedCfg['theme'];
+    if (t === 'light') return 'light';
+    if (t === 'dark') return 'dark';
+    return fallback;
   }
 
   private fallbackEntryForId(id: string, provider: ModelProvider): ModelCatalogEntry {

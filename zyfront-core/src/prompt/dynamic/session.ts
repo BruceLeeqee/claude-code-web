@@ -26,8 +26,14 @@ function modeGuidance(mode: string | undefined, language: 'zh' | 'en'): string[]
   }
 
   return language === 'zh'
-    ? ['- 单轮模式策略：优先直接执行，并保持简洁进度更新。']
-    : ['- Single mode strategy: prioritize direct execution with concise progress updates.'];
+    ? [
+        '- 单轮模式策略：优先直接执行，并保持简洁进度更新。',
+        '- 若用户在新一轮提出了不同目标，必须立即切换到最新目标，不得延续旧目标。',
+      ]
+    : [
+        '- Single mode strategy: prioritize direct execution with concise progress updates.',
+        '- If the user provides a different goal in a newer turn, immediately switch to the latest goal and stop pursuing the previous one.',
+      ];
 }
 
 export function buildSessionSection(ctx: PromptBuildContext): PromptSection | null {
@@ -40,13 +46,15 @@ export function buildSessionSection(ctx: PromptBuildContext): PromptSection | nu
           '# 会话指引',
           ctx.mode ? `- 当前模式: ${ctx.mode}` : null,
           ...modeGuidance(ctx.mode, 'zh'),
-          ctx.userInput ? `- 当前用户请求: ${ctx.userInput}` : null,
+          '- 指令优先级：以最新一轮用户请求为最高优先级；若与历史目标冲突，历史目标作废。',
+          ctx.userInput ? `- 当前用户请求(最高优先级): ${ctx.userInput}` : null,
         ]
       : [
           '# Session Guidance',
           ctx.mode ? `- Current mode: ${ctx.mode}` : null,
           ...modeGuidance(ctx.mode, 'en'),
-          ctx.userInput ? `- Current user request: ${ctx.userInput}` : null,
+          '- Instruction priority: the latest user turn has top priority; if it conflicts with prior goals, prior goals are superseded.',
+          ctx.userInput ? `- Current user request (highest priority): ${ctx.userInput}` : null,
         ];
 
   return {

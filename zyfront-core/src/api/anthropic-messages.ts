@@ -86,6 +86,28 @@ function roughUsage(u: unknown): Usage | undefined {
   return { inputTokens: input, outputTokens: output };
 }
 
+const SAFE_TOOL_ID_RE = /^[a-z0-9_]+$/;
+
+function randomLowerAlphaNum(len = 10): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  for (let i = 0; i < len; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)] ?? 'a';
+  }
+  return out;
+}
+
+function sanitizeToolUseId(raw: string | undefined, seq: number): string {
+  const base = (raw ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (base && SAFE_TOOL_ID_RE.test(base)) return base;
+  return `call_${randomLowerAlphaNum(8)}_${seq}`;
+}
+
 /** 解析非流式完整响应 JSON，抽出文本块与 tool_use */
 export function parseAnthropicMessageJson(raw: unknown): AnthropicTurnSnapshot {
   const empty: AnthropicTurnSnapshot = {
@@ -99,26 +121,46 @@ export function parseAnthropicMessageJson(raw: unknown): AnthropicTurnSnapshot {
   const content = o['content'];
   if (!Array.isArray(content)) return empty;
 
-  const assistantContentBlocks = content as JsonArray;
+  const rawBlocks = content as JsonArray;
+  const assistantContentBlocks: JsonArray = [];
   const textParts: string[] = [];
   const toolCalls: ToolCall[] = [];
 
-  for (const block of content) {
+  let seq = 1;
+  for (const block of rawBlocks) {
     if (!block || typeof block !== 'object') continue;
     const b = block as Record<string, unknown>;
+
     if (b['type'] === 'text' && typeof b['text'] === 'string') {
       textParts.push(b['text']);
+      assistantContentBlocks.push(block as JsonValue);
+      continue;
     }
+
     if (b['type'] === 'tool_use') {
-      const id = typeof b['id'] === 'string' ? b['id'] : '';
+      const rawId = typeof b['id'] === 'string' ? b['id'] : '';
+      const id = sanitizeToolUseId(rawId, seq);
+      seq += 1;
       const name = typeof b['name'] === 'string' ? b['name'] : '';
-      if (!id || !name) continue;
+      if (!name) continue;
+      const input = (b['input'] ?? {}) as JsonValue;
+
+      assistantContentBlocks.push({
+        type: 'tool_use',
+        id,
+        name,
+        input,
+      } as JsonValue);
+
       toolCalls.push({
         id,
         toolName: name,
-        input: (b['input'] ?? {}) as JsonValue,
+        input,
       });
+      continue;
     }
+
+    assistantContentBlocks.push(block as JsonValue);
   }
 
   const stopReason = typeof o['stop_reason'] === 'string' ? o['stop_reason'] : null;
