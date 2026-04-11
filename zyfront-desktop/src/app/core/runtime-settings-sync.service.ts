@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@angular/core';
 import { AppSettingsService } from './app-settings.service';
 import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from './zyfront-core.providers';
 
-const REQUEST_CFG_JSON_KEY = 'zyfront:model-request-config-json';
+export const REQUEST_CFG_JSON_KEY = 'zyfront:model-request-config-json';
 const DEFAULT_MODEL_MAX_TOKENS = 81920;
 const LEGACY_DEFAULT_MAX_TOKENS = 32;
 
