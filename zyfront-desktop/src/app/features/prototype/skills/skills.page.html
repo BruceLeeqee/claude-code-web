@@ -134,12 +134,13 @@
         <div class="installed-cards">
           <button
             class="installed-item"
-            *ngFor="let s of facade.skills()"
+            *ngFor="let s of installedSkills()"
             [class.active]="s.active"
             (click)="facade.toggleSkill(s.id)"
           >
             <div class="n">{{ s.name }}</div>
             <div class="d">{{ s.desc }}</div>
+            <div class="d">{{ formatInstalledMeta(s) }}</div>
           </button>
         </div>
       </div>

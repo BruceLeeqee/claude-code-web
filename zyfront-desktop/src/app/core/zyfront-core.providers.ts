@@ -42,10 +42,23 @@ export const CLAUDE_CLIENT = new InjectionToken<ClaudeClient>('CLAUDE_CLIENT');
 export const CLAUDE_RUNTIME = new InjectionToken<ClaudeCoreRuntime>('CLAUDE_RUNTIME');
 export const CLAUDE_DEFAULT_MODEL = new InjectionToken<ModelConfig>('CLAUDE_DEFAULT_MODEL');
 
-function memoryKeyByType(memoryType: string, includeMeta = false): string {
-  if (memoryType === 'long') return 'agent-long-term';
-  if (memoryType === 'context') return 'agent-context';
-  if (includeMeta && memoryType === 'meta') return 'agent-meta';
+const LONG_MEMORY_VAULT_KEYS = [
+  'agent-long-user',
+  'agent-long-feedback',
+  'agent-long-project',
+  'agent-long-reference',
+] as const;
+
+/** 将工具里的 memoryType 映射到 directory.config 的 vault key */
+function memoryVaultKey(memoryType: string, includeMeta = false): string {
+  const mt = String(memoryType ?? '').trim();
+  if (mt === 'short') return 'agent-short-term';
+  if (mt === 'context') return 'agent-context';
+  if (includeMeta && mt === 'meta') return 'agent-meta';
+  if (mt === 'long' || mt === 'user') return 'agent-long-user';
+  if (mt === 'feedback') return 'agent-long-feedback';
+  if (mt === 'project') return 'agent-long-project';
+  if (mt === 'reference') return 'agent-long-reference';
   return 'agent-short-term';
 }
 
@@ -130,6 +143,13 @@ function buildLocalTools(): AgentTool[] {
       }
     }
     return out;
+  };
+
+  /** 07-Meta：长期记忆索引目录（manifest / time-index / topic-index） */
+  const resolveMemoryIndexDir = async (): Promise<string> => {
+    const r = await window.zytrader.vault.resolve('agent-memory-index');
+    if (r.ok && r.relative) return r.relative;
+    return '02-AGENT-MEMORY/07-Meta';
   };
 
   return [
@@ -269,13 +289,18 @@ function buildLocalTools(): AgentTool[] {
     {
       name: 'memory.write_long_term',
       description:
-        'Write one long-term memory record into 02-AGENT-MEMORY/02-Long-Term. Supports json (default) or md format.',
+        'Write one long-term memory record到 02-AGENT-MEMORY 下四类长期目录之一（默认 user → 02-Long-User）。支持 json（默认）或 md。',
       inputSchema: {
         type: 'object',
         properties: {
           type: { type: 'string' },
           content: { type: 'string' },
           format: { type: 'string', enum: ['json', 'md'] },
+          bucket: {
+            type: 'string',
+            enum: ['user', 'feedback', 'project', 'reference'],
+            description: '写入哪一类长期记忆目录，默认 user',
+          },
           relatedNotes: { type: 'array', items: { type: 'string' } },
           relatedMemory: { type: 'array', items: { type: 'string' } },
         },
@@ -289,10 +314,21 @@ function buildLocalTools(): AgentTool[] {
           throw new Error('memory.write_long_term: type and content are required.');
         }
         const format = String(o['format'] ?? 'json') === 'md' ? 'md' : 'json';
+        const bucketRaw = String(o['bucket'] ?? 'user').trim().toLowerCase();
+        const bucket: 'user' | 'feedback' | 'project' | 'reference' =
+          bucketRaw === 'feedback' || bucketRaw === 'project' || bucketRaw === 'reference' ? bucketRaw : 'user';
+        const vaultKey =
+          bucket === 'feedback'
+            ? 'agent-long-feedback'
+            : bucket === 'project'
+              ? 'agent-long-project'
+              : bucket === 'reference'
+                ? 'agent-long-reference'
+                : 'agent-long-user';
 
-        const resolved = await window.zytrader.vault.resolve('agent-long-term');
+        const resolved = await window.zytrader.vault.resolve(vaultKey);
         if (!resolved.ok || !resolved.relative) {
-          throw new Error(resolved.error ?? 'failed to resolve agent-long-term path.');
+          throw new Error(resolved.error ?? `failed to resolve ${vaultKey} path.`);
         }
 
         const now = new Date();
@@ -323,11 +359,14 @@ function buildLocalTools(): AgentTool[] {
     {
       name: 'memory.read',
       description:
-        'Read one memory by id from a bucket (short|long|context). If json is missing, tries markdown for long-term bucket.',
+        'Read one memory by id。long 时在四类长期目录中查找；short|context|meta|user|feedback|project|reference 为单目录。',
       inputSchema: {
         type: 'object',
         properties: {
-          memoryType: { type: 'string', enum: ['short', 'long', 'context'] },
+          memoryType: {
+            type: 'string',
+            enum: ['short', 'long', 'context', 'meta', 'user', 'feedback', 'project', 'reference'],
+          },
           id: { type: 'string' },
         },
         required: ['memoryType', 'id'],
@@ -337,19 +376,19 @@ function buildLocalTools(): AgentTool[] {
         const mt = String(o['memoryType'] ?? '').trim();
         const id = String(o['id'] ?? '').trim();
         if (!mt || !id) throw new Error('memory.read: memoryType and id are required.');
-        const key = memoryKeyByType(mt);
+        const keyOrder = mt === 'long' ? [...LONG_MEMORY_VAULT_KEYS] : [memoryVaultKey(mt, mt === 'meta')];
 
-        const resolved = await window.zytrader.vault.resolve(key);
-        if (!resolved.ok || !resolved.relative) {
-          throw new Error(resolved.error ?? `failed to resolve ${key} path.`);
-        }
+        const exts = mt === 'long' || mt === 'user' || mt === 'feedback' || mt === 'project' || mt === 'reference' ? ['json', 'md'] : ['json'];
 
-        const candidates = mt === 'long' ? ['json', 'md'] : ['json'];
-        for (const ext of candidates) {
-          const relPath = `${resolved.relative}/${id}.${ext}`;
-          const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
-          if (read.ok) {
-            return { ok: true, memoryType: mt, id, path: relPath, content: read.content } as unknown as JsonValue;
+        for (const key of keyOrder) {
+          const resolved = await window.zytrader.vault.resolve(key);
+          if (!resolved.ok || !resolved.relative) continue;
+          for (const ext of exts) {
+            const relPath = `${resolved.relative}/${id}.${ext}`;
+            const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
+            if (read.ok) {
+              return { ok: true, memoryType: mt, id, path: relPath, content: read.content } as unknown as JsonValue;
+            }
           }
         }
 
@@ -359,43 +398,59 @@ function buildLocalTools(): AgentTool[] {
     {
       name: 'memory.list',
       description:
-        'List memory files in vault by memoryType: short|long|context|meta, with optional keyword filter in content.',
+        'List memory files。memoryType=long 时合并四类长期目录；否则 short|context|meta|user|feedback|project|reference 为单目录。可选 keyword 过滤文件内容。',
       inputSchema: {
         type: 'object',
         properties: {
-          memoryType: { type: 'string', enum: ['short', 'long', 'context', 'meta'] },
+          memoryType: {
+            type: 'string',
+            enum: ['short', 'long', 'context', 'meta', 'user', 'feedback', 'project', 'reference'],
+          },
           keyword: { type: 'string' },
         },
       },
       async run(input) {
         const o = (input as Record<string, unknown>) ?? {};
         const mt = String(o['memoryType'] ?? 'short');
-        const key = memoryKeyByType(mt, true);
         const keyword = String(o['keyword'] ?? '').trim();
 
+        const scanDir = async (relBase: string): Promise<Array<{ path: string; name: string }>> => {
+          const listed = await window.zytrader.fs.list(relBase, { scope: 'vault' });
+          if (!listed.ok) return [];
+          const hits: Array<{ path: string; name: string }> = [];
+          for (const e of listed.entries) {
+            if (e.type !== 'file') continue;
+            const rel = `${relBase}/${e.name}`;
+            if (!keyword) {
+              hits.push({ path: rel, name: e.name });
+              continue;
+            }
+            const read = await window.zytrader.fs.read(rel, { scope: 'vault' });
+            if (!read.ok) continue;
+            if (read.content.includes(keyword)) {
+              hits.push({ path: rel, name: e.name });
+            }
+          }
+          return hits;
+        };
+
+        if (mt === 'long') {
+          const hits: Array<{ path: string; name: string }> = [];
+          for (const key of LONG_MEMORY_VAULT_KEYS) {
+            const resolved = await window.zytrader.vault.resolve(key);
+            if (!resolved.ok || !resolved.relative) continue;
+            hits.push(...(await scanDir(resolved.relative)));
+          }
+          return { ok: true, memoryType: mt, count: hits.length, files: hits } as unknown as JsonValue;
+        }
+
+        const key = memoryVaultKey(mt, true);
         const resolved = await window.zytrader.vault.resolve(key);
         if (!resolved.ok || !resolved.relative) {
           throw new Error(resolved.error ?? `failed to resolve ${key} path.`);
         }
 
-        const listed = await window.zytrader.fs.list(resolved.relative, { scope: 'vault' });
-        if (!listed.ok) return listed as unknown as JsonValue;
-
-        const hits: Array<{ path: string; name: string }> = [];
-        for (const e of listed.entries) {
-          if (e.type !== 'file') continue;
-          const rel = `${resolved.relative}/${e.name}`;
-          if (!keyword) {
-            hits.push({ path: rel, name: e.name });
-            continue;
-          }
-          const read = await window.zytrader.fs.read(rel, { scope: 'vault' });
-          if (!read.ok) continue;
-          if (read.content.includes(keyword)) {
-            hits.push({ path: rel, name: e.name });
-          }
-        }
-
+        const hits = await scanDir(resolved.relative);
         return {
           ok: true,
           memoryType: mt,
@@ -405,13 +460,270 @@ function buildLocalTools(): AgentTool[] {
       },
     },
     {
-      name: 'memory.update',
+      name: 'memory.query',
       description:
-        'Patch a memory file (json preferred; markdown metadata for long-term supported) and refresh updateTime.',
+        '【按需】查询长期记忆**索引**（用户画像/反馈/项目/参考四类分别在 vault 的 02-Long-User、03-Long-Feedback、04-Long-Projects、05-Long-Reference；索引 JSON 在 07-Meta）。默认对话**不会**自动附带全部长期记忆。支持按 UTC 日期、标签、关键词、`memory_types` 过滤；可用 `read_paths` 再读正文。若 `index_status` 非 ok，桌面端会尝试在 `07-Meta/tools` 自动执行 `npm install` 与 `node build-manifest.mjs` 后重载。',
       inputSchema: {
         type: 'object',
         properties: {
-          memoryType: { type: 'string', enum: ['short', 'long', 'context'] },
+          date: { type: 'string', description: 'UTC 日期 YYYY-MM-DD，对应 time-index.json' },
+          tag: { type: 'string', description: '主题标签（与 topic-index 小写键一致）' },
+          keyword: {
+            type: 'string',
+            description: '对路径与 summary 子串匹配（不区分大小写）；无 date/tag 时在全 manifest 条目中搜',
+          },
+          memory_types: {
+            type: 'array',
+            items: { type: 'string', enum: ['user', 'feedback', 'project', 'reference'] },
+          },
+          max_results: { type: 'number', description: '默认 30，最大 80' },
+          read_paths: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '额外读取的 vault 相对路径，最多 3 个',
+          },
+          max_chars_per_file: { type: 'number', description: 'read_paths 单文件最大字符，默认 24000' },
+        },
+      },
+      async run(input) {
+        const o = (input as Record<string, unknown>) ?? {};
+        const date = String(o['date'] ?? '').trim();
+        const tag = String(o['tag'] ?? '').trim();
+        const keyword = String(o['keyword'] ?? '').trim().toLowerCase();
+        const maxResults = Math.min(80, Math.max(1, Number(o['max_results'] ?? 30) || 30));
+        const memoryTypes = Array.isArray(o['memory_types'])
+          ? (o['memory_types'] as unknown[]).map((x) => String(x).trim()).filter(Boolean)
+          : [];
+        const readPaths = Array.isArray(o['read_paths'])
+          ? (o['read_paths'] as unknown[]).slice(0, 3).map((x) => String(x).trim()).filter(Boolean)
+          : [];
+        const maxChars = Math.min(
+          120_000,
+          Math.max(1024, Number(o['max_chars_per_file'] ?? 24_000) || 24_000),
+        );
+
+        const metaDir = await resolveMemoryIndexDir();
+
+        const loadJson = async (name: string) => {
+          const p = `${metaDir}/${name}`;
+          const r = await window.zytrader.fs.read(p, { scope: 'vault' });
+          if (!r.ok || typeof r.content !== 'string') {
+            return { name, ok: false as const, error: 'read failed' };
+          }
+          try {
+            return { name, ok: true as const, data: JSON.parse(r.content) as Record<string, unknown> };
+          } catch {
+            return { name, ok: false as const, error: 'invalid json' };
+          }
+        };
+
+        let [manifestJ, timeJ, topicJ] = await Promise.all([
+          loadJson('manifest.json'),
+          loadJson('time-index.json'),
+          loadJson('topic-index.json'),
+        ]);
+
+        type RebuildInfo = { attempted: boolean; ok?: boolean; error?: string; detail?: string };
+        const indexRebuild: RebuildInfo = { attempted: false };
+
+        const indexBroken = () => !manifestJ.ok || !timeJ.ok || !topicJ.ok;
+        if (indexBroken() && typeof window.zytrader?.vault?.buildMemoryIndex === 'function') {
+          indexRebuild.attempted = true;
+          const br = await window.zytrader.vault.buildMemoryIndex();
+          indexRebuild.ok = br.ok;
+          if (!br.ok) {
+            indexRebuild.error = br.error;
+            const tail = `${br.stderr ?? ''}\n${br.stdout ?? ''}`.trim();
+            if (tail) indexRebuild.detail = tail.slice(0, 2000);
+          } else {
+            [manifestJ, timeJ, topicJ] = await Promise.all([
+              loadJson('manifest.json'),
+              loadJson('time-index.json'),
+              loadJson('topic-index.json'),
+            ]);
+          }
+        }
+
+        const index_status = {
+          manifest: manifestJ.ok ? 'ok' : manifestJ.error,
+          time_index: timeJ.ok ? 'ok' : timeJ.error,
+          topic_index: topicJ.ok ? 'ok' : topicJ.error,
+        };
+
+        type Hit = {
+          file_path: string;
+          memory_type?: string | null;
+          summary?: string;
+          date_sources?: string[];
+          sources: string[];
+        };
+
+        const byPath = new Map<string, Hit>();
+
+        const upsert = (fp: string, patch: Partial<Hit>, source: string) => {
+          if (!fp) return;
+          const cur = byPath.get(fp) ?? { file_path: fp, sources: [] };
+          if (patch.memory_type !== undefined) cur.memory_type = patch.memory_type;
+          if (patch.summary !== undefined && patch.summary !== '') cur.summary = patch.summary;
+          if (patch.date_sources) cur.date_sources = patch.date_sources;
+          if (!cur.sources.includes(source)) cur.sources.push(source);
+          byPath.set(fp, cur);
+        };
+
+        const pathSets: string[][] = [];
+
+        if (date && timeJ.ok) {
+          const byDate = timeJ.data['by_date'] as Record<string, unknown[]> | undefined;
+          const rows = byDate?.[date] ?? [];
+          for (const row of rows) {
+            const r = row as Record<string, unknown>;
+            const fp = String(r['file_path'] ?? '');
+            const mt = r['memory_type'];
+            upsert(fp, {
+              memory_type: typeof mt === 'string' ? mt : (mt as string | null) ?? null,
+              summary: String(r['summary'] ?? ''),
+              date_sources: Array.isArray(r['date_sources'])
+                ? (r['date_sources'] as string[])
+                : undefined,
+            }, 'time-index');
+          }
+          pathSets.push(
+            rows.map((row) => String((row as Record<string, unknown>)['file_path'] ?? '')).filter(Boolean),
+          );
+        }
+
+        if (tag && topicJ.ok) {
+          const byTag = topicJ.data['by_tag'] as Record<string, unknown[]> | undefined;
+          const rows = byTag?.[tag.toLowerCase()] ?? [];
+          for (const row of rows) {
+            const r = row as Record<string, unknown>;
+            const fp = String(r['file_path'] ?? '');
+            const mt = r['memory_type'];
+            upsert(fp, {
+              memory_type: typeof mt === 'string' ? mt : (mt as string | null) ?? null,
+              summary: String(r['summary'] ?? ''),
+            }, 'topic-index');
+          }
+          pathSets.push(
+            rows.map((row) => String((row as Record<string, unknown>)['file_path'] ?? '')).filter(Boolean),
+          );
+        }
+
+        let allowed: Set<string> | null = null;
+        for (const ps of pathSets) {
+          const s = new Set(ps);
+          if (allowed === null) {
+            allowed = s;
+          } else {
+            const nx = new Set<string>();
+            for (const x of allowed) {
+              if (s.has(x)) nx.add(x);
+            }
+            allowed = nx;
+          }
+        }
+
+        if (allowed !== null) {
+          for (const k of [...byPath.keys()]) {
+            if (!allowed.has(k)) byPath.delete(k);
+          }
+        }
+
+        const hasStructuralFilter = !!(date || tag);
+
+        if (!hasStructuralFilter && manifestJ.ok) {
+          const entries = (manifestJ.data['entries'] as unknown[]) ?? [];
+          const walk =
+            !keyword && memoryTypes.length === 0 ? entries.slice(0, 20) : entries;
+          for (const e of walk) {
+            const row = e as Record<string, unknown>;
+            const fp = String(row['filename'] ?? '');
+            const mt = row['memory_type'];
+            upsert(fp, {
+              memory_type: typeof mt === 'string' ? mt : (mt as string | null) ?? null,
+              summary: String(row['summary'] ?? ''),
+            }, 'manifest');
+          }
+        }
+
+        if (keyword) {
+          for (const [fp, h] of [...byPath.entries()]) {
+            const hay = `${fp} ${h.summary ?? ''}`.toLowerCase();
+            if (!hay.includes(keyword)) byPath.delete(fp);
+          }
+        }
+
+        if (memoryTypes.length > 0) {
+          const set = new Set(memoryTypes);
+          for (const [fp, h] of [...byPath.entries()]) {
+            const mt = h.memory_type;
+            if (!mt || !set.has(mt)) byPath.delete(fp);
+          }
+        }
+
+        const hintNoIndex =
+          !manifestJ.ok || !timeJ.ok || !topicJ.ok
+            ? indexRebuild.attempted && indexRebuild.ok
+              ? '索引文件在自动重建后仍无法读取，请检查 07-Meta 目录权限或 tools 脚本输出路径。'
+              : indexRebuild.attempted
+                ? `自动重建失败（需本机 Node/npm，且 vault 含 02-AGENT-MEMORY/07-Meta/tools）：${indexRebuild.error ?? 'unknown'}${indexRebuild.detail ? `\n${indexRebuild.detail}` : ''}`
+                : '部分索引文件缺失或损坏：请在 vault 根目录执行 cd 02-AGENT-MEMORY/07-Meta/tools && npm install && node build-manifest.mjs（非桌面 Electron 环境无自动重建）。'
+            : undefined;
+
+        let rows = [...byPath.values()];
+        rows.sort((a, b) => (b.file_path ?? '').localeCompare(a.file_path ?? ''));
+        rows = rows.slice(0, maxResults);
+
+        const mode =
+          hasStructuralFilter || keyword || memoryTypes.length > 0 ? 'query' : 'overview';
+
+        const file_contents: Record<string, JsonValue> = {};
+        for (const rp of readPaths) {
+          const r = await window.zytrader.fs.read(rp, { scope: 'vault' });
+          if (!r.ok || typeof r.content !== 'string') {
+            file_contents[rp] = { ok: false, error: 'read failed' } as unknown as JsonValue;
+            continue;
+          }
+          const text = r.content;
+          const truncated = text.length > maxChars;
+          file_contents[rp] = {
+            ok: true,
+            truncated,
+            chars: truncated ? maxChars : text.length,
+            content: truncated ? text.slice(0, maxChars) : text,
+          } as unknown as JsonValue;
+        }
+
+        return {
+          ok: true,
+          mode,
+          meta_dir: metaDir,
+          index_status,
+          ...(indexRebuild.attempted ? { index_rebuild: indexRebuild } : {}),
+          hint: hintNoIndex,
+          filters: {
+            date: date || undefined,
+            tag: tag || undefined,
+            keyword: keyword || undefined,
+            memory_types: memoryTypes,
+          },
+          count: rows.length,
+          hits: rows,
+          ...(Object.keys(file_contents).length > 0 ? { file_contents } : {}),
+        } as unknown as JsonValue;
+      },
+    },
+    {
+      name: 'memory.update',
+      description:
+        'Patch a memory file (json preferred; markdown metadata for long-term supported) and refresh updateTime。long 时在四类长期目录中查找 id。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          memoryType: {
+            type: 'string',
+            enum: ['short', 'long', 'context', 'user', 'feedback', 'project', 'reference'],
+          },
           id: { type: 'string' },
           patch: { type: 'object' },
         },
@@ -426,33 +738,35 @@ function buildLocalTools(): AgentTool[] {
           throw new Error('memory.update: memoryType, id and patch are required.');
         }
 
-        const key = memoryKeyByType(mt);
-        const resolved = await window.zytrader.vault.resolve(key);
-        if (!resolved.ok || !resolved.relative) {
-          throw new Error(resolved.error ?? `failed to resolve ${key} path.`);
-        }
+        const keyOrder =
+          mt === 'long' ? [...LONG_MEMORY_VAULT_KEYS] : [memoryVaultKey(mt, false)];
+        const exts = mt === 'long' || mt === 'user' || mt === 'feedback' || mt === 'project' || mt === 'reference' ? ['json', 'md'] : ['json'];
 
-        const candidates = mt === 'long' ? ['json', 'md'] : ['json'];
-        for (const ext of candidates) {
-          const relPath = `${resolved.relative}/${id}.${ext}`;
-          const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
-          if (!read.ok) continue;
+        for (const key of keyOrder) {
+          const resolved = await window.zytrader.vault.resolve(key);
+          if (!resolved.ok || !resolved.relative) continue;
 
-          if (ext === 'md') {
-            const m = read.content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-            if (!m?.[1]) return { ok: false, error: 'invalid markdown memory format' } as unknown as JsonValue;
-            const meta = JSON.parse(m[1]) as Record<string, unknown>;
-            const next: Record<string, unknown> = { ...meta, ...patch, updateTime: new Date().toISOString() };
-            const body = typeof next['content'] === 'string' ? String(next['content']) : m[2] ?? '';
-            const out = `---\n${JSON.stringify(next, null, 2)}\n---\n${body.startsWith('\n') ? '' : '\n'}${body}`;
-            return (await window.zytrader.fs.write(relPath, out, { scope: 'vault' })) as unknown as JsonValue;
+          for (const ext of exts) {
+            const relPath = `${resolved.relative}/${id}.${ext}`;
+            const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
+            if (!read.ok) continue;
+
+            if (ext === 'md') {
+              const m = read.content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+              if (!m?.[1]) return { ok: false, error: 'invalid markdown memory format' } as unknown as JsonValue;
+              const meta = JSON.parse(m[1]) as Record<string, unknown>;
+              const next: Record<string, unknown> = { ...meta, ...patch, updateTime: new Date().toISOString() };
+              const body = typeof next['content'] === 'string' ? String(next['content']) : m[2] ?? '';
+              const out = `---\n${JSON.stringify(next, null, 2)}\n---\n${body.startsWith('\n') ? '' : '\n'}${body}`;
+              return (await window.zytrader.fs.write(relPath, out, { scope: 'vault' })) as unknown as JsonValue;
+            }
+
+            const obj = JSON.parse(read.content) as Record<string, unknown>;
+            const next = { ...obj, ...patch, updateTime: new Date().toISOString() };
+            return (await window.zytrader.fs.write(relPath, JSON.stringify(next, null, 2), {
+              scope: 'vault',
+            })) as unknown as JsonValue;
           }
-
-          const obj = JSON.parse(read.content) as Record<string, unknown>;
-          const next = { ...obj, ...patch, updateTime: new Date().toISOString() };
-          return (await window.zytrader.fs.write(relPath, JSON.stringify(next, null, 2), {
-            scope: 'vault',
-          })) as unknown as JsonValue;
         }
 
         return { ok: false, error: 'memory not found', memoryType: mt, id } as unknown as JsonValue;
@@ -478,35 +792,35 @@ function buildLocalTools(): AgentTool[] {
           throw new Error('memory.relate_note: id and notePath are required.');
         }
 
-        const resolved = await window.zytrader.vault.resolve('agent-long-term');
-        if (!resolved.ok || !resolved.relative) {
-          throw new Error(resolved.error ?? 'failed to resolve agent-long-term path.');
-        }
+        for (const key of LONG_MEMORY_VAULT_KEYS) {
+          const resolved = await window.zytrader.vault.resolve(key);
+          if (!resolved.ok || !resolved.relative) continue;
 
-        for (const ext of ['json', 'md']) {
-          const relPath = `${resolved.relative}/${id}.${ext}`;
-          const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
-          if (!read.ok) continue;
+          for (const ext of ['json', 'md']) {
+            const relPath = `${resolved.relative}/${id}.${ext}`;
+            const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
+            if (!read.ok) continue;
 
-          if (ext === 'md') {
-            const m = read.content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-            if (!m?.[1]) return { ok: false, error: 'invalid markdown memory format' } as unknown as JsonValue;
-            const meta = JSON.parse(m[1]) as Record<string, unknown>;
-            const related = Array.isArray(meta['relatedNotes']) ? (meta['relatedNotes'] as unknown[]) : [];
+            if (ext === 'md') {
+              const m = read.content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+              if (!m?.[1]) return { ok: false, error: 'invalid markdown memory format' } as unknown as JsonValue;
+              const meta = JSON.parse(m[1]) as Record<string, unknown>;
+              const related = Array.isArray(meta['relatedNotes']) ? (meta['relatedNotes'] as unknown[]) : [];
+              const nextRelated = Array.from(new Set([...related.map((x) => String(x)), notePath]));
+              const next = { ...meta, relatedNotes: nextRelated, updateTime: new Date().toISOString() };
+              const body = m[2] ?? '';
+              const out = `---\n${JSON.stringify(next, null, 2)}\n---\n${body.startsWith('\n') ? '' : '\n'}${body}`;
+              return (await window.zytrader.fs.write(relPath, out, { scope: 'vault' })) as unknown as JsonValue;
+            }
+
+            const obj = JSON.parse(read.content) as Record<string, unknown>;
+            const related = Array.isArray(obj['relatedNotes']) ? (obj['relatedNotes'] as unknown[]) : [];
             const nextRelated = Array.from(new Set([...related.map((x) => String(x)), notePath]));
-            const next = { ...meta, relatedNotes: nextRelated, updateTime: new Date().toISOString() };
-            const body = m[2] ?? '';
-            const out = `---\n${JSON.stringify(next, null, 2)}\n---\n${body.startsWith('\n') ? '' : '\n'}${body}`;
-            return (await window.zytrader.fs.write(relPath, out, { scope: 'vault' })) as unknown as JsonValue;
+            const next = { ...obj, relatedNotes: nextRelated, updateTime: new Date().toISOString() };
+            return (await window.zytrader.fs.write(relPath, JSON.stringify(next, null, 2), {
+              scope: 'vault',
+            })) as unknown as JsonValue;
           }
-
-          const obj = JSON.parse(read.content) as Record<string, unknown>;
-          const related = Array.isArray(obj['relatedNotes']) ? (obj['relatedNotes'] as unknown[]) : [];
-          const nextRelated = Array.from(new Set([...related.map((x) => String(x)), notePath]));
-          const next = { ...obj, relatedNotes: nextRelated, updateTime: new Date().toISOString() };
-          return (await window.zytrader.fs.write(relPath, JSON.stringify(next, null, 2), {
-            scope: 'vault',
-          })) as unknown as JsonValue;
         }
 
         return { ok: false, error: 'memory not found', id } as unknown as JsonValue;

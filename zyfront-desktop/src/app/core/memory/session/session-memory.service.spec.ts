@@ -23,7 +23,7 @@ describe('SessionMemoryService', () => {
 
     const directoryManager = {
       ensureVaultReady: jasmine.createSpy('ensureVaultReady').and.resolveTo(),
-      getRelativePathByKey: jasmine.createSpy('getRelativePathByKey').and.resolveTo('02-AGENT-MEMORY/03-Context'),
+      getRelativePathByKey: jasmine.createSpy('getRelativePathByKey').and.resolveTo('02-AGENT-MEMORY/06-Context'),
     } as any;
     const telemetry = { track: jasmine.createSpy('track') } as any;
     const teamSync = { notifyWrite: jasmine.createSpy('notifyWrite') } as any;
@@ -56,7 +56,7 @@ describe('SessionMemoryService', () => {
     expect(r2.status).toBe('succeeded');
     expect(teamSync.notifyWrite).toHaveBeenCalledTimes(2);
 
-    const path = '02-AGENT-MEMORY/03-Context/sessions/s1.md';
+    const path = '02-AGENT-MEMORY/06-Context/sessions/s1.md';
     const content = fs.store.get(path) ?? '';
     expect(content).toContain('t1');
     expect(content).toContain('t2');

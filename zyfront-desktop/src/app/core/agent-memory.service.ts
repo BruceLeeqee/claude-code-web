@@ -45,7 +45,7 @@ export class AgentMemoryService {
   ) {}
 
   private keyByType(type: AgentMemoryType): string {
-    return type === 'short' ? 'agent-short-term' : type === 'long' ? 'agent-long-term' : 'agent-context';
+    return type === 'short' ? 'agent-short-term' : type === 'long' ? 'agent-long-user' : 'agent-context';
   }
 
   private buildId(prefix: string, extra?: string): string {
@@ -95,7 +95,7 @@ export class AgentMemoryService {
       ...payload,
     };
 
-    const relDir = await this.directoryManager.getRelativePathByKey('agent-long-term');
+    const relDir = await this.directoryManager.getRelativePathByKey('agent-long-user');
     const ext = record.format === 'md' ? 'md' : 'json';
     const relPath = `${relDir}/${id}.${ext}`;
     const content = ext === 'json' ? JSON.stringify(record, null, 2) : this.toMarkdownMemory(record);
@@ -106,55 +106,82 @@ export class AgentMemoryService {
 
   async readMemories(type: AgentMemoryType, keyword?: string): Promise<unknown[]> {
     await this.directoryManager.ensureVaultReady();
-    const relDir = await this.directoryManager.getRelativePathByKey(this.keyByType(type));
-    const listed = await window.zytrader.fs.list(relDir, { scope: 'vault' });
-    if (!listed.ok) return [];
+    const dirs =
+      type === 'long'
+        ? await Promise.all(
+            ['agent-long-user', 'agent-long-feedback', 'agent-long-project', 'agent-long-reference'].map((k) =>
+              this.directoryManager.getRelativePathByKey(k),
+            ),
+          )
+        : [await this.directoryManager.getRelativePathByKey(this.keyByType(type))];
 
     const out: unknown[] = [];
-    for (const e of listed.entries) {
-      if (e.type !== 'file') continue;
-      const rel = `${relDir}/${e.name}`;
-      const read = await window.zytrader.fs.read(rel, { scope: 'vault' });
-      if (!read.ok) continue;
-      const maybe = this.parseMemoryFile(read.content);
-      if (!keyword || JSON.stringify(maybe).includes(keyword)) out.push(maybe);
+    for (const relDir of dirs) {
+      const listed = await window.zytrader.fs.list(relDir, { scope: 'vault' });
+      if (!listed.ok) continue;
+      for (const e of listed.entries) {
+        if (e.type !== 'file') continue;
+        const rel = `${relDir}/${e.name}`;
+        const read = await window.zytrader.fs.read(rel, { scope: 'vault' });
+        if (!read.ok) continue;
+        const maybe = this.parseMemoryFile(read.content);
+        if (!keyword || JSON.stringify(maybe).includes(keyword)) out.push(maybe);
+      }
     }
     return out;
   }
 
   async readMemoryById(type: AgentMemoryType, id: string): Promise<unknown | null> {
     await this.directoryManager.ensureVaultReady();
-    const relDir = await this.directoryManager.getRelativePathByKey(this.keyByType(type));
+    const dirs =
+      type === 'long'
+        ? await Promise.all(
+            ['agent-long-user', 'agent-long-feedback', 'agent-long-project', 'agent-long-reference'].map((k) =>
+              this.directoryManager.getRelativePathByKey(k),
+            ),
+          )
+        : [await this.directoryManager.getRelativePathByKey(this.keyByType(type))];
 
-    for (const ext of ['json', 'md']) {
-      const read = await window.zytrader.fs.read(`${relDir}/${id}.${ext}`, { scope: 'vault' });
-      if (read.ok) return this.parseMemoryFile(read.content);
+    for (const relDir of dirs) {
+      for (const ext of ['json', 'md']) {
+        const read = await window.zytrader.fs.read(`${relDir}/${id}.${ext}`, { scope: 'vault' });
+        if (read.ok) return this.parseMemoryFile(read.content);
+      }
     }
     return null;
   }
 
   async updateMemory(type: AgentMemoryType, id: string, patch: Record<string, unknown>): Promise<boolean> {
     await this.directoryManager.ensureVaultReady();
-    const relDir = await this.directoryManager.getRelativePathByKey(this.keyByType(type));
+    const dirs =
+      type === 'long'
+        ? await Promise.all(
+            ['agent-long-user', 'agent-long-feedback', 'agent-long-project', 'agent-long-reference'].map((k) =>
+              this.directoryManager.getRelativePathByKey(k),
+            ),
+          )
+        : [await this.directoryManager.getRelativePathByKey(this.keyByType(type))];
 
-    for (const ext of ['json', 'md']) {
-      const relPath = `${relDir}/${id}.${ext}`;
-      const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
-      if (!read.ok) continue;
+    for (const relDir of dirs) {
+      for (const ext of ['json', 'md']) {
+        const relPath = `${relDir}/${id}.${ext}`;
+        const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
+        if (!read.ok) continue;
 
-      if (ext === 'md') {
-        const parsed = this.parseMarkdownMemory(read.content);
-        if (!parsed) return false;
-        const next = { ...parsed, ...patch, updateTime: new Date().toISOString() };
-        const write = await window.zytrader.fs.write(relPath, this.toMarkdownMemory(next), { scope: 'vault' });
+        if (ext === 'md') {
+          const parsed = this.parseMarkdownMemory(read.content);
+          if (!parsed) return false;
+          const next = { ...parsed, ...patch, updateTime: new Date().toISOString() };
+          const write = await window.zytrader.fs.write(relPath, this.toMarkdownMemory(next), { scope: 'vault' });
+          return Boolean(write.ok);
+        }
+
+        const current = this.parseMemoryFile(read.content);
+        if (typeof current !== 'object' || !current) return false;
+        const next = { ...(current as Record<string, unknown>), ...patch, updateTime: new Date().toISOString() };
+        const write = await window.zytrader.fs.write(relPath, JSON.stringify(next, null, 2), { scope: 'vault' });
         return Boolean(write.ok);
       }
-
-      const current = this.parseMemoryFile(read.content);
-      if (typeof current !== 'object' || !current) return false;
-      const next = { ...(current as Record<string, unknown>), ...patch, updateTime: new Date().toISOString() };
-      const write = await window.zytrader.fs.write(relPath, JSON.stringify(next, null, 2), { scope: 'vault' });
-      return Boolean(write.ok);
     }
 
     return false;

@@ -287,6 +287,19 @@
   resize: vertical;
 }
 
+.conn-field--check {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  input[type='checkbox'] {
+    width: auto;
+    flex-shrink: 0;
+    accent-color: #a855f7;
+  }
+}
+
 .conn-field--endpoint {
   grid-column: 1 / -1;
 }

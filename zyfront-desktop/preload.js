@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 const terminalDataListeners = new Set()
 const terminalExitListeners = new Set()
+const fsWatchListeners = new Set()
 
 ipcRenderer.on('zytrader:terminal:data', (_event, payload) => {
   for (const fn of terminalDataListeners) {
@@ -15,12 +16,25 @@ ipcRenderer.on('zytrader:terminal:exit', (_event, payload) => {
   }
 })
 
+ipcRenderer.on('zytrader:fs:watch', (_event, payload) => {
+  for (const fn of fsWatchListeners) {
+    try { fn(payload) } catch {}
+  }
+})
+
 contextBridge.exposeInMainWorld('zytrader', {
   fs: {
     list: (dir = '.', opts = {}) => ipcRenderer.invoke('zytrader:fs:list', dir, opts),
     read: (filePath, opts = {}) => ipcRenderer.invoke('zytrader:fs:read', filePath, opts),
     write: (filePath, content, opts = {}) => ipcRenderer.invoke('zytrader:fs:write', filePath, content, opts),
     remove: (targetPath, opts = {}) => ipcRenderer.invoke('zytrader:fs:delete', targetPath, opts),
+    watchDir: (dir = '.', opts = {}) => ipcRenderer.invoke('zytrader:fs:watchDir', dir, opts),
+    unwatchDir: (watchId) => ipcRenderer.invoke('zytrader:fs:unwatchDir', watchId),
+    onDirectoryChange: (callback) => {
+      if (typeof callback !== 'function') return () => {}
+      fsWatchListeners.add(callback)
+      return () => fsWatchListeners.delete(callback)
+    },
   },
   terminal: {
     exec: (command, cwd = '.', cwdScope = 'workspace') =>
@@ -52,6 +66,7 @@ contextBridge.exposeInMainWorld('zytrader', {
     bootstrap: () => ipcRenderer.invoke('zytrader:vault:bootstrap'),
     resolve: (key) => ipcRenderer.invoke('zytrader:vault:resolve', key),
     setConfig: (partial) => ipcRenderer.invoke('zytrader:vault:setConfig', partial),
+    buildMemoryIndex: () => ipcRenderer.invoke('zytrader:vault:buildMemoryIndex'),
   },
   host: {
     openPath: (targetPath, opts = {}) => ipcRenderer.invoke('zytrader:host:openPath', targetPath, opts),

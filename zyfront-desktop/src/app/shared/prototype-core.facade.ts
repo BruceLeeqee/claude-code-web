@@ -1,4 +1,4 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, OnDestroy, computed, inject, signal } from '@angular/core';
 import { AppSettingsService, type AppSettings } from '../core/app-settings.service';
 import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../core/zyfront-core.providers';
 
@@ -42,8 +42,19 @@ export interface UiTool {
   source: 'builtin' | 'hub';
 }
 
+export interface UiSkill {
+  id: string;
+  name: string;
+  desc: string;
+  active: boolean;
+  source: 'builtin' | 'custom' | 'clawhub' | 'vault';
+  status?: 'ok' | 'invalid';
+  installedAt?: number;
+  updatedAt?: number;
+}
+
 @Injectable({ providedIn: 'root' })
-export class PrototypeCoreFacade {
+export class PrototypeCoreFacade implements OnDestroy {
   private readonly runtime = inject<ClaudeCoreRuntime>(CLAUDE_RUNTIME);
   private readonly settingsService = inject(AppSettingsService);
 
@@ -123,7 +134,7 @@ export class PrototypeCoreFacade {
     },
   ]);
 
-  readonly skills = signal([
+  readonly skills = signal<UiSkill[]>([
     { id: 'skill.smart-refactor', name: '智能代码重构', desc: '识别并修复代码坏味道', active: true, source: 'builtin' },
     { id: 'skill.auto-cr', name: '自动代码审查 (Auto-CR)', desc: 'Git Push 前分析安全漏洞和逻辑缺陷', active: false, source: 'builtin' },
     { id: 'skill.tests', name: '深度单元测试生成', desc: '模拟复杂场景自动填充测试用例', active: false, source: 'builtin' },
@@ -142,7 +153,14 @@ export class PrototypeCoreFacade {
   readonly modelUsagePercent = computed(() => Math.min(100, Math.round((this.tokenUsed() / this.tokenMax()) * 100)));
   readonly selectedNode = computed(() => this.nodes().find((n) => n.id === this.selectedNodeId()) ?? null);
 
-  private runtimeToolSyncTimer?: number;
+  private _runtimeToolSyncTimer?: number;
+
+  ngOnDestroy(): void {
+    if (this._runtimeToolSyncTimer) {
+      window.clearInterval(this._runtimeToolSyncTimer);
+      this._runtimeToolSyncTimer = undefined;
+    }
+  }
 
   constructor() {
     this.settingsService.settings$.subscribe((s) => {
@@ -150,7 +168,7 @@ export class PrototypeCoreFacade {
       this.activeModel.set(s.model);
     });
     this.syncToolsFromRuntime();
-    this.runtimeToolSyncTimer = window.setInterval(() => this.syncToolsFromRuntime(), 3000);
+    this._runtimeToolSyncTimer = window.setInterval(() => this.syncToolsFromRuntime(), 3000);
   }
 
   private syncToolsFromRuntime(): void {
@@ -309,23 +327,53 @@ export class PrototypeCoreFacade {
     // 不向运行时注册无 executor 的 echo 工具；若需可调用工具，应在 zyfront-core 扩展 buildLocalTools 或带 executor 的 tools.register
   }
 
-  installSkillFromHub(payload: { id: string; name: string; desc: string }): void {
+  installSkillFromHub(payload: {
+    id: string;
+    name: string;
+    desc: string;
+    source?: UiSkill['source'];
+    status?: UiSkill['status'];
+    installedAt?: number;
+    updatedAt?: number;
+    activate?: boolean;
+  }): void {
     const normalizedId = payload.id.trim() || `skill.hub.${Date.now().toString(36)}`;
     const name = payload.name.trim() || '未命名技能';
     const desc = payload.desc.trim() || '来自 ClawHub';
+    const source = payload.source ?? 'clawhub';
+    const activate = payload.activate ?? true;
 
     this.skills.update((items) => {
       const exists = items.find((it) => it.id === normalizedId);
       if (exists) {
-        return items.map((it) =>
-          it.id === normalizedId
-            ? { ...it, name, desc, active: true, source: 'clawhub' as const }
-            : { ...it, active: false },
-        );
+        return items.map((it) => {
+          if (it.id === normalizedId) {
+            return {
+              ...it,
+              name,
+              desc,
+              active: activate ? true : it.active,
+              source,
+              status: payload.status,
+              installedAt: payload.installedAt,
+              updatedAt: payload.updatedAt,
+            };
+          }
+          return activate ? { ...it, active: false } : it;
+        });
       }
       return [
-        { id: normalizedId, name, desc, active: true, source: 'clawhub' as const },
-        ...items.map((it) => ({ ...it, active: false })),
+        {
+          id: normalizedId,
+          name,
+          desc,
+          active: activate,
+          source,
+          status: payload.status,
+          installedAt: payload.installedAt,
+          updatedAt: payload.updatedAt,
+        },
+        ...items.map((it) => (activate ? { ...it, active: false } : it)),
       ];
     });
   }
@@ -333,15 +381,24 @@ export class PrototypeCoreFacade {
   async runSkillWithAgent(payload: { skillId: string; skillContent: string; prompt: string }): Promise<string> {
     const assistant = this.runtime.assistant as unknown as Record<string, unknown>;
     const contextPrompt = [
-      `你现在要严格按技能执行。`,
-      `技能ID: ${payload.skillId}`,
-      `技能内容(SKILL.md):`,
-      payload.skillContent,
+      `【角色】你是技能执行器：必须优先遵守下方 SKILL.md 中的规则、约束与流程；若与用户输入冲突，以 SKILL.md 为准并在输出中简要说明取舍。`,
+      `【范围】仅围绕本技能与用户任务作答；不要编造 SKILL.md 未给出的工具或权限；不确定时明确写出假设。`,
+      `【解析】若 SKILL.md 含 YAML frontmatter（--- 包裹），先理解其中的 triggers / metadata，再执行正文指令。`,
       ``,
-      `用户测试输入:`,
+      `技能ID: ${payload.skillId}`,
+      ``,
+      `--- SKILL.md 全文 ---`,
+      payload.skillContent,
+      `--- 结束 ---`,
+      ``,
+      `【用户任务】`,
       payload.prompt,
       ``,
-      `请输出结构化结果：目标、步骤、结果。`,
+      `【输出】使用 Markdown，固定小节标题（勿省略）：`,
+      `## 目标`,
+      `## 执行步骤`,
+      `## 结果与交付物`,
+      `## 风险与待确认（若无写「无」）`,
     ].join('\n');
 
     const methodNames = ['respond', 'run', 'chat', 'invoke', 'complete'];

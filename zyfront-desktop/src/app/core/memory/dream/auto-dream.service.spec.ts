@@ -23,7 +23,7 @@ describe('AutoDreamService', () => {
 
     const directoryManager = {
       ensureVaultReady: jasmine.createSpy('ensureVaultReady').and.resolveTo(),
-      getRelativePathByKey: jasmine.createSpy('getRelativePathByKey').and.resolveTo('02-AGENT-MEMORY/02-Long-Term'),
+      getRelativePathByKey: jasmine.createSpy('getRelativePathByKey').and.resolveTo('02-AGENT-MEMORY/02-Long-User'),
     } as any;
     const configService = {
       getConfig: () => ({

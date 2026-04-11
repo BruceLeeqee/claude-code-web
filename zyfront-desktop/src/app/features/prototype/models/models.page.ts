@@ -1,4 +1,12 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  computed,
+  inject,
+  OnInit,
+  signal,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { AppSettingsService, type AppTheme } from '../../../core/app-settings.service';
@@ -6,6 +14,9 @@ import { LocalBridgeService } from '../../../core/local-bridge.service';
 import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
 import { MODEL_CATALOG, defaultCatalogEntry, findCatalogEntry, type ModelCatalogEntry, type ModelProvider } from '../../../core/model-catalog';
 import type { AppSettings } from '../../../core/app-settings.service';
+import { DirectoryManagerService } from '../../../core/directory-manager.service';
+import { MemoryConfigService } from '../../../core/memory/memory.config';
+import { SkillIndexService } from '../../../core/skill-index.service';
 
 /** 连接「请求类型」仅三种：Anthropic 兼容（含 MiniMax 等）、OpenAI、Custom；不再单独出现 MiniMax */
 export type UiRequestKind = 'anthropic' | 'openai' | 'custom';
@@ -26,11 +37,14 @@ export type ConnectionIndicator = 'untested' | 'testing' | 'ok' | 'error';
   styleUrl: './models.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class ModelsPrototypePageComponent {
+export class ModelsPrototypePageComponent implements OnInit {
   private readonly settingsService = inject(AppSettingsService);
   private readonly bridge = inject(LocalBridgeService);
   protected readonly usageLedger = inject(ModelUsageLedgerService);
   private readonly cdr = inject(ChangeDetectorRef);
+  private readonly directoryManager = inject(DirectoryManagerService);
+  private readonly memoryConfig = inject(MemoryConfigService);
+  private readonly skillIndex = inject(SkillIndexService);
 
   readonly settings = toSignal(this.settingsService.settings$, {
     initialValue: this.settingsService.value,
@@ -82,6 +96,19 @@ export class ModelsPrototypePageComponent {
   protected endpointInput = signal('');
   protected requestConfigJson = signal<string>('{}');
 
+  /** Vault 内相对路径，写入 06/05-SYSTEM/directory.config.json */
+  protected readonly vaultSkillRel = signal('');
+  protected readonly vaultPluginRel = signal('');
+  protected readonly vaultLayoutMessage = signal('');
+
+  /** 记忆管道 / 做梦：与 MemoryConfigService（localStorage key `zyfront:memory-pipeline-config-v2`）同步 */
+  protected readonly memoryPipelineEnabled = signal(true);
+  protected readonly dreamEnabled = signal(true);
+  protected readonly dreamMinHours = signal(24);
+  protected readonly dreamMinSessions = signal(5);
+  protected readonly dreamScanThrottleMinutes = signal(10);
+  protected readonly memoryPipelineMessage = signal('');
+
   protected readonly requestAddressOptions = computed(() => {
     const p = this.requestType();
     if (p === 'anthropic') {
@@ -93,6 +120,11 @@ export class ModelsPrototypePageComponent {
     if (p === 'openai') return [{ id: 'openai-default', label: 'OpenAI 官方', url: 'https://api.openai.com' }];
     return [];
   });
+
+  ngOnInit(): void {
+    this.hydrateMemoryPipelineUi();
+    void this.loadVaultLayoutPaths();
+  }
 
   constructor() {
     try {
@@ -128,6 +160,109 @@ export class ModelsPrototypePageComponent {
     } catch {
       this.requestConfigJson.set(this.defaultRequestJsonForUi(uiKind));
     }
+  }
+
+  private hydrateMemoryPipelineUi(): void {
+    const c = this.memoryConfig.getConfig();
+    this.memoryPipelineEnabled.set(c.enabled);
+    this.dreamEnabled.set(c.dream.enabled);
+    this.dreamMinHours.set(c.dream.minHours);
+    this.dreamMinSessions.set(c.dream.minSessions);
+    this.dreamScanThrottleMinutes.set(c.dream.scanThrottleMinutes);
+  }
+
+  protected saveMemoryPipelineSettings(): void {
+    this.memoryPipelineMessage.set('');
+    const h = Math.max(1, Math.floor(Number(this.dreamMinHours())) || 1);
+    const s = Math.max(1, Math.floor(Number(this.dreamMinSessions())) || 1);
+    const t = Math.max(1, Math.floor(Number(this.dreamScanThrottleMinutes())) || 1);
+    this.dreamMinHours.set(h);
+    this.dreamMinSessions.set(s);
+    this.dreamScanThrottleMinutes.set(t);
+    this.memoryConfig.applyPartial({
+      enabled: this.memoryPipelineEnabled(),
+      dream: {
+        enabled: this.dreamEnabled(),
+        minHours: h,
+        minSessions: s,
+        scanThrottleMinutes: t,
+      },
+    });
+    this.memoryPipelineMessage.set('记忆管道已保存（localStorage：zyfront:memory-pipeline-config-v2）');
+    this.cdr.markForCheck();
+  }
+
+  protected resetMemoryPipelineDefaults(): void {
+    this.memoryConfig.resetToDefaults();
+    this.hydrateMemoryPipelineUi();
+    this.memoryPipelineMessage.set('已恢复记忆管道默认参数');
+    this.cdr.markForCheck();
+  }
+
+  protected onDreamMinHoursInput(ev: Event): void {
+    const raw = (ev.target as HTMLInputElement).value;
+    const n = Math.floor(Number(raw));
+    this.dreamMinHours.set(Number.isFinite(n) && n >= 1 ? n : 1);
+  }
+
+  protected onDreamMinSessionsInput(ev: Event): void {
+    const raw = (ev.target as HTMLInputElement).value;
+    const n = Math.floor(Number(raw));
+    this.dreamMinSessions.set(Number.isFinite(n) && n >= 1 ? n : 1);
+  }
+
+  protected onDreamScanThrottleInput(ev: Event): void {
+    const raw = (ev.target as HTMLInputElement).value;
+    const n = Math.floor(Number(raw));
+    this.dreamScanThrottleMinutes.set(Number.isFinite(n) && n >= 1 ? n : 1);
+  }
+
+  protected async loadVaultLayoutPaths(): Promise<void> {
+    this.vaultLayoutMessage.set('');
+    try {
+      await this.directoryManager.ensureVaultReady();
+      const cfg = await this.directoryManager.readDirectoryConfig(true);
+      this.vaultSkillRel.set(cfg.keys['agent-skills'] ?? '03-AGENT-TOOLS/01-Skills');
+      this.vaultPluginRel.set(cfg.keys['agent-plugins'] ?? '03-AGENT-TOOLS/02-Plugins');
+    } catch (e) {
+      this.vaultLayoutMessage.set(e instanceof Error ? e.message : String(e));
+    }
+    this.cdr.markForCheck();
+  }
+
+  protected async saveVaultLayoutPaths(): Promise<void> {
+    this.vaultLayoutMessage.set('');
+    try {
+      await this.directoryManager.ensureVaultReady();
+      const candidates = ['06-SYSTEM/directory.config.json', '05-SYSTEM/directory.config.json'];
+      let target = '';
+      let existing = '';
+      for (const p of candidates) {
+        const r = await window.zytrader.fs.read(p, { scope: 'vault' });
+        if (r.ok && typeof r.content === 'string') {
+          target = p;
+          existing = r.content;
+          break;
+        }
+      }
+      if (!target) target = '06-SYSTEM/directory.config.json';
+      const doc =
+        existing.trim() !== ''
+          ? (JSON.parse(existing) as Record<string, unknown>)
+          : { version: 1, keys: {} as Record<string, string> };
+      const keys = { ...((doc['keys'] as Record<string, string>) ?? {}) };
+      keys['agent-skills'] = this.vaultSkillRel().trim() || '03-AGENT-TOOLS/01-Skills';
+      keys['agent-plugins'] = this.vaultPluginRel().trim() || '03-AGENT-TOOLS/02-Plugins';
+      const next = { ...doc, version: Number(doc['version'] ?? 1), keys };
+      const wr = await window.zytrader.fs.write(target, JSON.stringify(next, null, 2), { scope: 'vault' });
+      if (!wr.ok) throw new Error('写入 directory.config.json 失败');
+      this.directoryManager.invalidateCache();
+      this.skillIndex.invalidateSkillRoot();
+      this.vaultLayoutMessage.set(`已保存到 Vault/${target}`);
+    } catch (e) {
+      this.vaultLayoutMessage.set(e instanceof Error ? e.message : String(e));
+    }
+    this.cdr.markForCheck();
   }
 
   protected switchModel(modelId: string): void {

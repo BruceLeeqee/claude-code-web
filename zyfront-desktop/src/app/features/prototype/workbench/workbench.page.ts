@@ -67,20 +67,37 @@ const RECENT_STORAGE_KEY_V2 = 'zytrader-workbench-recent-turns:v2';
 const RECENT_STORAGE_KEY_V1 = 'zytrader-workbench-recent-turns:v1';
 const SESSION_ID = 'workbench-terminal-ai';
 
-/** 资源管理器：Obsidian-Agent 标准顶层目录（顺序固定） */
+/** 资源管理器：AGENT-ROOT 标准顶层目录（顺序固定） */
 const VAULT_EXPLORER_TOP = [
-  { name: '00-INBOX', path: '00-INBOX' },
+  { name: '00-HUMAN-TEMP', path: '00-HUMAN-TEMP' },
   { name: '01-HUMAN-NOTES', path: '01-HUMAN-NOTES' },
   { name: '02-AGENT-MEMORY', path: '02-AGENT-MEMORY' },
-  { name: '03-PROJECTS', path: '03-PROJECTS' },
-  { name: '04-RESOURCES', path: '04-RESOURCES' },
-  { name: '05-SYSTEM', path: '05-SYSTEM' },
+  { name: '03-AGENT-TOOLS', path: '03-AGENT-TOOLS' },
+  { name: '04-PROJECTS', path: '04-PROJECTS' },
+  { name: '05-RESOURCES', path: '05-RESOURCES' },
+  { name: '06-SYSTEM', path: '06-SYSTEM' },
 ] as const;
 
+/**
+ * 工程根与 Vault 根相同时，从「工程目录」树隐藏的库层文件夹（与 Vault 根下自动生成的 Cursor files.exclude 一致）。
+ * 保留 04-PROJECTS 作为唯一工程根；记忆与其它库请用「记忆目录」视图。
+ */
+const WORKSPACE_AT_VAULT_HIDDEN_DIRS = new Set([
+  '00-HUMAN-TEMP',
+  '01-HUMAN-NOTES',
+  '02-AGENT-MEMORY',
+  '03-AGENT-TOOLS',
+  '03-PROJECTS',
+  '04-RESOURCES',
+  '05-RESOURCES',
+  '05-SYSTEM',
+  '06-SYSTEM',
+]);
+
 const VAULT_EXPLORER_FIXED_CHILDREN: Record<string, Array<{ name: string; path: string }>> = {
-  '00-INBOX': [
-    { name: 'human', path: '00-INBOX/human' },
-    { name: 'agent', path: '00-INBOX/agent' },
+  '00-HUMAN-TEMP': [
+    { name: 'human', path: '00-HUMAN-TEMP/human' },
+    { name: 'agent', path: '00-HUMAN-TEMP/agent' },
   ],
   '01-HUMAN-NOTES': [
     { name: '01-Daily', path: '01-HUMAN-NOTES/01-Daily' },
@@ -90,15 +107,22 @@ const VAULT_EXPLORER_FIXED_CHILDREN: Record<string, Array<{ name: string; path: 
   ],
   '02-AGENT-MEMORY': [
     { name: '01-Short-Term', path: '02-AGENT-MEMORY/01-Short-Term' },
-    { name: '02-Long-Term', path: '02-AGENT-MEMORY/02-Long-Term' },
-    { name: '03-Context', path: '02-AGENT-MEMORY/03-Context' },
-    { name: '04-Meta', path: '02-AGENT-MEMORY/04-Meta' },
+    { name: '02-Long-User', path: '02-AGENT-MEMORY/02-Long-User' },
+    { name: '03-Long-Feedback', path: '02-AGENT-MEMORY/03-Long-Feedback' },
+    { name: '04-Long-Projects', path: '02-AGENT-MEMORY/04-Long-Projects' },
+    { name: '05-Long-Reference', path: '02-AGENT-MEMORY/05-Long-Reference' },
+    { name: '06-Context', path: '02-AGENT-MEMORY/06-Context' },
+    { name: '07-Meta', path: '02-AGENT-MEMORY/07-Meta' },
   ],
-  '04-RESOURCES': [
-    { name: 'images', path: '04-RESOURCES/images' },
-    { name: 'files', path: '04-RESOURCES/files' },
-    { name: 'media', path: '04-RESOURCES/media' },
-    { name: 'templates', path: '04-RESOURCES/templates' },
+  '03-AGENT-TOOLS': [
+    { name: '01-Skills', path: '03-AGENT-TOOLS/01-Skills' },
+    { name: '02-Plugins', path: '03-AGENT-TOOLS/02-Plugins' },
+  ],
+  '05-RESOURCES': [
+    { name: 'images', path: '05-RESOURCES/images' },
+    { name: 'files', path: '05-RESOURCES/files' },
+    { name: 'media', path: '05-RESOURCES/media' },
+    { name: 'templates', path: '05-RESOURCES/templates' },
   ],
 };
 /** 最近会话写入 localStorage；v2 含 transcript 便于完整回放 */
@@ -268,8 +292,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly workspaceRoot = signal('workspace');
   /** Vault 绝对路径（Electron 解析后） */
   protected readonly vaultPathLabel = signal('');
-  /** 是否已检测到 05-SYSTEM（或已完成 bootstrap） */
+  /** 是否已检测到 06-SYSTEM / 05-SYSTEM（或已完成 bootstrap） */
   protected readonly vaultReady = signal(false);
+  /** 工程根与 Vault 根是否为同一路径（此时工程树隐藏记忆库顶层目录） */
+  protected readonly workspaceRootEqualsVaultRoot = signal(false);
   protected readonly shortTermMemoryCount = signal(0);
   protected readonly shortTermMemoryLatest = signal<string | null>(null);
   /** 工程（仓库）根目录下列出的节点 */
@@ -396,14 +422,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly psCwdPresets = [
     { id: 'vault-root' as const, label: 'Vault 根目录', cwd: '.', cwdScope: 'vault' as const },
     { id: 'workspace-root' as const, label: '工程根目录', cwd: '.', cwdScope: 'workspace' as const },
-    { id: 'inbox-human' as const, label: '00-INBOX/human', cwd: '00-INBOX/human', cwdScope: 'vault' as const },
+    { id: 'inbox-human' as const, label: '00-HUMAN-TEMP/human', cwd: '00-HUMAN-TEMP/human', cwdScope: 'vault' as const },
     {
       id: 'agent-short-term' as const,
       label: '02-AGENT-MEMORY/01-Short-Term',
       cwd: '02-AGENT-MEMORY/01-Short-Term',
       cwdScope: 'vault' as const,
     },
-    { id: 'projects' as const, label: '03-PROJECTS', cwd: '03-PROJECTS', cwdScope: 'vault' as const },
+    { id: 'projects' as const, label: '04-PROJECTS', cwd: '04-PROJECTS', cwdScope: 'vault' as const },
   ];
   protected readonly activePsCwdPresetId = signal<PsCwdPresetId>('vault-root');
   /** ??? Backspace?????????? xterm/?? IME ? onData ????? */
@@ -870,6 +896,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.workspaceRoot.set(info.root);
     this.vaultPathLabel.set(info.vaultRoot);
     this.vaultReady.set(info.vaultConfigured);
+    const sameRoot =
+      Boolean(info.root && info.vaultRoot) &&
+      info.root.replace(/\\/g, '/').toLowerCase() === info.vaultRoot.replace(/\\/g, '/').toLowerCase();
+    this.workspaceRootEqualsVaultRoot.set(sameRoot);
 
     if (!info.vaultConfigured) {
       const boot = await window.zytrader.vault.bootstrap();
@@ -880,6 +910,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       if (info.ok) {
         this.vaultPathLabel.set(info.vaultRoot);
         this.vaultReady.set(info.vaultConfigured);
+        const same =
+          Boolean(info.root && info.vaultRoot) &&
+          info.root.replace(/\\/g, '/').toLowerCase() === info.vaultRoot.replace(/\\/g, '/').toLowerCase();
+        this.workspaceRootEqualsVaultRoot.set(same);
       }
     }
 
@@ -1366,7 +1400,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   protected isMemoryProjectEntry(node: FileNode): boolean {
-    return node.fsScope === 'vault' && node.type === 'dir' && node.path === '03-PROJECTS';
+    return node.fsScope === 'vault' && node.type === 'dir' && node.path === '04-PROJECTS';
   }
 
   protected onTreeNodeDblClick(node: FileNode, event: MouseEvent): void {
@@ -2164,7 +2198,16 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
 
     const treeRoot: 'vault' | 'workspace' = scope === 'workspace' ? 'workspace' : 'vault';
-    const nodes: FileNode[] = result.entries
+    let entries = result.entries;
+    if (
+      scope === 'workspace' &&
+      path === '.' &&
+      treeRoot === 'workspace' &&
+      this.workspaceRootEqualsVaultRoot()
+    ) {
+      entries = entries.filter((e) => !(e.type === 'dir' && WORKSPACE_AT_VAULT_HIDDEN_DIRS.has(e.name)));
+    }
+    const nodes: FileNode[] = entries
       .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
       .map((entry) => ({
         name: entry.name,

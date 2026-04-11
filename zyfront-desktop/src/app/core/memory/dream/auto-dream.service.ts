@@ -5,11 +5,16 @@ import { MemoryTelemetryService } from '../memory.telemetry';
 import { TeamMemorySyncService } from '../team/team-memory-sync.service';
 import { type MemoryPipelineResult, type TurnContext } from '../memory.types';
 
+interface DreamStateFile {
+  lastConsolidatedAtMs?: number;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AutoDreamService {
   private inProgress = false;
-  private lastRunAtMs = 0;
   private recentSessionIds = new Set<string>();
+  /** 与参考实现 SESSION_SCAN_INTERVAL 类似：限制做梦管线被评估的频率 */
+  private lastProbeAtMs = 0;
 
   constructor(
     private readonly directoryManager: DirectoryManagerService,
@@ -31,32 +36,62 @@ export class AutoDreamService {
       };
     }
 
+    const scanMs = Math.max(1, cfg.scanThrottleMinutes) * 60 * 1000;
+    if (this.lastProbeAtMs > 0 && Date.now() - this.lastProbeAtMs < scanMs) {
+      return {
+        pipeline: 'dream',
+        status: 'skipped',
+        reason: 'dream_scan_throttled',
+        durationMs: Date.now() - startedAt,
+      };
+    }
+    this.lastProbeAtMs = Date.now();
+
     this.recentSessionIds.add(turn.sessionId);
 
-    const minHoursMs = Math.max(1, cfg.minHours) * 60 * 60 * 1000;
-    if (this.lastRunAtMs > 0 && Date.now() - this.lastRunAtMs < minHoursMs) {
-      return {
-        pipeline: 'dream',
-        status: 'skipped',
-        reason: 'time_threshold_not_met',
-        durationMs: Date.now() - startedAt,
-      };
-    }
-
-    if (this.recentSessionIds.size < Math.max(1, cfg.minSessions)) {
-      return {
-        pipeline: 'dream',
-        status: 'skipped',
-        reason: 'session_threshold_not_met',
-        durationMs: Date.now() - startedAt,
-      };
-    }
-
     this.inProgress = true;
+    let lockPath = '';
     try {
       await this.directoryManager.ensureVaultReady();
-      const relDir = await this.directoryManager.getRelativePathByKey('agent-long-term');
-      const lockPath = `${relDir}/.dream.lock`;
+
+      const metaRel = await this.directoryManager.getRelativePathByKey('agent-memory-index');
+      const statePath = `${metaRel}/.dream.state.json`;
+      this.assertSafeRelativePath(statePath);
+
+      const stateRead = await window.zytrader.fs.read(statePath, { scope: 'vault' });
+      let lastConsolidatedAtMs = 0;
+      if (stateRead.ok && stateRead.content.trim()) {
+        try {
+          const doc = JSON.parse(stateRead.content) as DreamStateFile;
+          if (typeof doc.lastConsolidatedAtMs === 'number' && Number.isFinite(doc.lastConsolidatedAtMs)) {
+            lastConsolidatedAtMs = doc.lastConsolidatedAtMs;
+          }
+        } catch {
+          /* ignore corrupt state */
+        }
+      }
+
+      const minHoursMs = Math.max(1, cfg.minHours) * 60 * 60 * 1000;
+      if (lastConsolidatedAtMs > 0 && Date.now() - lastConsolidatedAtMs < minHoursMs) {
+        return {
+          pipeline: 'dream',
+          status: 'skipped',
+          reason: 'time_threshold_not_met',
+          durationMs: Date.now() - startedAt,
+        };
+      }
+
+      if (this.recentSessionIds.size < Math.max(1, cfg.minSessions)) {
+        return {
+          pipeline: 'dream',
+          status: 'skipped',
+          reason: 'session_threshold_not_met',
+          durationMs: Date.now() - startedAt,
+        };
+      }
+
+      const relDir = await this.directoryManager.getRelativePathByKey('agent-long-user');
+      lockPath = `${relDir}/.dream.lock`;
       const outPath = `${relDir}/AUTO_DREAM.md`;
       this.assertSafeRelativePath(lockPath);
       this.assertSafeRelativePath(outPath);
@@ -73,11 +108,15 @@ export class AutoDreamService {
 
       const lockWrite = await window.zytrader.fs.write(
         lockPath,
-        JSON.stringify({
-          startedAt: new Date().toISOString(),
-          sessionId: turn.sessionId,
-          turnId: turn.turnId,
-        }, null, 2),
+        JSON.stringify(
+          {
+            startedAt: new Date().toISOString(),
+            sessionId: turn.sessionId,
+            turnId: turn.turnId,
+          },
+          null,
+          2,
+        ),
         { scope: 'vault' },
       );
       if (!lockWrite.ok) {
@@ -94,9 +133,18 @@ export class AutoDreamService {
         throw new Error('failed_to_write_auto_dream');
       }
 
+      const nowMs = Date.now();
+      const stateWrite = await window.zytrader.fs.write(
+        statePath,
+        JSON.stringify({ lastConsolidatedAtMs: nowMs } satisfies DreamStateFile, null, 2),
+        { scope: 'vault' },
+      );
+      if (!stateWrite.ok) {
+        throw new Error('failed_to_write_dream_state');
+      }
+
       await window.zytrader.fs.write(lockPath, '', { scope: 'vault' });
 
-      this.lastRunAtMs = Date.now();
       this.recentSessionIds = new Set([turn.sessionId]);
 
       const result: MemoryPipelineResult = {
@@ -104,7 +152,7 @@ export class AutoDreamService {
         status: 'succeeded',
         reason: 'auto_dream_written',
         durationMs: Date.now() - startedAt,
-        filesTouched: [outPath],
+        filesTouched: [outPath, statePath],
       };
 
       this.teamSync.notifyWrite();
@@ -124,6 +172,13 @@ export class AutoDreamService {
 
       return result;
     } catch (error) {
+      if (lockPath) {
+        try {
+          await window.zytrader.fs.write(lockPath, '', { scope: 'vault' });
+        } catch {
+          /* best-effort release */
+        }
+      }
       this.telemetry.track({
         event: 'error',
         pipeline: 'dream',

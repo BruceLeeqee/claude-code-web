@@ -1,10 +1,19 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  computed,
+  inject,
+  OnDestroy,
+  signal,
+} from '@angular/core';
 import { NgFor, NgIf } from '@angular/common';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { PrototypeCoreFacade } from '../../../shared/prototype-core.facade';
+import { SkillIndexService, type SkillRecord } from '../../../core/skill-index.service';
 import { SkillCreateWizardComponent } from './skill-create-wizard.component';
 
 interface HubSkillItem {
@@ -16,6 +25,19 @@ interface HubSkillItem {
   rating: number;
   installs: number;
   source: 'local' | 'hub';
+}
+
+interface InstalledSkillVm {
+  id: string;
+  name: string;
+  desc: string;
+  source: 'vault';
+  status: 'ok' | 'invalid';
+  installedAt?: number;
+  updatedAt?: number;
+  active: boolean;
+  contentPath: string;
+  scope: 'vault';
 }
 
 const SKILL_FALLBACK_ITEMS: HubSkillItem[] = [
@@ -33,9 +55,13 @@ const SKILL_FALLBACK_ITEMS: HubSkillItem[] = [
   styleUrls: ['../prototype-page.scss', './skills.page.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class SkillsPrototypePageComponent {
+export class SkillsPrototypePageComponent implements OnDestroy {
   private readonly cdr = inject(ChangeDetectorRef);
   protected readonly facade = inject(PrototypeCoreFacade);
+  private readonly skillIndex = inject(SkillIndexService);
+  private readonly unwatchSkillDir = this.skillIndex.watchVaultSkillRoot(() => {
+    void this.refreshLocalSkillMarket();
+  });
 
   protected readonly createMode = signal(false);
   protected readonly hubQuery = signal('');
@@ -45,6 +71,7 @@ export class SkillsPrototypePageComponent {
   protected readonly activeCategory = signal<'全部' | HubSkillItem['category']>('全部');
 
   protected readonly hubSkills = signal<HubSkillItem[]>(SKILL_FALLBACK_ITEMS);
+  protected readonly installedSkills = signal<InstalledSkillVm[]>([]);
   protected readonly selectedHubSkillId = signal(SKILL_FALLBACK_ITEMS[0]?.id ?? '');
 
   protected readonly skillPreview = signal('');
@@ -91,6 +118,10 @@ export class SkillsPrototypePageComponent {
     if (first) void this.loadSkillPreview(first);
   }
 
+  ngOnDestroy(): void {
+    this.unwatchSkillDir();
+  }
+
   openCreateWizard(): void {
     this.createMode.set(true);
     this.cdr.markForCheck();
@@ -117,7 +148,7 @@ export class SkillsPrototypePageComponent {
   }
 
   protected isHubSkillInstalled(id: string): boolean {
-    return this.facade.skills().some((s) => s.id === id);
+    return this.installedSkills().some((s) => s.id === id) || this.facade.skills().some((s) => s.id === id);
   }
 
   protected async refreshHubSkills(): Promise<void> {
@@ -126,20 +157,15 @@ export class SkillsPrototypePageComponent {
     this.hubError.set('');
 
     try {
-      const local = await this.loadLocalSkills();
+      await this.refreshInstalledSkills();
+      const local = this.loadLocalSkillsFromIndex();
       if (!local.length) {
-        this.hubError.set('未发现本地 skills 目录下的已安装技能，请检查工作区是否存在 skills/*/SKILL.md。');
+        this.hubError.set('未发现已安装技能：请在 Vault 的 `03-AGENT-TOOLS/01-Skills/<技能ID>/SKILL.md`（或模型页配置的技能根）维护技能。');
       }
       const remote = await this.loadRemoteSkills(q);
 
       const merged = this.mergeSkills(local, remote.length ? remote : SKILL_FALLBACK_ITEMS);
       this.hubSkills.set(merged);
-
-      for (const it of local) {
-        if (!this.facade.skills().some((s) => s.id === it.id)) {
-          this.facade.installSkillFromHub({ id: it.id, name: it.name, desc: it.desc });
-        }
-      }
 
       if (!merged.find((x) => x.id === this.selectedHubSkillId())) {
         this.selectedHubSkillId.set(merged[0]?.id ?? '');
@@ -184,37 +210,6 @@ export class SkillsPrototypePageComponent {
     }
   }
 
-  private async loadLocalSkills(): Promise<HubSkillItem[]> {
-    const listed = await window.zytrader.fs.list('skills', { scope: 'workspace' });
-    if (!listed.ok) return [];
-
-    const out: HubSkillItem[] = [];
-    for (const e of listed.entries) {
-      if (e.type !== 'dir') continue;
-      const id = e.name;
-      let desc = '本地技能（已预下载）';
-      const md = await window.zytrader.fs.read(`skills/${id}/SKILL.md`, { scope: 'workspace' });
-      if (md.ok) {
-        const lines = md.content.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-        const line = lines.find((x) => !x.startsWith('#'));
-        if (line) desc = line.slice(0, 72);
-      }
-
-      out.push({
-        id,
-        name: this.prettyNameFromId(id),
-        desc,
-        tags: ['Local', ...this.guessTags(id, desc)].slice(0, 3),
-        category: this.guessCategory(id, desc),
-        rating: 5.0,
-        installs: 0,
-        source: 'local',
-      });
-    }
-
-    return out;
-  }
-
   protected async runSkillTest(skill: HubSkillItem | null): Promise<void> {
     if (!skill) return;
     this.testingSkill.set(true);
@@ -228,7 +223,10 @@ export class SkillsPrototypePageComponent {
       }
 
       const prompt = this.testInput().trim() || '请生成一个简短的技能执行示例。';
-      const md = await window.zytrader.fs.read(`skills/${skill.id}/SKILL.md`, { scope: 'workspace' });
+      const installedRec = this.installedSkills().find((x) => x.id === skill.id);
+      const md = installedRec
+        ? await this.skillIndex.readSkillMd({ contentPath: installedRec.contentPath, scope: installedRec.scope })
+        : { ok: false, content: '' };
       const skillContent = md.ok ? md.content : `# ${skill.name}\n\n${skill.desc}`;
 
       const agentResult = await this.facade.runSkillWithAgent({
@@ -252,11 +250,83 @@ export class SkillsPrototypePageComponent {
     }
   }
 
+  private async refreshInstalledSkills(): Promise<void> {
+    const records = await this.skillIndex.listInstalledSkills();
+    const activeId = this.facade.skills().find((x) => x.active)?.id;
+
+    const vm = records.map((r) => this.toInstalledVm(r, activeId));
+    this.installedSkills.set(vm);
+    this.syncFacadeWithInstalled(vm);
+  }
+
+  private loadLocalSkillsFromIndex(): HubSkillItem[] {
+    return this.installedSkills()
+      .filter((x) => x.status !== 'invalid')
+      .map((x) => ({
+        id: x.id,
+        name: x.name,
+        desc: x.desc,
+        tags: ['Vault', ...this.guessTags(x.id, x.desc)].slice(0, 3),
+        category: this.guessCategory(x.id, x.desc),
+        rating: 5.0,
+        installs: 0,
+        source: 'local' as const,
+      }));
+  }
+
+  /** 目录 watcher 触发：只重扫 Vault 技能并合并进当前市场列表，不打远程 clawhub */
+  private async refreshLocalSkillMarket(): Promise<void> {
+    await this.refreshInstalledSkills();
+    const local = this.loadLocalSkillsFromIndex();
+    this.hubSkills.update((cur) => {
+      const remote = cur.filter((x) => x.source !== 'local');
+      return this.mergeSkills(local, remote);
+    });
+    const sel = this.selectedHubSkillId();
+    if (sel) void this.loadSkillPreview(sel);
+    this.cdr.markForCheck();
+  }
+
+  private toInstalledVm(record: SkillRecord, activeId?: string): InstalledSkillVm {
+    return {
+      id: record.id,
+      name: record.name,
+      desc: record.desc,
+      source: record.source,
+      status: record.status,
+      installedAt: record.installedAt,
+      updatedAt: record.updatedAt,
+      active: activeId ? activeId === record.id : false,
+      contentPath: record.contentPath,
+      scope: record.scope,
+    };
+  }
+
+  private syncFacadeWithInstalled(installed: InstalledSkillVm[]): void {
+    for (const it of installed) {
+      if (!this.facade.skills().some((s) => s.id === it.id)) {
+        this.facade.installSkillFromHub({
+          id: it.id,
+          name: it.name,
+          desc: it.desc,
+          source: it.source,
+          status: it.status,
+          installedAt: it.installedAt,
+          updatedAt: it.updatedAt,
+          activate: false,
+        });
+      }
+    }
+  }
+
   private async loadSkillPreview(skillId: string): Promise<void> {
-    const read = await window.zytrader.fs.read(`skills/${skillId}/SKILL.md`, { scope: 'workspace' });
-    if (read.ok) {
-      this.skillPreview.set(read.content.slice(0, 12000));
-      return;
+    const rec = this.installedSkills().find((x) => x.id === skillId);
+    if (rec) {
+      const read = await this.skillIndex.readSkillMd({ contentPath: rec.contentPath, scope: rec.scope });
+      if (read.ok) {
+        this.skillPreview.set(read.content.slice(0, 12000));
+        return;
+      }
     }
 
     const hub = this.hubSkills().find((x) => x.id === skillId);
@@ -343,6 +413,11 @@ export class SkillsPrototypePageComponent {
     if (src.includes('api')) tags.push('API');
     if (!tags.length) tags.push('General');
     return tags.slice(0, 3);
+  }
+
+  protected formatInstalledMeta(item: InstalledSkillVm): string {
+    const status = item.status === 'invalid' ? '无效' : '正常';
+    return `Vault 技能根 · ${status}`;
   }
 
   private escapeArg(raw: string): string {

@@ -124,6 +124,100 @@
     </div>
   </section>
 
+  <section class="card-panel conn-panel">
+    <h3 class="panel-title">Vault 布局（技能 / 插件根目录）</h3>
+    <p class="panel-sub">相对 Vault 根的路径，写入 <code>06-SYSTEM/directory.config.json</code>（若仅有旧库则为 <code>05-SYSTEM</code>）。与资源管理器「记忆目录」结构一致。</p>
+    <div class="conn-grid">
+      <label class="conn-field">
+        <span>技能根目录（agent-skills）</span>
+        <input
+          type="text"
+          [value]="vaultSkillRel()"
+          (input)="vaultSkillRel.set($any($event.target).value)"
+          placeholder="03-AGENT-TOOLS/01-Skills"
+        />
+      </label>
+      <label class="conn-field">
+        <span>插件根目录（agent-plugins）</span>
+        <input
+          type="text"
+          [value]="vaultPluginRel()"
+          (input)="vaultPluginRel.set($any($event.target).value)"
+          placeholder="03-AGENT-TOOLS/02-Plugins"
+        />
+      </label>
+      <div class="conn-field" style="grid-column: 1 / -1; display: flex; gap: 8px; align-items: center">
+        <button type="button" class="side-btn" (click)="loadVaultLayoutPaths()">重新读取</button>
+        <button type="button" class="side-btn" (click)="saveVaultLayoutPaths()">保存 Vault 路径</button>
+      </div>
+    </div>
+    @if (vaultLayoutMessage()) {
+      <p class="panel-sub" style="margin-top: 8px">{{ vaultLayoutMessage() }}</p>
+    }
+  </section>
+
+  <section class="card-panel conn-panel">
+    <h3 class="panel-title">记忆管道与自动做梦</h3>
+    <p class="panel-sub">
+      控制每轮对话结束后的提取 / 会话记忆 / 自动做梦管线。参数保存在本机
+      <code>zyfront:memory-pipeline-config-v1</code>；巩固时间戳写在 Vault 的
+      <code>02-AGENT-MEMORY/07-Meta/.dream.state.json</code>，做梦摘要追加到长期用户目录下的
+      <code>AUTO_DREAM.md</code>。
+    </p>
+    <div class="conn-grid">
+      <label class="conn-field conn-field--check">
+        <span>启用记忆管道（总开关）</span>
+        <input
+          type="checkbox"
+          [checked]="memoryPipelineEnabled()"
+          (change)="memoryPipelineEnabled.set($any($event.target).checked)"
+        />
+      </label>
+      <label class="conn-field conn-field--check">
+        <span>启用自动做梦</span>
+        <input
+          type="checkbox"
+          [checked]="dreamEnabled()"
+          (change)="dreamEnabled.set($any($event.target).checked)"
+        />
+      </label>
+      <label class="conn-field">
+        <span>巩固最小间隔（小时）</span>
+        <input
+          type="number"
+          min="1"
+          [value]="dreamMinHours()"
+          (input)="onDreamMinHoursInput($event)"
+        />
+      </label>
+      <label class="conn-field">
+        <span>最少会话数（进程内）</span>
+        <input
+          type="number"
+          min="1"
+          [value]="dreamMinSessions()"
+          (input)="onDreamMinSessionsInput($event)"
+        />
+      </label>
+      <label class="conn-field">
+        <span>做梦评估节流（分钟）</span>
+        <input
+          type="number"
+          min="1"
+          [value]="dreamScanThrottleMinutes()"
+          (input)="onDreamScanThrottleInput($event)"
+        />
+      </label>
+      <div class="conn-field" style="grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+        <button type="button" class="side-btn" (click)="saveMemoryPipelineSettings()">保存记忆管道</button>
+        <button type="button" class="side-btn" (click)="resetMemoryPipelineDefaults()">恢复记忆默认</button>
+      </div>
+    </div>
+    @if (memoryPipelineMessage()) {
+      <p class="panel-sub" style="margin-top: 8px">{{ memoryPipelineMessage() }}</p>
+    }
+  </section>
+
   <div class="models-hub-grid">
     <section class="card-trend card-panel">
       <h3 class="panel-title">TOKEN 消耗趋势（近 7 日）</h3>

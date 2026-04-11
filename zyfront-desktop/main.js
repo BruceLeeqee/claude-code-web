@@ -4,6 +4,7 @@ const path = require('path')
 const os = require('os')
 const fs = require('fs/promises')
 const { existsSync, readFileSync, mkdirSync } = require('fs')
+const fsNative = require('fs')
 const { exec, spawn } = require('child_process')
 const pty = require('node-pty')
 
@@ -33,6 +34,10 @@ if (!electronModule?.app || typeof electronModule.app.whenReady !== 'function') 
 }
 
 const { app, BrowserWindow, ipcMain, shell, dialog } = electronModule
+
+/** @type {Map<string, { watcher: import('fs').FSWatcher; debounceTimer: ReturnType<typeof setTimeout> | null; wc: Electron.WebContents; closed: boolean }>} */
+const fsDirWatchers = new Map()
+let fsWatchSeq = 0
 
 let win
 let computerWin
@@ -83,69 +88,75 @@ function promiseWithTimeout(promise, ms, label) {
 const DEFAULT_DIRECTORY_CONFIG = {
   version: 1,
   keys: {
-    inbox: '00-INBOX',
-    'inbox-human': '00-INBOX/human',
-    'inbox-agent': '00-INBOX/agent',
+    inbox: '00-HUMAN-TEMP',
+    'inbox-human': '00-HUMAN-TEMP/human',
+    'inbox-agent': '00-HUMAN-TEMP/agent',
     'human-notes': '01-HUMAN-NOTES',
     'agent-memory': '02-AGENT-MEMORY',
     'agent-short-term': '02-AGENT-MEMORY/01-Short-Term',
-    'agent-long-term': '02-AGENT-MEMORY/02-Long-Term',
-    'agent-context': '02-AGENT-MEMORY/03-Context',
-    'agent-meta': '02-AGENT-MEMORY/04-Meta',
-    projects: '03-PROJECTS',
-    resources: '04-RESOURCES',
-    system: '05-SYSTEM',
+    /** 兼容旧工具名：与 agent-long-user 同目录 */
+    'agent-long-term': '02-AGENT-MEMORY/02-Long-User',
+    'agent-long-user': '02-AGENT-MEMORY/02-Long-User',
+    'agent-long-feedback': '02-AGENT-MEMORY/03-Long-Feedback',
+    'agent-long-project': '02-AGENT-MEMORY/04-Long-Projects',
+    'agent-long-reference': '02-AGENT-MEMORY/05-Long-Reference',
+    'agent-context': '02-AGENT-MEMORY/06-Context',
+    /** 索引与元数据同层 07-Meta */
+    'agent-meta': '02-AGENT-MEMORY/07-Meta',
+    /** 长期记忆索引：manifest / time-index / topic-index */
+    'agent-memory-index': '02-AGENT-MEMORY/07-Meta',
+    'agent-skills': '03-AGENT-TOOLS/01-Skills',
+    'agent-plugins': '03-AGENT-TOOLS/02-Plugins',
+    projects: '04-PROJECTS',
+    resources: '05-RESOURCES',
+    system: '06-SYSTEM',
   },
 }
 
 const VAULT_SUBDIRS = [
-  path.join('00-INBOX', 'human'),
-  path.join('00-INBOX', 'agent'),
+  path.join('00-HUMAN-TEMP', 'human'),
+  path.join('00-HUMAN-TEMP', 'agent'),
   path.join('01-HUMAN-NOTES', '01-Daily'),
   path.join('01-HUMAN-NOTES', '02-Knowledge'),
   path.join('01-HUMAN-NOTES', '03-Notes'),
   path.join('01-HUMAN-NOTES', '04-Tags'),
   path.join('02-AGENT-MEMORY', '01-Short-Term'),
-  path.join('02-AGENT-MEMORY', '02-Long-Term'),
-  path.join('02-AGENT-MEMORY', '03-Context'),
-  path.join('02-AGENT-MEMORY', '04-Meta'),
-  '03-PROJECTS',
-  path.join('04-RESOURCES', 'images'),
-  path.join('04-RESOURCES', 'files'),
-  path.join('04-RESOURCES', 'media'),
-  path.join('04-RESOURCES', 'templates'),
-  '05-SYSTEM',
+  path.join('02-AGENT-MEMORY', '02-Long-User'),
+  path.join('02-AGENT-MEMORY', '03-Long-Feedback'),
+  path.join('02-AGENT-MEMORY', '04-Long-Projects'),
+  path.join('02-AGENT-MEMORY', '05-Long-Reference'),
+  path.join('02-AGENT-MEMORY', '06-Context'),
+  path.join('02-AGENT-MEMORY', '07-Meta'),
+  path.join('02-AGENT-MEMORY', '07-Meta', 'tools'),
+  path.join('03-AGENT-TOOLS', '01-Skills'),
+  path.join('03-AGENT-TOOLS', '02-Plugins'),
+  '04-PROJECTS',
+  path.join('05-RESOURCES', 'images'),
+  path.join('05-RESOURCES', 'files'),
+  path.join('05-RESOURCES', 'media'),
+  path.join('05-RESOURCES', 'templates'),
+  '06-SYSTEM',
 ]
 
-const VAULT_README_CONTENT = `Obsidian-Agent-Vault/  # 根目录（可自定义路径）
-├── 00-INBOX/          # 临时收纳（人类随手记、Agent临时记忆、未分类文件）
-│   ├── human/         # 人类临时笔记
-│   └── agent/         # Agent临时记忆（短期上下文、未归档记忆）
-├── 01-HUMAN-NOTES/    # 人类正式笔记（对应Obsidian原生笔记）
-│   ├── 01-Daily/      # 日记（按日期归档）
-│   ├── 02-Knowledge/  # 知识笔记（按领域分类，支持双链）
-│   ├── 03-Notes/      # 普通笔记（随手整理的内容）
-│   └── 04-Tags/       # 标签归档（按标签聚合，可选）
-├── 02-AGENT-MEMORY/   # Claude Code Agent记忆（核心目录，标准化存储）
-│   ├── 01-Short-Term/ # 短期记忆（会话上下文、临时决策，定期清理）
-│   ├── 02-Long-Term/  # 长期记忆（核心知识、固定规则、用户偏好，持久化）
-│   ├── 03-Context/    # 上下文记忆（与用户交互的历史上下文，关联笔记）
-│   └── 04-Meta/       # 记忆元数据（记忆更新日志、关联映射表）
-├── 03-PROJECTS/       # 项目管理（人类+Agent协同项目）
-│   ├── 项目1/         # 单个项目目录
-│   │   ├── notes/     # 项目相关人类笔记
-│   │   ├── memory/    # 项目相关Agent记忆（项目专属规则、进度记忆）
-│   │   └── resources/ # 项目相关资源
-│   └── 项目2/
-├── 04-RESOURCES/      # 通用资源（所有模块共享）
-│   ├── images/        # 图片（笔记插图、Agent生成图片）
-│   ├── files/         # 附件（PDF、文档、压缩包）
-│   ├── media/         # 媒体（音频、视频）
-│   └── templates/     # 模板（人类笔记模板、Agent记忆模板）
-└── 05-SYSTEM/         # 系统配置（目录规则、Agent记忆规则、解析配置）
-    ├── directory.config.json # 目录配置（可自定义目录映射）
-    ├── rule.config.json      # 文件处理规则配置
-    └── agent.config.json     # Agent记忆配置`
+const VAULT_README_CONTENT = `AGENT-ROOT/  # 根目录（可自定义路径）
+├── 00-HUMAN-TEMP/     # 临时收纳（人类随手记、Agent 临时记忆）
+│   ├── human/
+│   └── agent/
+├── 01-HUMAN-NOTES/    # 人类正式笔记
+├── 02-AGENT-MEMORY/   # Agent 记忆
+│   ├── 01-Short-Term/
+│   ├── 02-Long-User/
+│   ├── 03-Long-Feedback/
+│   ├── 04-Long-Projects/
+│   ├── 05-Long-Reference/
+│   ├── 06-Context/
+│   └── 07-Meta/       # 索引 manifest / time-index / topic-index；子目录 tools 构建索引
+├── 03-AGENT-TOOLS/
+│   ├── 01-Skills/     # 技能根（SKILL.md）
+│   └── 02-Plugins/    # 插件根
+├── 04-PROJECTS/       # 工程与代码仓库（唯一 projects 根）
+├── 05-RESOURCES/
+└── 06-SYSTEM/         # directory.config.json / rule.config.json / agent.config.json`
 
 function normalizeRelPath(p = '') {
   return String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '')
@@ -258,7 +269,7 @@ function computeVaultRoot(workspaceRoot, vaultCfg) {
 
   // nested 模式默认策略：
   // 1) 若显式配置 nestedRelative，则按配置拼接
-  // 2) 若工作区位于 .../AGENT-ROOT/03-PROJECTS/<project>，则 vault 根自动回退到外层 AGENT-ROOT
+  // 2) 若工作区位于 .../AGENT-ROOT/04-PROJECTS/<project>（或旧版 03-PROJECTS），vault 根回退到外层 AGENT-ROOT
   // 3) 其他情况回退到 workspaceRoot
   if (nestedRel) {
     const vr = nestedRel === '.' ? workspaceRoot : path.join(workspaceRoot, nestedRel)
@@ -267,13 +278,82 @@ function computeVaultRoot(workspaceRoot, vaultCfg) {
 
   const wsNorm = path.normalize(workspaceRoot)
   const parts = wsNorm.split(path.sep)
-  const projectsIdx = parts.findIndex((p, i) => p === '03-PROJECTS' && i > 0)
-  if (projectsIdx > 0 && parts[projectsIdx - 1] === 'AGENT-ROOT') {
+  const projectsIdx = parts.findIndex(
+    (p, i) => i > 0 && parts[i - 1] === 'AGENT-ROOT' && (p === '04-PROJECTS' || p === '03-PROJECTS'),
+  )
+  if (projectsIdx > 0) {
     const root = parts.slice(0, projectsIdx).join(path.sep) || path.sep
     return { vaultRoot: path.normalize(root), mode: 'nested', projectKey: pk }
   }
 
   return { vaultRoot: wsNorm, mode: 'nested', projectKey: pk }
+}
+
+/** 在 Vault 根生成 Cursor/VS Code 排除项（库层目录）；仅当尚无 .vscode/settings.json 时写入，避免覆盖用户配置 */
+const AGENT_ROOT_CURSOR_HIDE_DIRS = {
+  '00-HUMAN-TEMP': true,
+  '01-HUMAN-NOTES': true,
+  '02-AGENT-MEMORY': true,
+  '03-AGENT-TOOLS': true,
+  '03-PROJECTS': true,
+  '04-RESOURCES': true,
+  '05-RESOURCES': true,
+  '05-SYSTEM': true,
+  '06-SYSTEM': true,
+}
+
+async function ensureVaultRootCursorHideSettings(vaultRoot) {
+  if (!vaultRoot || !existsSync(vaultRoot)) return
+  try {
+    const vscDir = path.join(vaultRoot, '.vscode')
+    const vscFp = path.join(vscDir, 'settings.json')
+    if (existsSync(vscFp)) {
+      try {
+        const raw = await fs.readFile(vscFp, 'utf8')
+        let cur = JSON.parse(raw)
+        if (typeof cur !== 'object' || cur === null) cur = {}
+        let dirty = false
+        const fe =
+          typeof cur['files.exclude'] === 'object' &&
+          cur['files.exclude'] !== null &&
+          !Array.isArray(cur['files.exclude'])
+            ? { ...cur['files.exclude'] }
+            : {}
+        const se =
+          typeof cur['search.exclude'] === 'object' &&
+          cur['search.exclude'] !== null &&
+          !Array.isArray(cur['search.exclude'])
+            ? { ...cur['search.exclude'] }
+            : {}
+        for (const k of Object.keys(AGENT_ROOT_CURSOR_HIDE_DIRS)) {
+          if (fe[k] === undefined) {
+            fe[k] = true
+            dirty = true
+          }
+          if (se[k] === undefined) {
+            se[k] = true
+            dirty = true
+          }
+        }
+        if (dirty) {
+          cur['files.exclude'] = fe
+          cur['search.exclude'] = se
+          await fs.writeFile(vscFp, JSON.stringify(cur, null, 2), 'utf8')
+        }
+      } catch {
+        /* 已有文件但非合法 JSON 等 */
+      }
+      return
+    }
+    await fs.mkdir(vscDir, { recursive: true })
+    const blob = {
+      'files.exclude': { ...AGENT_ROOT_CURSOR_HIDE_DIRS },
+      'search.exclude': { ...AGENT_ROOT_CURSOR_HIDE_DIRS },
+    }
+    await fs.writeFile(vscFp, JSON.stringify(blob, null, 2), 'utf8')
+  } catch {
+    /* 忽略：无写权限等 */
+  }
 }
 
 async function refreshRuntime() {
@@ -287,16 +367,21 @@ async function refreshRuntime() {
 
   const { root: ws, fromEnv } = computeWorkspaceRoot(cfg)
   const { vaultRoot, mode, projectKey } = computeVaultRoot(ws, cfg.vault || {})
-  const sysDir = path.join(vaultRoot, '05-SYSTEM')
+  const sysDir6 = path.join(vaultRoot, '06-SYSTEM')
+  const sysDir5 = path.join(vaultRoot, '05-SYSTEM')
   RUNTIME.workspaceRoot = ws
   RUNTIME.vaultRoot = vaultRoot
   RUNTIME.vaultMode = mode
   RUNTIME.projectKey = projectKey
   RUNTIME.workspaceFromEnv = fromEnv
-  RUNTIME.vaultConfigured = existsSync(sysDir)
+  RUNTIME.vaultConfigured = existsSync(sysDir6) || existsSync(sysDir5)
+  void ensureVaultRootCursorHideSettings(vaultRoot)
 }
 
 const ptySessions = new Map()
+
+/** 合并并发：在 vault 的 07-Meta/tools 下执行 npm install + build-manifest.mjs */
+let memoryIndexBuildPromise = null
 
 function isPathUnder(child, parent) {
   const c = path.normalize(child)
@@ -458,15 +543,30 @@ function createPtySession({ id, cwd = '.', cwdScope = 'workspace', cols = 120, r
   return { ok: true, id }
 }
 
+function pickPrimarySystemDirForVault(root) {
+  const v6 = path.join(root, '06-SYSTEM')
+  const v5 = path.join(root, '05-SYSTEM')
+  if (existsSync(v6)) return '06-SYSTEM'
+  if (existsSync(v5)) return '05-SYSTEM'
+  return '06-SYSTEM'
+}
+
 async function readDirectoryConfigFromDisk() {
-  const fp = path.join(RUNTIME.vaultRoot, '05-SYSTEM', 'directory.config.json')
-  try {
-    const raw = await fs.readFile(fp, 'utf8')
-    const o = JSON.parse(raw)
-    return { ...DEFAULT_DIRECTORY_CONFIG, ...o, keys: { ...DEFAULT_DIRECTORY_CONFIG.keys, ...(o.keys || {}) } }
-  } catch {
-    return { ...DEFAULT_DIRECTORY_CONFIG }
+  const root = RUNTIME.vaultRoot
+  const candidates = [
+    path.join(root, '06-SYSTEM', 'directory.config.json'),
+    path.join(root, '05-SYSTEM', 'directory.config.json'),
+  ]
+  for (const fp of candidates) {
+    try {
+      const raw = await fs.readFile(fp, 'utf8')
+      const o = JSON.parse(raw)
+      return { ...DEFAULT_DIRECTORY_CONFIG, ...o, keys: { ...DEFAULT_DIRECTORY_CONFIG.keys, ...(o.keys || {}) } }
+    } catch {
+      /* try next */
+    }
   }
+  return { ...DEFAULT_DIRECTORY_CONFIG }
 }
 
 async function vaultBootstrap() {
@@ -482,7 +582,8 @@ async function vaultBootstrap() {
     await fs.writeFile(readmePath, VAULT_README_CONTENT, 'utf8')
   }
 
-  const sys = path.join(root, '05-SYSTEM')
+  const sysRel = pickPrimarySystemDirForVault(root)
+  const sys = path.join(root, sysRel)
   const dc = path.join(sys, 'directory.config.json')
   if (!existsSync(dc)) {
     await fs.writeFile(dc, JSON.stringify(DEFAULT_DIRECTORY_CONFIG, null, 2), 'utf8')
@@ -496,7 +597,19 @@ async function vaultBootstrap() {
     version: 1,
     projectKey: RUNTIME.projectKey,
     memory: {
-      protectedPaths: ['README.md', '00-INBOX', '01-HUMAN-NOTES', '02-AGENT-MEMORY', '03-PROJECTS', '04-RESOURCES', '05-SYSTEM'],
+      protectedPaths: [
+        'README.md',
+        '00-HUMAN-TEMP',
+        '00-INBOX',
+        '01-HUMAN-NOTES',
+        '02-AGENT-MEMORY',
+        '03-AGENT-TOOLS',
+        '04-PROJECTS',
+        '05-RESOURCES',
+        '04-RESOURCES',
+        '06-SYSTEM',
+        '05-SYSTEM',
+      ],
       protectedDepth: 2,
       shortTermRetentionDays: 7,
       autoPrune: false,
@@ -642,6 +755,72 @@ async function launchWindowsRegisteredApp(appId) {
   return { ok: false, error: `unknown app: ${appId} (supported: chrome, edge)` }
 }
 
+async function buildVaultMemoryIndex() {
+  await refreshRuntime()
+  const root = RUNTIME.vaultRoot
+  if (!root || !existsSync(root)) {
+    return { ok: false, error: 'vault root not configured or missing' }
+  }
+
+  const dc = await readDirectoryConfigFromDisk()
+  const relMeta = dc.keys['agent-memory-index']
+  if (!relMeta || typeof relMeta !== 'string') {
+    return { ok: false, error: 'directory.config.json missing agent-memory-index key' }
+  }
+
+  const toolsDir = path.normalize(path.join(root, ...relMeta.split('/'), 'tools'))
+  if (!isPathUnder(toolsDir, root)) {
+    return { ok: false, error: 'invalid memory index tools path' }
+  }
+
+  const buildScript = path.join(toolsDir, 'build-manifest.mjs')
+  const pkgJson = path.join(toolsDir, 'package.json')
+  if (!existsSync(buildScript)) {
+    return {
+      ok: false,
+      error: `missing ${path.join(relMeta, 'tools', 'build-manifest.mjs')} under vault`,
+    }
+  }
+  if (!existsSync(pkgJson)) {
+    return { ok: false, error: `missing ${path.join(relMeta, 'tools', 'package.json')} under vault` }
+  }
+
+  const command = 'npm install --no-fund --no-audit && node build-manifest.mjs'
+  const execOptions = {
+    cwd: toolsDir,
+    windowsHide: false,
+    timeout: 600_000,
+    maxBuffer: 20 * 1024 * 1024,
+    ...(process.platform === 'win32' ? { shell: process.env.ComSpec || 'cmd.exe' } : {}),
+  }
+
+  return await new Promise((resolve) => {
+    exec(command, execOptions, (error, stdout, stderr) => {
+      const code = error && typeof error.code === 'number' ? error.code : 0
+      const out = String(stdout ?? '')
+      const err = String(stderr ?? '')
+      if (error) {
+        resolve({
+          ok: false,
+          code,
+          toolsDir,
+          error: error.killed ? 'memory index build timed out after 10 minutes' : error.message || String(error),
+          stdout: out.slice(-12_000),
+          stderr: err.slice(-12_000),
+        })
+        return
+      }
+      resolve({
+        ok: true,
+        code: 0,
+        toolsDir,
+        stdout: out.slice(-4000),
+        stderr: err.slice(-4000),
+      })
+    })
+  })
+}
+
 function registerIpcHandlers() {
   ipcMain.handle('zytrader:fs:list', async (_event, dir = '.', opts = {}) => {
     const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
@@ -691,6 +870,51 @@ function registerIpcHandlers() {
     const abs = resolveScopedPath(targetPath, scope)
     await fs.rm(abs, { recursive: true, force: true })
     return { ok: true, path: targetPath, scope }
+  })
+
+  ipcMain.handle('zytrader:fs:watchDir', async (event, dir = '.', opts = {}) => {
+    const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
+    let abs
+    try {
+      abs = resolveScopedPath(dir, scope)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+    const watchId = `fsW_${++fsWatchSeq}`
+    const wc = event.sender
+    const rec = { watcher: null, debounceTimer: /** @type {ReturnType<typeof setTimeout> | null} */ (null), wc, closed: false }
+    try {
+      rec.watcher = fsNative.watch(
+        abs,
+        { recursive: true },
+        () => {
+          if (rec.closed || wc.isDestroyed()) return
+          if (rec.debounceTimer) clearTimeout(rec.debounceTimer)
+          rec.debounceTimer = setTimeout(() => {
+            rec.debounceTimer = null
+            if (rec.closed || wc.isDestroyed()) return
+            wc.send('zytrader:fs:watch', { watchId, scope, dir, ts: Date.now() })
+          }, 280)
+        },
+      )
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+    fsDirWatchers.set(watchId, rec)
+    return { ok: true, watchId, dir, scope }
+  })
+
+  ipcMain.handle('zytrader:fs:unwatchDir', async (_event, watchId) => {
+    const rec = fsDirWatchers.get(watchId)
+    if (!rec) return { ok: false, error: 'unknown_watch' }
+    rec.closed = true
+    if (rec.debounceTimer) clearTimeout(rec.debounceTimer)
+    rec.debounceTimer = null
+    try {
+      rec.watcher.close()
+    } catch {}
+    fsDirWatchers.delete(watchId)
+    return { ok: true }
   })
 
   ipcMain.handle('zytrader:terminal:exec', async (_event, command, cwd = '.', cwdScope = 'workspace') => {
@@ -959,6 +1183,18 @@ function registerIpcHandlers() {
       return { ok: false, error: 'invalid path' }
     }
     return { ok: true, key: k, relative: rel, absolute: norm }
+  })
+
+  ipcMain.handle('zytrader:vault:buildMemoryIndex', async () => {
+    try {
+      if (memoryIndexBuildPromise) return await memoryIndexBuildPromise
+      memoryIndexBuildPromise = buildVaultMemoryIndex().finally(() => {
+        memoryIndexBuildPromise = null
+      })
+      return await memoryIndexBuildPromise
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
   })
 }
 

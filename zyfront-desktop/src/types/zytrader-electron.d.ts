@@ -50,6 +50,14 @@ declare global {
           targetPath: string,
           opts?: { scope?: ZytraderFsScope },
         ) => Promise<{ ok: boolean; path: string; scope?: ZytraderFsScope }>
+        watchDir: (
+          dir?: string,
+          opts?: { scope?: ZytraderFsScope },
+        ) => Promise<{ ok: boolean; watchId?: string; dir?: string; scope?: ZytraderFsScope; error?: string }>
+        unwatchDir: (watchId: string) => Promise<{ ok: boolean; error?: string }>
+        onDirectoryChange: (
+          callback: (payload: { watchId: string; scope?: ZytraderFsScope; dir?: string; ts?: number }) => void,
+        ) => () => void
       }
       terminal: {
         exec: (
@@ -99,6 +107,14 @@ declare global {
           vault?: ZytraderVaultPartialConfig
           vaultRoot?: string
           error?: string
+        }>
+        buildMemoryIndex: () => Promise<{
+          ok: boolean
+          error?: string
+          code?: number
+          toolsDir?: string
+          stdout?: string
+          stderr?: string
         }>
       }
       host: {
