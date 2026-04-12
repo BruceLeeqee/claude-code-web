@@ -38,9 +38,13 @@ function extractTextFromStreamEvent(obj: Record<string, unknown>): string | null
 function extractThinkingFromStreamEvent(obj: Record<string, unknown>): string | null {
   if (obj['type'] !== 'content_block_delta' || !obj['delta'] || typeof obj['delta'] !== 'object') return null;
   const d = obj['delta'] as Record<string, unknown>;
-  if (d['type'] !== 'thinking_delta') return null;
-  if (typeof d['thinking'] === 'string') return d['thinking'];
-  if (typeof d['text'] === 'string') return d['text'];
+  if (d['type'] === 'thinking_delta') {
+    if (typeof d['thinking'] === 'string') return d['thinking'];
+    if (typeof d['text'] === 'string') return d['text'];
+    return null;
+  }
+  // 部分网关/兼容层在 thinking 块上仍带 `thinking` 字段但 type 命名不一致
+  if (typeof d['thinking'] === 'string' && d['thinking'].length > 0) return d['thinking'];
   return null;
 }
 

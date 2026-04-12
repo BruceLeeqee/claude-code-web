@@ -29,7 +29,7 @@ import { AppSettingsService } from '../../../core/app-settings.service';
 import { REQUEST_CFG_JSON_KEY } from '../../../core/runtime-settings-sync.service';
 import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
 import { AgentMemoryService } from '../../../core/agent-memory.service';
-import { Terminal } from 'xterm';
+import { Terminal, type IDisposable, type IMarker } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import type { ChatMessage, CoordinationMode, CoordinationStep, StreamChunk } from 'zyfront-core';
 import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../../../core/zyfront-core.providers';
@@ -66,6 +66,9 @@ const WORKBENCH_ELECTRON_TOOLS_SYSTEM_PROMPT = `【运行环境】ZyTrader 桌�
 const RECENT_STORAGE_KEY_V2 = 'zytrader-workbench-recent-turns:v2';
 const RECENT_STORAGE_KEY_V1 = 'zytrader-workbench-recent-turns:v1';
 const SESSION_ID = 'workbench-terminal-ai';
+
+/** 主终端各轮 [Thinking#N] 折叠块元数据（与 SESSION_ID 绑定，供多轮对话后仍可 Ctrl+O） */
+const WORKBENCH_THINKING_BLOCKS_SESSION_KEY = `zyfront-workbench-thinking-blocks:v1:${SESSION_ID}`;
 
 /** 资源管理器：AGENT-ROOT 标准顶层目录（顺序固定） */
 const VAULT_EXPLORER_TOP = [
@@ -452,11 +455,51 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   /** 当前轮 thinking 实时输出状态（仅展示，不入命令行输入缓冲） */
   private thinkingHeaderShown = false;
   private answerHeaderShown = false;
-  private thinkingCollapsed = true;
   private thinkingBuffer = '';
   private thinkingPrintedLen = 0;
-  private thinkingFoldHintShown = false;
   private thinkingHasNonChinese = false;
+  /** 本轮流式输出占用的物理行数（用于结束后折叠 Thinking 区） */
+  private streamConsumedLines = 0;
+  /** 本轮助手回答纯文本（用于折叠后重绘） */
+  private roundAnswerAccumulator = '';
+  /** 本轮主终端中回显的 Tool 行（顺序与流式一致，折叠时一并擦写） */
+  private streamToolEchoes: string[] = [];
+  /**
+   * 当前流式轮次已分配的 [Thinking#N] 编号（首段 thinking/delta 写入前确定，finalize 与此对齐）。
+   * 避免终端只出现无编号的 `[Thinking]` 导致 Ctrl+O 无法识别。
+   */
+  private streamingThinkingBlockId: number | null = null;
+  /**
+   * 在首个 tool_call 之前，将普通 `delta` 当作思考流写入（解决网关把推理混在 text_delta 里、被标成 [Answer] 的问题）。
+   */
+  private streamRouteDeltaToThinking = false;
+  /**
+   * 本轮流式写入主终端前一刻的 buffer 行锚点（用于 finalize 擦除行数，避免 streamConsumedLines 与真实换行不一致时
+   * CUU 过大把用户提示与历史回答一并清掉）。
+   */
+  private assistantStreamOutputStartMarker?: IMarker;
+  /** 折叠态 Thinking 块编号 → 原文与折叠尾（供行内替换展开/收起） */
+  private nextThinkingBlockId = 1;
+  private thinkingBlocksById = new Map<
+    number,
+    {
+      text: string;
+      hasNonChinese: boolean;
+      foldSuffixAnsi: string;
+      hintPhysicalRows: number;
+      tagEndCol0: number;
+    }
+  >();
+  /** 折叠行写入后注册的 buffer 标记（保留给潜在装饰层/兼容；主路径为行内缓冲区替换） */
+  private thinkingBlockMarkers: { id: number; marker: IMarker }[] = [];
+  private thinkingAllExpanded = false;
+  private thinkingAllExpandDisposables: IDisposable[] = [];
+  /** Ctrl+O 单块展开的装饰订阅（兼容路径） */
+  private expandedSingleById = new Map<number, IDisposable[]>();
+  /** 当前为「行内替换」展开态的 Thinking 块 id */
+  private thinkingInlineExpandedIds = new Set<number>();
+  /** 递增以取消尚未完成的「延迟挂装饰」动画帧回调 */
+  private thinkingOverlayAttachGen = 0;
   private directiveTabCycle = 0;
 
   protected readonly leftPanelVisible = signal(true);
@@ -542,6 +585,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
 
     this.resizeObserver?.disconnect();
+    this.disposeAllThinkingOverlays();
     this.xterm?.dispose();
 
     this.psResizeObserver?.disconnect();
@@ -1681,6 +1725,613 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     await this.refreshShortTermMemoryStats();
   }
 
+  private bumpStreamLineBudgetForWrite(fragment: string): void {
+    if (!fragment) return;
+    this.streamConsumedLines += this.countPhysicalTerminalLines(fragment.replaceAll('\n', '\r\n'));
+  }
+
+  private disposeAssistantStreamOutputStartMarker(): void {
+    try {
+      this.assistantStreamOutputStartMarker?.dispose();
+    } catch {
+      /* ignore */
+    }
+    this.assistantStreamOutputStartMarker = undefined;
+  }
+
+  /** 在本轮首次向主终端写入流式内容之前调用，锚定擦除上界（当前光标所在 buffer 行）。 */
+  private ensureAssistantStreamOutputStartMarker(): void {
+    if (this.assistantStreamOutputStartMarker || !this.xterm) return;
+    const m = this.xterm.registerMarker(0);
+    if (m) this.assistantStreamOutputStartMarker = m;
+  }
+
+  /** 终端列宽上的近似显示宽度（CJK 等按 2 列计），用于换行估算 */
+  private stringDisplayWidth(s: string): number {
+    let w = 0;
+    for (const ch of s) {
+      const cp = ch.codePointAt(0);
+      if (cp === undefined) continue;
+      if (
+        (cp >= 0x1100 && cp <= 0x115f) ||
+        (cp >= 0x2e80 && cp <= 0x9fff) ||
+        (cp >= 0xac00 && cp <= 0xd7a3) ||
+        (cp >= 0xf900 && cp <= 0xfaff) ||
+        (cp >= 0xfe30 && cp <= 0xfe6f) ||
+        (cp >= 0xff00 && cp <= 0xff60) ||
+        (cp >= 0xffe0 && cp <= 0xffe6)
+      ) {
+        w += 2;
+      } else {
+        w += 1;
+      }
+    }
+    return w;
+  }
+
+  private countPhysicalTerminalLines(s: string): number {
+    const cols = Math.max(40, this.xterm?.cols ?? 100);
+    const stripped = s.replace(/\x1b\[[0-9;]*m/g, '');
+    let total = 0;
+    for (const rawLine of stripped.split(/\r?\n/)) {
+      const line = rawLine.replace(/\r/g, '');
+      const sw = this.stringDisplayWidth(line);
+      total += sw === 0 ? 1 : Math.ceil(sw / cols);
+    }
+    return total;
+  }
+
+  /**
+   * 从第 startCol 列（0-based）起，纯文本（无 ANSI）在固定列宽下占用的物理行数（至少 1）。
+   */
+  private countWrappedLinesFromColumn(plain: string, startCol: number, cols: number): number {
+    const t = plain.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (!t) return 1;
+    let lines = 1;
+    let rowWidth = Math.min(Math.max(0, startCol), cols);
+    for (const ch of t) {
+      const cp = ch.codePointAt(0);
+      if (cp === undefined) continue;
+      if (ch === '\n') {
+        lines++;
+        rowWidth = 0;
+        continue;
+      }
+      const w =
+        (cp >= 0x1100 && cp <= 0x115f) ||
+        (cp >= 0x2e80 && cp <= 0x9fff) ||
+        (cp >= 0xac00 && cp <= 0xd7a3) ||
+        (cp >= 0xf900 && cp <= 0xfaff) ||
+        (cp >= 0xfe30 && cp <= 0xfe6f) ||
+        (cp >= 0xff00 && cp <= 0xff60) ||
+        (cp >= 0xffe0 && cp <= 0xffe6)
+          ? 2
+          : 1;
+      if (rowWidth + w > cols) {
+        lines++;
+        rowWidth = w;
+      } else {
+        rowWidth += w;
+      }
+    }
+    return Math.max(1, lines);
+  }
+
+  private truncateThinkingToFitRows(plain: string, tagEndCol0: number, cols: number, maxRows: number): string {
+    if (maxRows < 1) return '…';
+    if (this.countWrappedLinesFromColumn(plain, tagEndCol0, cols) <= maxRows) return plain;
+    let lo = 0;
+    let hi = plain.length;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi + 1) / 2);
+      const candidate = plain.slice(0, mid) + (mid < plain.length ? '…' : '');
+      if (this.countWrappedLinesFromColumn(candidate, tagEndCol0, cols) <= maxRows) lo = mid;
+      else hi = mid - 1;
+    }
+    if (lo <= 0) return '…';
+    return plain.slice(0, lo) + '…';
+  }
+
+  private thinkingBodyForInlineWrite(text: string): string {
+    return text
+      .replace(/\u0000/g, '')
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+      .replace(/\t/g, '  ')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/\n/g, '\r\n');
+  }
+
+  /** 在缓冲区把 [Thinking#] 后的占位替换为正文（不超出原占位所占行数，过长截断） */
+  private expandThinkingInline(id: number): boolean {
+    const term = this.xterm;
+    const rec = this.thinkingBlocksById.get(id);
+    if (!term || !rec) return false;
+    const fold = this.findThinkingFoldBufferLines(id);
+    if (!fold) return false;
+    const cols = term.cols;
+    const { first, last } = fold;
+    const tagEnd0 = Math.min(cols - 1, Math.max(0, rec.tagEndCol0));
+    const hintRows = Math.max(1, rec.hintPhysicalRows);
+    const plain = rec.hasNonChinese ? this.sanitizeThinkingForDisplay(rec.text) : rec.text;
+    const displayPlain = this.truncateThinkingToFitRows(plain, tagEnd0, cols, hintRows);
+    const neededRows = this.countWrappedLinesFromColumn(displayPlain, tagEnd0, cols);
+
+    let seq = '\x1b7';
+    term.scrollToLine(first);
+    const rf = first - term.buffer.normal.viewportY;
+    if (rf < 0 || rf >= term.rows) return false;
+    seq += `\x1b[${rf + 1};${tagEnd0 + 1}H\x1b[K`;
+    for (let y = first + 1; y <= last; y++) {
+      term.scrollToLine(y);
+      const ry = y - term.buffer.normal.viewportY;
+      if (ry < 0 || ry >= term.rows) return false;
+      seq += `\x1b[${ry + 1};1H\x1b[2K`;
+    }
+    seq += `\x1b[${rf + 1};${tagEnd0 + 1}H`;
+    seq += this.thinkingBodyForInlineWrite(displayPlain);
+    for (let y = first + neededRows; y <= first + hintRows - 1; y++) {
+      if (neededRows >= hintRows) break;
+      term.scrollToLine(y);
+      const ry = y - term.buffer.normal.viewportY;
+      if (ry >= 0 && ry < term.rows) seq += `\x1b[${ry + 1};1H\x1b[2K`;
+    }
+    seq += '\x1b8';
+    this.thinkingInlineExpandedIds.add(id);
+    term.write(seq);
+    const ids = [...this.thinkingBlocksById.keys()];
+    this.thinkingAllExpanded =
+      ids.length > 0 && ids.every((i) => this.thinkingInlineExpandedIds.has(i));
+    return true;
+  }
+
+  /** 收起行内展开：清掉续行后写回折叠尾 ANSI */
+  private collapseThinkingInline(id: number, opts?: { force?: boolean }): void {
+    const term = this.xterm;
+    if (!term || (!opts?.force && !this.thinkingInlineExpandedIds.has(id))) return;
+    const rec = this.thinkingBlocksById.get(id);
+    if (!rec) {
+      this.thinkingInlineExpandedIds.delete(id);
+      return;
+    }
+    const fold = this.findThinkingFoldBufferLines(id);
+    if (!fold) {
+      this.thinkingInlineExpandedIds.delete(id);
+      return;
+    }
+    const { first, last: expLast } = fold;
+    const tagEnd0 = Math.min(term.cols - 1, Math.max(0, rec.tagEndCol0));
+    let seq = '\x1b7';
+    for (let y = first + 1; y <= expLast; y++) {
+      term.scrollToLine(y);
+      const ry = y - term.buffer.normal.viewportY;
+      if (ry >= 0 && ry < term.rows) seq += `\x1b[${ry + 1};1H\x1b[2K`;
+    }
+    term.scrollToLine(first);
+    const rf = first - term.buffer.normal.viewportY;
+    if (rf >= 0 && rf < term.rows) {
+      seq += `\x1b[${rf + 1};${tagEnd0 + 1}H\x1b[K${rec.foldSuffixAnsi}`;
+    }
+    seq += '\x1b8';
+    term.write(seq);
+    this.thinkingInlineExpandedIds.delete(id);
+    if (!opts?.force) {
+      this.thinkingAllExpanded = false;
+    }
+  }
+
+  private disposeAllThinkingOverlays(): void {
+    for (const id of [...this.thinkingInlineExpandedIds]) {
+      this.collapseThinkingInline(id, { force: true });
+    }
+    this.thinkingInlineExpandedIds.clear();
+    this.thinkingOverlayAttachGen++;
+    for (const d of this.thinkingAllExpandDisposables) {
+      try {
+        d.dispose();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.thinkingAllExpandDisposables = [];
+    for (const [, list] of this.expandedSingleById) {
+      for (const d of list) {
+        try {
+          d.dispose();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    this.expandedSingleById.clear();
+    this.thinkingAllExpanded = false;
+  }
+
+  private resetThinkingBlockRegistry(): void {
+    this.disposeAllThinkingOverlays();
+    this.thinkingBlocksById.clear();
+    this.thinkingInlineExpandedIds.clear();
+    this.thinkingBlockMarkers = [];
+    this.nextThinkingBlockId = 1;
+    try {
+      sessionStorage.removeItem(WORKBENCH_THINKING_BLOCKS_SESSION_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** 从 sessionStorage 合并缺失的 Thinking 块（内存被清空或热更新后仍可按编号展开） */
+  private mergeThinkingBlocksFromSession(): void {
+    try {
+      const raw = sessionStorage.getItem(WORKBENCH_THINKING_BLOCKS_SESSION_KEY);
+      if (!raw) return;
+      const o = JSON.parse(raw) as Record<string, unknown>;
+      for (const [k, v] of Object.entries(o)) {
+        const id = Number.parseInt(k, 10);
+        if (!Number.isFinite(id) || id < 1) continue;
+        if (this.thinkingBlocksById.has(id)) continue;
+        const rec = this.parseStoredThinkingBlock(v);
+        if (rec) this.thinkingBlocksById.set(id, rec);
+      }
+      const keys = [...this.thinkingBlocksById.keys()];
+      if (keys.length > 0) {
+        const floor = Math.max(...keys) + 1;
+        this.nextThinkingBlockId = Math.max(this.nextThinkingBlockId, floor);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private parseStoredThinkingBlock(
+    v: unknown,
+  ):
+    | {
+        text: string;
+        hasNonChinese: boolean;
+        foldSuffixAnsi: string;
+        hintPhysicalRows: number;
+        tagEndCol0: number;
+      }
+    | undefined {
+    if (!v || typeof v !== 'object') return undefined;
+    const r = v as Record<string, unknown>;
+    if (typeof r['text'] !== 'string') return undefined;
+    const foldSuffixAnsi = typeof r['foldSuffixAnsi'] === 'string' ? r['foldSuffixAnsi'] : undefined;
+    if (!foldSuffixAnsi) return undefined;
+    const hintPhysicalRows =
+      typeof r['hintPhysicalRows'] === 'number' &&
+      r['hintPhysicalRows'] >= 1 &&
+      r['hintPhysicalRows'] < 200
+        ? r['hintPhysicalRows']
+        : 1;
+    const tagEndCol0 =
+      typeof r['tagEndCol0'] === 'number' && r['tagEndCol0'] >= 0 && r['tagEndCol0'] < 4096
+        ? r['tagEndCol0']
+        : 1;
+    return {
+      text: r['text'],
+      hasNonChinese: Boolean(r['hasNonChinese']),
+      foldSuffixAnsi,
+      hintPhysicalRows,
+      tagEndCol0,
+    };
+  }
+
+  private persistThinkingBlocksSession(): void {
+    try {
+      const max = 320;
+      const entries = [...this.thinkingBlocksById.entries()].sort((a, b) => a[0] - b[0]).slice(-max);
+      sessionStorage.setItem(WORKBENCH_THINKING_BLOCKS_SESSION_KEY, JSON.stringify(Object.fromEntries(entries)));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private pruneDisposedThinkingMarkers(): void {
+    // 勿用 line>=0 过滤：新注册的 marker 在同步读 line 时可能仍为 -1，会被误删导致快捷键无效
+    this.thinkingBlockMarkers = this.thinkingBlockMarkers.filter((e) => !e.marker.isDisposed);
+  }
+
+  private parseThinkingBlockIdFromText(text: string): number | null {
+    const stripped = text
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+      .replace(/\u200b/g, '')
+      .trim();
+    const m =
+      stripped.match(/\[Thinking\s*#(\d+)\]/i) ??
+      stripped.match(/\[Thinking#(\d+)\]/i) ??
+      stripped.match(/\[Thinking\]\s*#(\d+)/i);
+    if (m) return Number.parseInt(m[1]!, 10);
+    const m2 = stripped.match(/#(\d+)/);
+    if (m2) {
+      const n = Number.parseInt(m2[1]!, 10);
+      if (this.thinkingBlocksById.has(n)) return n;
+    }
+    // 旧版流式仅写 `[Thinking]` 无编号：按正文前缀与缓存块匹配（优先较新 id）
+    if (/\[Thinking\](?!\s*#)/i.test(stripped) && !/\[Thinking\s*#\d+\]/i.test(stripped)) {
+      const after = stripped.replace(/^[\s\S]*?\[Thinking\]\s*/i, '').trim();
+      const entries = [...this.thinkingBlocksById.entries()].reverse();
+      if (!after) {
+        const ids = [...this.thinkingBlocksById.keys()];
+        return ids.length ? Math.max(...ids) : null;
+      }
+      const head = after.slice(0, Math.min(80, after.length));
+      for (const [bid, rec] of entries) {
+        const t0 = rec.text.trim();
+        if (head.length >= 6 && (t0.startsWith(head.slice(0, Math.min(40, head.length))) || t0.includes(head.slice(0, 24)))) {
+          return bid;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** 折叠占位符所在逻辑行的首/末 buffer 行号（0-based，含折行） */
+  private findThinkingFoldBufferLines(id: number): { first: number; last: number } | null {
+    const term = this.xterm;
+    if (!term) return null;
+    const needles = [`[Thinking #${id}]`, `[Thinking#${id}]`];
+    const buf = term.buffer.normal;
+    const stripAnsi = (t: string) => t.replace(/\x1b\[[0-9;]*m/g, '');
+    for (let y = 0; y < buf.length; y++) {
+      const line = buf.getLine(y);
+      if (!line || line.isWrapped) continue;
+      let merged = line.translateToString(true);
+      let yy = y;
+      while (yy + 1 < buf.length && buf.getLine(yy + 1)?.isWrapped) {
+        yy++;
+        merged += buf.getLine(yy)!.translateToString(true);
+      }
+      const s = stripAnsi(merged);
+      if (needles.some((n) => s.includes(n))) return { first: y, last: yy };
+      const rec = this.thinkingBlocksById.get(id);
+      if (rec && /\[Thinking\](?!\s*#)/i.test(s) && !s.includes(`[Thinking #${id}]`) && !s.includes(`[Thinking#${id}]`)) {
+        const body = s.replace(/^[\s\S]*?\[Thinking\]\s*/i, '').trimStart();
+        const p = rec.text.trim().slice(0, 48);
+        if (p.length >= 6 && body.startsWith(p.slice(0, Math.min(24, p.length)))) {
+          return { first: y, last: yy };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** 在 scrollback 中查找包含某折叠占位符的 buffer 行号（0-based，逻辑行首物理行） */
+  private findBufferLineContainingThinkingFold(id: number): number | null {
+    return this.findThinkingFoldBufferLines(id)?.first ?? null;
+  }
+
+  /**
+   * marker 失效时：滚到折叠块、光标移到该块最后一行末尾，再 registerMarker(1)，
+   * 使装饰层锚在折叠行**下一行**，避免与 [Thinking#] 文字叠在同一栅格行上。
+   */
+  private rebuildMarkerOnThinkingFoldLine(id: number): IMarker | undefined {
+    const term = this.xterm;
+    if (!term) return undefined;
+    const fold = this.findThinkingFoldBufferLines(id);
+    if (!fold) return undefined;
+    const { first, last } = fold;
+    term.scrollToLine(first);
+    let buf = term.buffer.normal;
+    let rel = last - buf.viewportY;
+    if (rel < 0 || rel >= term.rows) {
+      term.scrollToLine(last);
+      buf = term.buffer.normal;
+      rel = last - buf.viewportY;
+    }
+    if (rel < 0 || rel >= term.rows) return undefined;
+    const col = Math.max(1, term.cols);
+    // 单次 write：CUP 到折叠块末行末列后再 registerMarker(1) → 标记落在折叠块下一 buffer 行
+    term.write(`\x1b7\x1b[${rel + 1};${col}H`);
+    const mk = term.registerMarker(1);
+    term.write('\x1b8');
+    if (mk) this.upsertThinkingBlockMarker(id, mk);
+    return mk;
+  }
+
+  private upsertThinkingBlockMarker(id: number, marker: IMarker): void {
+    const i = this.thinkingBlockMarkers.findIndex((e) => e.id === id);
+    if (i >= 0) {
+      try {
+        this.thinkingBlockMarkers[i]!.marker.dispose();
+      } catch {
+        /* ignore */
+      }
+      this.thinkingBlockMarkers[i] = { id, marker };
+    } else {
+      this.thinkingBlockMarkers.push({ id, marker });
+    }
+    if (this.thinkingBlockMarkers.length > 80) this.thinkingBlockMarkers = this.thinkingBlockMarkers.slice(-80);
+  }
+
+  /** 在折叠行对应的 buffer 位置上挂装饰层展示全文（无 ANSI）；需 marker 已绑定有效 buffer 行 */
+  private attachThinkingOverlayAtMarker(id: number, marker: IMarker): IDisposable[] {
+    const term = this.xterm;
+    if (!term || marker.isDisposed || marker.line < 0) return [];
+    const rec = this.thinkingBlocksById.get(id);
+    if (!rec) return [];
+    const plain = rec.hasNonChinese ? this.sanitizeThinkingForDisplay(rec.text) : rec.text;
+    const height = Math.min(48, Math.max(2, this.countPhysicalTerminalLines(plain)));
+    const opts = {
+      marker,
+      width: term.cols,
+      height,
+      backgroundColor: '#12121c',
+      foregroundColor: '#e2e4f0',
+      layer: 'top' as const,
+    };
+    let deco = term.registerDecoration(opts);
+    if (!deco) {
+      deco = term.registerDecoration({ marker, width: term.cols, height, layer: 'top' });
+    }
+    if (!deco) return [];
+    const sub = deco.onRender((el) => {
+      el.style.whiteSpace = 'pre-wrap';
+      el.style.overflow = 'auto';
+      el.style.boxSizing = 'border-box';
+      el.style.padding = '4px 6px';
+      el.style.fontSize = '12px';
+      el.style.lineHeight = '1.45';
+      el.textContent = plain;
+    });
+    return [deco, sub];
+  }
+
+  /**
+   * marker 刚创建时 line 可能仍为 -1，registerDecoration 会失败。
+   * 在后续动画帧重试，直到 line 有效或超时；不在缓冲区末尾追加正文。
+   */
+  private scheduleThinkingOverlayAttach(
+    id: number,
+    marker: IMarker,
+    mode: 'single' | 'all',
+    onDone?: () => void,
+  ): void {
+    const ticket = this.thinkingOverlayAttachGen;
+    const maxFrames = 64;
+    const step = (frame: number) => {
+      if (ticket !== this.thinkingOverlayAttachGen) {
+        onDone?.();
+        return;
+      }
+      if (!this.xterm || marker.isDisposed) {
+        if (mode === 'single') {
+          this.aiXtermWrite('\r\n\x1b[33m[提示]\x1b[0m Thinking 标记已失效，无法在原位展开。\r\n');
+          this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+        }
+        onDone?.();
+        return;
+      }
+      if (marker.line < 0 && frame < maxFrames) {
+        requestAnimationFrame(() => step(frame + 1));
+        return;
+      }
+      if (marker.line < 0) {
+        if (mode === 'single') {
+          this.aiXtermWrite(
+            '\r\n\x1b[33m[提示]\x1b[0m 无法在缓冲区定位该折叠行（请避免在展开前执行清屏）。\r\n',
+          );
+          this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+        }
+        onDone?.();
+        return;
+      }
+      const list = this.attachThinkingOverlayAtMarker(id, marker);
+      if (list.length === 0) {
+        if (mode === 'single') {
+          this.aiXtermWrite(
+            '\r\n\x1b[33m[提示]\x1b[0m 原位装饰层创建失败（可尝试更新 xterm 或检查 allowProposedApi）。\r\n',
+          );
+          this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+        }
+        onDone?.();
+        return;
+      }
+      if (mode === 'single') this.expandedSingleById.set(id, list);
+      else for (const d of list) this.thinkingAllExpandDisposables.push(d);
+      if (mode === 'single') {
+        this.xterm?.clearSelection();
+        this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+      }
+      onDone?.();
+    };
+    requestAnimationFrame(() => step(0));
+  }
+
+  /**
+   * 流式结束后：将本轮 Thinking（及同批 Tool 回显、Answer）从终端擦除并重绘为折叠态 + 完整回答。
+   */
+  private finalizeAssistantStreamUi(params: {
+    ok: boolean;
+    interrupted: boolean;
+    thinking: string;
+    thinkingHasNonChinese: boolean;
+    answer: string;
+    layoutSplitThinkingAnswer: boolean;
+    thinkingToggleShortcut: string;
+    thinkingToggleAllShortcut: string;
+  }): void {
+    if (params.interrupted || !params.ok || !this.xterm) return;
+    const th = params.thinking.trim();
+    if (!th) {
+      this.streamingThinkingBlockId = null;
+      return;
+    }
+    const base = this.streamConsumedLines;
+    if (base <= 0) {
+      this.streamingThinkingBlockId = null;
+      return;
+    }
+    const hasCjk = /[\u4e00-\u9fff]/.test(th);
+    const slack = hasCjk ? 14 : 6;
+    const buf = this.xterm.buffer.normal;
+    // 与 xterm registerMarker 一致：marker.line 为 buffer 绝对行号，等价于 baseY+cursorY（非 viewportY+cursorY）
+    const cursorAbs = buf.baseY + buf.cursorY;
+    const mk = this.assistantStreamOutputStartMarker;
+    /** 防止异常 span / 失效预算一次清掉过多 scrollback（宁可少擦留残影，也不吃掉用户提示与旧回答） */
+    const eraseHardCap = Math.min(4000, Math.max(400, this.xterm.rows * 48));
+    const fallbackHardCap = Math.min(420, Math.max(96, this.xterm.rows * 14));
+    let lines: number;
+    if (mk && !mk.isDisposed && mk.line >= 0) {
+      const top = mk.line;
+      const span = cursorAbs - top + 1;
+      if (span > 0) {
+        lines = Math.min(span + slack, eraseHardCap);
+      } else {
+        const budget = Math.min(base + slack, base + 36);
+        lines = Math.max(1, Math.min(budget, fallbackHardCap));
+      }
+    } else {
+      const budget = Math.min(base + slack, base + 36);
+      lines = Math.max(1, Math.min(budget, fallbackHardCap));
+    }
+    this.disposeAssistantStreamOutputStartMarker();
+
+    const blockId =
+      this.streamingThinkingBlockId !== null ? this.streamingThinkingBlockId : this.nextThinkingBlockId++;
+    this.streamingThinkingBlockId = null;
+    const foldHint = `(选中本行后 ${params.thinkingToggleShortcut} 展开本块；${params.thinkingToggleAllShortcut} 全部在原位展开)`;
+    const foldSuffixAnsi = ` … \x1b[2m${foldHint}\x1b[0m`;
+    const cols = Math.max(40, this.xterm.cols);
+    const tagEndCol0 = Math.min(cols - 1, this.stringDisplayWidth(`[Thinking #${blockId}]`));
+    const hintPhysicalRows = this.countWrappedLinesFromColumn(` … ${foldHint}`, tagEndCol0, cols);
+    this.thinkingBlocksById.set(blockId, {
+      text: params.thinking,
+      hasNonChinese: params.thinkingHasNonChinese,
+      foldSuffixAnsi,
+      hintPhysicalRows,
+      tagEndCol0,
+    });
+    this.persistThinkingBlocksSession();
+
+    const foldBody = `\r\n\x1b[90m[Thinking #${blockId}]\x1b[0m${foldSuffixAnsi}`;
+    const erase = `\x1b[${lines}A\x1b[0J`;
+    const xterm = this.xterm;
+    const echoes = [...this.streamToolEchoes];
+    const answer = params.answer;
+    const layoutSplit = params.layoutSplitThinkingAnswer;
+
+    const tail = (): void => {
+      for (const echo of echoes) {
+        xterm.write(echo.replaceAll('\n', '\r\n'));
+      }
+      if (answer) {
+        if (layoutSplit) {
+          xterm.write(`\r\n\x1b[35m[Answer]\x1b[0m `);
+        } else {
+          // 与装饰锚定行错开，避免无 [Answer] 头时正文压在展开层所在行上
+          xterm.write('\r\n');
+        }
+        xterm.write(answer.replaceAll('\n', '\r\n'));
+      }
+    };
+
+    xterm.write(`${erase}${foldBody}`.replaceAll('\n', '\r\n'), () => {
+      xterm.write('\r\n', tail);
+    });
+  }
+
   /** plan 模式：从最近一条助手消息解析步骤并写入协调器 */
   private async syncPlanStepsFromLastAssistant(): Promise<void> {
     if (this.runtime.coordinator.getState().mode !== 'plan') return;
@@ -1700,54 +2351,84 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.syncCoordinatorState();
   }
 
+  private ensureStreamingThinkingBlockId(): number {
+    if (this.streamingThinkingBlockId === null) {
+      this.streamingThinkingBlockId = this.nextThinkingBlockId++;
+    }
+    return this.streamingThinkingBlockId;
+  }
+
+  /** 将一段文本写入本轮 thinking 缓冲并按流式规则刷终端（含 [Thinking#N] 头） */
+  private appendThinkingStreamDelta(
+    textDelta: string,
+    cfg: ReturnType<WorkbenchPageComponent['readModelRequestUiConfig']>,
+  ): void {
+    if (!cfg.showThinking) return;
+    this.thinkingBuffer += textDelta;
+    if (/[A-Za-z]{3,}/.test(textDelta)) {
+      this.thinkingHasNonChinese = true;
+    }
+    if (!this.thinkingHeaderShown) {
+      const id = this.ensureStreamingThinkingBlockId();
+      const thHeader = `\r\n\x1b[90m[Thinking #${id}]\x1b[0m `;
+      this.aiXtermWrite(thHeader);
+      this.bumpStreamLineBudgetForWrite(thHeader);
+      this.thinkingHeaderShown = true;
+      // header 写入后再钉 marker，避免 marker 落在换行前的上一行（用户输入行）
+      this.ensureAssistantStreamOutputStartMarker();
+    }
+    const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
+    if (rest) {
+      const visible = this.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(rest) : rest;
+      const out = this.highlightThinkingSteps(visible);
+      this.aiXtermWrite(out);
+      this.bumpStreamLineBudgetForWrite(out);
+      this.thinkingPrintedLen = this.thinkingBuffer.length;
+    }
+  }
+
   private handleStreamChunk(value: StreamChunk): void {
     const cfg = this.readModelRequestUiConfig();
 
     if (value.type === 'delta') {
+      const routeThinking =
+        cfg.showThinking && cfg.layoutSplitThinkingAnswer && this.streamRouteDeltaToThinking;
+      if (routeThinking) {
+        this.appendThinkingStreamDelta(value.textDelta, cfg);
+        return;
+      }
+      this.roundAnswerAccumulator += value.textDelta;
       if (cfg.layoutSplitThinkingAnswer && !this.answerHeaderShown) {
-        this.aiXtermWrite(`\r\n\x1b[35m[Answer]\x1b[0m `);
+        const hdr = `\r\n\x1b[35m[Answer]\x1b[0m `;
+        this.aiXtermWrite(hdr);
+        this.bumpStreamLineBudgetForWrite(hdr);
         this.answerHeaderShown = true;
+        this.ensureAssistantStreamOutputStartMarker();
+      }
+      if (!this.assistantStreamOutputStartMarker) {
+        this.ensureAssistantStreamOutputStartMarker();
       }
       this.aiXtermWrite(value.textDelta);
+      this.bumpStreamLineBudgetForWrite(value.textDelta);
       return;
     }
     if (value.type === 'thinking_delta') {
       if (!cfg.showThinking) return;
-      this.thinkingBuffer += value.textDelta;
-      if (/[A-Za-z]{3,}/.test(value.textDelta)) {
-        this.thinkingHasNonChinese = true;
-      }
-
-      if (!this.thinkingHeaderShown) {
-        this.thinkingCollapsed = cfg.thinkingVerboseMode ? false : cfg.thinkingCollapsedByDefault;
-        this.persistThinkingCollapsePreference(this.thinkingCollapsed);
-
-        if (this.thinkingCollapsed) {
-          this.aiXtermWrite(`\r\n\x1b[90m[Thinking]\x1b[0m … \x1b[2m(${cfg.thinkingToggleShortcut} 展开)\x1b[0m\r\n`);
-          this.thinkingFoldHintShown = true;
-        } else {
-          this.aiXtermWrite(`\r\n\x1b[90m[Thinking]\x1b[0m `);
-        }
-        this.thinkingHeaderShown = true;
-      }
-
-      if (!this.thinkingCollapsed) {
-        const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
-        if (rest) {
-          const visible = this.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(rest) : rest;
-          this.aiXtermWrite(this.highlightThinkingSteps(visible));
-          this.thinkingPrintedLen = this.thinkingBuffer.length;
-        }
-      }
+      this.appendThinkingStreamDelta(value.textDelta, cfg);
       return;
     }
     if (value.type === 'tool_call') {
+      this.streamRouteDeltaToThinking = false;
       this.toolCallCount.update((v) => v + 1);
       const name = value.toolCall.toolName ?? 'tool';
       this.bumpPlanOnToolStart();
       this.pushToolMemory(`步骤：准备执行 ${name}`);
       if (cfg.showToolActivity) {
-        this.aiXtermWrite(`\r\n\x1b[90m[Tool]\x1b[0m ${name} ...\r\n`);
+        const line = `\r\n\x1b[90m[Tool]\x1b[0m ${name} ...\r\n`;
+        this.aiXtermWrite(line);
+        this.streamToolEchoes.push(line);
+        this.bumpStreamLineBudgetForWrite(line);
+        this.ensureAssistantStreamOutputStartMarker();
       }
       return;
     }
@@ -1756,11 +2437,23 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.bumpPlanOnToolDone(ok);
       if (ok) {
         this.pushToolMemory('步骤完成');
-        if (cfg.showToolActivity) this.aiXtermWrite(`\x1b[90m[Tool]\x1b[0m done\r\n`);
+        if (cfg.showToolActivity) {
+          const line = `\x1b[90m[Tool]\x1b[0m done\r\n`;
+          this.aiXtermWrite(line);
+          this.streamToolEchoes.push(line);
+          this.bumpStreamLineBudgetForWrite(line);
+          this.ensureAssistantStreamOutputStartMarker();
+        }
       } else {
         const detail = error ? `：${error.slice(0, 200)}` : '';
         this.pushToolMemory(`步骤失败${detail.slice(0, 80)}`);
-        if (cfg.showToolActivity) this.aiXtermWrite(`\x1b[90m[Tool]\x1b[0m failed${detail}\r\n`);
+        if (cfg.showToolActivity) {
+          const line = `\x1b[90m[Tool]\x1b[0m failed${detail}\r\n`;
+          this.aiXtermWrite(line);
+          this.streamToolEchoes.push(line);
+          this.bumpStreamLineBudgetForWrite(line);
+          this.ensureAssistantStreamOutputStartMarker();
+        }
       }
       return;
     }
@@ -1769,14 +2462,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         const model = this.runtime.client.getModel().model;
         this.usageLedger.record(value.usage, model, Date.now() - this.streamRequestStartMs);
       }
-      this.resetThinkingStreamState();
       return;
     }
     if (value.type === 'anthropic_turn') {
       return;
     }
     if (value.type === 'error') {
-      this.resetThinkingStreamState();
       return;
     }
   }
@@ -1817,12 +2508,29 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         brightWhite: '#ffffff',
       },
       convertEol: true,
+      allowProposedApi: true,
     });
 
     this.xterm.loadAddon(this.fitAddon);
     this.xterm.open(host);
     this.fitAddon.fit();
     queueMicrotask(() => this.focusAiTerminal());
+
+    this.xterm.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.type !== 'keydown') return true;
+      const cfg = this.readModelRequestUiConfig();
+      if (this.matchesShortcut(event, cfg.thinkingToggleShortcut)) {
+        event.preventDefault();
+        if (!this.terminalBusy()) this.toggleThinkingCollapse();
+        return false;
+      }
+      if (this.matchesShortcut(event, cfg.thinkingToggleAllShortcut)) {
+        event.preventDefault();
+        if (!this.terminalBusy()) this.toggleThinkingCollapseAll();
+        return false;
+      }
+      return true;
+    });
 
     this.xterm.onData((data) => {
       this.feedMainTerminalInput(data);
@@ -1875,21 +2583,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         e.preventDefault();
         const cfg = this.readModelRequestUiConfig();
         this.aiXtermWrite(
-          `\r\n\x1b[33m[提示]\x1b[0m Ctrl+C 中断 · ${cfg.thinkingToggleShortcut} 切换 Thinking 折叠 · ${cfg.thinkingToggleAllShortcut} 全局折叠/展开 · Ctrl+Shift+C 复制 · Ctrl+Shift+V 粘贴 · 右键：有选区复制/无选区粘贴 · Ctrl+L 清屏 · Shift+Tab 切换模式\r\n`,
+          `\r\n\x1b[33m[提示]\x1b[0m Ctrl+C 中断 · 选中 \x1b[90m[Thinking#N]\x1b[33m 折叠行后 ${cfg.thinkingToggleShortcut} 原位展开该块 · ${cfg.thinkingToggleAllShortcut} 全部折叠块原位展开/收起 · Ctrl+Shift+C 复制 · Ctrl+Shift+V 粘贴 · 右键：有选区复制/无选区粘贴 · Ctrl+L 清屏 · Shift+Tab 切换模式\r\n`,
         );
-        this.writeMainTerminalPrompt();
-        this.redrawInputLine();
-        return;
-      }
-      const cfg = this.readModelRequestUiConfig();
-      if (this.matchesShortcut(e, cfg.thinkingToggleShortcut)) {
-        e.preventDefault();
-        this.toggleThinkingCollapse();
-        return;
-      }
-      if (this.matchesShortcut(e, cfg.thinkingToggleAllShortcut)) {
-        e.preventDefault();
-        this.toggleThinkingCollapseAll();
+        this.refreshMainTerminalPromptLine();
         return;
       }
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
@@ -1909,6 +2605,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.mainLineBuffer = '';
         this.mainEscSkip = false;
         this.mainEscAcc = '';
+        this.resetThinkingBlockRegistry();
         this.xterm?.clear();
         this.printMainTerminalWelcome();
       }
@@ -1923,6 +2620,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private printMainTerminalWelcome(): void {
+    this.mergeThinkingBlocksFromSession();
     this.aiXtermWrite(
       '\x1b[90m主终端：shell；前加 ! 显式执行。输入 / 时下一行实时显示同前缀指令；Tab 补全；Shift+Tab 切换 对话/计划/执行；流式时 Ctrl+C 中断。\x1b[0m\r\n',
     );
@@ -1935,7 +2633,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const msgs = await this.runtime.history.list(SESSION_ID);
       const recent = msgs.slice(-24);
       if (recent.length === 0) return;
-      this.aiXtermWrite('\x1b[90m--- 已恢复最近会话 ---\x1b[0m\r\n');
       for (const m of recent) {
         const content = String(m.content ?? '').trim();
         if (!content) continue;
@@ -1947,7 +2644,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.aiXtermWrite(`\x1b[36m[步骤]\x1b[0m ${content.replace(/\r?\n/g, ' ')}\r\n`);
         }
       }
-      this.aiXtermWrite('\x1b[90m--- 恢复结束 ---\x1b[0m\r\n');
     } catch {
       // ignore history replay failures
     }
@@ -1955,6 +2651,16 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private writeMainTerminalPrompt(): void {
     this.aiXtermWrite(`\r\n\x1b[32m>\x1b[0m `);
+  }
+
+  /**
+   * 可选滚到底部后重绘 `>`，不额外写入 `\\r\\n>`。
+   * 思考快捷键路径传 `scrollToBottom: false`，避免 Ctrl+O 把视口拉到最新行导致看不到刚展开的思考。
+   */
+  private refreshMainTerminalPromptLine(opts: { scrollToBottom?: boolean } = {}): void {
+    const scroll = opts.scrollToBottom !== false;
+    if (scroll) this.xterm?.scrollToBottom();
+    this.redrawInputLine();
   }
 
   private feedMainTerminalInput(data: string): void {
@@ -2089,48 +2795,91 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private toggleThinkingCollapse(): void {
-    if (!this.thinkingHeaderShown) return;
-    if (this.countThinkingLines(this.thinkingBuffer) <= 1) return;
+    if (this.terminalBusy()) return;
+    const term = this.xterm;
+    if (!term) return;
+    this.mergeThinkingBlocksFromSession();
+    if (!term.hasSelection()) {
+      this.aiXtermWrite(
+        '\r\n\x1b[33m[提示]\x1b[0m 请用鼠标选中包含 \x1b[90m[Thinking#编号]\x1b[33m 的折叠行，再按快捷键展开该段。\r\n',
+      );
+      this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+      return;
+    }
+    const sel = term.getSelection();
+    const id = this.parseThinkingBlockIdFromText(sel);
+    if (id === null || !this.thinkingBlocksById.has(id)) {
+      this.aiXtermWrite(
+        '\r\n\x1b[33m[提示]\x1b[0m 选区中未识别到 \x1b[90m[Thinking #N]\x1b[33m 编号，或该段已不在缓存中。\r\n',
+      );
+      this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+      return;
+    }
+    const pos = term.getSelectionPosition();
+    if (pos) term.scrollToLine(pos.start.y - 1);
 
-    this.thinkingCollapsed = !this.thinkingCollapsed;
-    this.persistThinkingCollapsePreference(this.thinkingCollapsed);
-
-    if (!this.thinkingCollapsed) {
-      this.aiXtermWrite(`\r\n\x1b[90m[Thinking 展开]\x1b[0m\r\n`);
-      if (this.thinkingBuffer) {
-        const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
-        if (rest) {
-          const visible = this.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(rest) : rest;
-          this.aiXtermWrite(this.highlightThinkingSteps(visible));
+    const existing = this.expandedSingleById.get(id);
+    if (existing) {
+      for (const d of existing) {
+        try {
+          d.dispose();
+        } catch {
+          /* ignore */
         }
       }
-      this.aiXtermWrite('\r\n');
-      this.thinkingPrintedLen = this.thinkingBuffer.length;
-      this.thinkingFoldHintShown = false;
-    } else {
-      this.aiXtermWrite(`\r\n\x1b[90m[Thinking 已折叠]\x1b[0m\r\n`);
-      this.thinkingFoldHintShown = true;
+      this.expandedSingleById.delete(id);
+      term.clearSelection();
+      this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+      return;
     }
-    this.writeMainTerminalPrompt();
-    this.redrawInputLine();
+
+    if (this.thinkingInlineExpandedIds.has(id)) {
+      this.collapseThinkingInline(id);
+      term.clearSelection();
+      this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+      return;
+    }
+
+    if (!this.expandThinkingInline(id)) {
+      this.aiXtermWrite(
+        '\r\n\x1b[33m[提示]\x1b[0m 无法在缓冲区定位该折叠行（请滚动到可见区域后再试）。\r\n',
+      );
+    }
+    term.clearSelection();
+    this.refreshMainTerminalPromptLine({ scrollToBottom: false });
   }
 
   private toggleThinkingCollapseAll(): void {
-    if (!this.thinkingHeaderShown || this.countThinkingLines(this.thinkingBuffer) <= 1) return;
-    this.thinkingCollapsed = !this.thinkingCollapsed;
-    this.persistThinkingCollapsePreference(this.thinkingCollapsed);
-    this.aiXtermWrite(
-      this.thinkingCollapsed
-        ? `\r\n\x1b[90m[Thinking 全局]\x1b[0m 已折叠（当前会话新块默认折叠）\r\n`
-        : `\r\n\x1b[90m[Thinking 全局]\x1b[0m 已展开（当前会话新块默认展开）\r\n`,
-    );
-    if (!this.thinkingCollapsed) {
-      const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
-      if (rest) this.aiXtermWrite(this.highlightThinkingSteps(rest));
-      this.thinkingPrintedLen = this.thinkingBuffer.length;
+    if (this.terminalBusy()) return;
+    const term = this.xterm;
+    if (!term) return;
+    this.mergeThinkingBlocksFromSession();
+    this.pruneDisposedThinkingMarkers();
+    if (this.thinkingAllExpanded) {
+      this.disposeAllThinkingOverlays();
+      this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+      return;
     }
-    this.writeMainTerminalPrompt();
-    this.redrawInputLine();
+    this.disposeAllThinkingOverlays();
+    const ids = [...this.thinkingBlocksById.keys()].sort((a, b) => a - b);
+    if (ids.length === 0) {
+      this.aiXtermWrite('\r\n\x1b[90m[Thinking]\x1b[0m 当前没有可展开的思考缓存。\r\n');
+      this.refreshMainTerminalPromptLine({ scrollToBottom: false });
+      return;
+    }
+    let any = false;
+    for (const id of ids) {
+      if (this.expandThinkingInline(id)) {
+        any = true;
+      }
+    }
+    if (!any) {
+      this.aiXtermWrite(
+        '\r\n\x1b[90m[Thinking]\x1b[0m 未能在缓冲区展开任何折叠块（请滚动到可见区域后再试）。\r\n',
+      );
+    }
+    this.thinkingAllExpanded = ids.length > 0 && ids.every((id) => this.thinkingInlineExpandedIds.has(id));
+    this.refreshMainTerminalPromptLine({ scrollToBottom: false });
   }
 
   private tryDirectiveTabComplete(): void {
@@ -2154,8 +2903,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.syncCoordinatorState();
     const label = this.formatWorkbenchModeLabel(next);
     this.aiXtermWrite(`\r\n\x1b[36m[模式]\x1b[0m ${label} (${next})\r\n`);
-    this.writeMainTerminalPrompt();
-    this.redrawInputLine();
+    this.refreshMainTerminalPromptLine();
   }
 
   private async dispatchMainTerminalLine(raw: string): Promise<void> {
@@ -2436,9 +3184,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     this.streamInterruptRequested = false;
     this.resetThinkingStreamState();
+    this.mergeThinkingBlocksFromSession();
+    const streamCfg = this.readModelRequestUiConfig();
+    this.streamRouteDeltaToThinking =
+      streamCfg.showThinking && streamCfg.layoutSplitThinkingAnswer;
     this.terminalBusy.set(true);
     this.streamRequestStartMs = Date.now();
-    this.aiXtermWrite('\x1b[90m正在请求助手…\x1b[0m\r\n');
 
     const hasZytrader = typeof (window as unknown as { zytrader?: unknown }).zytrader !== 'undefined';
     const { stream, cancel } = this.runtime.assistant.stream(SESSION_ID, {
@@ -2485,28 +3236,45 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.streamReader = null;
       this.streamStop = undefined;
       this.terminalBusy.set(false);
+
+      const cfgSnap = this.readModelRequestUiConfig();
+      const thinkingSnap = this.thinkingBuffer;
+      const thinkingHasNc = this.thinkingHasNonChinese;
+      const answerSnap = this.roundAnswerAccumulator;
+
+      if (!this.streamInterruptRequested && !streamFailed) {
+        if (!thinkingSnap.trim()) {
+          /* 无 thinking 块 */
+        } else if (cfgSnap.showThinking && cfgSnap.thinkingVerboseMode) {
+          /* 详细模式：不折叠，不写折叠行与 marker */
+        } else {
+          this.finalizeAssistantStreamUi({
+            ok: true,
+            interrupted: false,
+            thinking: thinkingSnap,
+            thinkingHasNonChinese: thinkingHasNc,
+            answer: answerSnap,
+            layoutSplitThinkingAnswer: cfgSnap.layoutSplitThinkingAnswer,
+            thinkingToggleShortcut: cfgSnap.thinkingToggleShortcut,
+            thinkingToggleAllShortcut: cfgSnap.thinkingToggleAllShortcut,
+          });
+        }
+      }
+
       this.resetThinkingStreamState();
 
       if (this.streamInterruptRequested) {
         this.aiXtermWrite('\r\n\x1b[33m[已中断]\x1b[0m\r\n');
         this.streamInterruptRequested = false;
       } else if (!streamFailed) {
-        this.aiXtermWrite('\r\n\x1b[90m本轮结束。\x1b[0m\r\n');
         await this.appendRecentTurnAfterSuccess(trimmed);
         try {
           await this.triggerMemoryPipelineFromHistory(trimmed);
-          const last = this.agentMemory.getPipelineStatus().lastResult;
-          this.aiXtermWrite(
-            `\x1b[90m[memory] pipeline=${last?.pipeline ?? 'unknown'} status=${last?.status ?? 'unknown'} reason=${last?.reason ?? 'none'}\x1b[0m\r\n`,
-          );
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : 'unknown_error';
-          this.aiXtermWrite(`\x1b[31m[memory] pipeline 失败：${msg}\x1b[0m\r\n`);
+        } catch {
+          /* 记忆管道失败不向主终端刷屏 */
         }
         await this.syncPlanStepsFromLastAssistant();
         this.syncCoordinatorState();
-      } else {
-        this.aiXtermWrite('\r\n\x1b[90m本轮结束。\x1b[0m\r\n');
       }
     }
   }
@@ -2724,8 +3492,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const line = AUTO_COMMIT_PROMPT;
     if (this.terminalBusy()) {
       this.aiXtermWrite('\x1b[33m(busy)\x1b[0m\r\n');
-      this.writeMainTerminalPrompt();
-      this.redrawInputLine();
+      this.refreshMainTerminalPromptLine();
       return;
     }
     this.mainLineBuffer = '';
@@ -2821,16 +3588,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private resetThinkingStreamState(): void {
     this.thinkingHeaderShown = false;
     this.answerHeaderShown = false;
-    this.thinkingCollapsed = true;
     this.thinkingBuffer = '';
     this.thinkingPrintedLen = 0;
-    this.thinkingFoldHintShown = false;
     this.thinkingHasNonChinese = false;
-  }
-
-  private countThinkingLines(text: string): number {
-    if (!text) return 0;
-    return text.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+    this.streamConsumedLines = 0;
+    this.roundAnswerAccumulator = '';
+    this.streamToolEchoes = [];
+    this.streamingThinkingBlockId = null;
+    this.streamRouteDeltaToThinking = false;
+    this.disposeAssistantStreamOutputStartMarker();
   }
 
   private highlightThinkingSteps(text: string): string {
@@ -2854,17 +3620,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       })
       .join('\n');
     return cleaned;
-  }
-
-  private persistThinkingCollapsePreference(collapsed: boolean): void {
-    try {
-      const raw = localStorage.getItem(REQUEST_CFG_JSON_KEY);
-      const parsed = raw?.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
-      parsed['thinking_collapsed_by_default'] = collapsed;
-      localStorage.setItem(REQUEST_CFG_JSON_KEY, JSON.stringify(parsed, null, 2));
-    } catch {
-      // ignore persistence failures
-    }
   }
 
   private matchesShortcut(event: KeyboardEvent, shortcut: string): boolean {
