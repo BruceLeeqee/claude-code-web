@@ -21,8 +21,10 @@ export interface MemorySystemConfig {
     enabled: boolean;
     /** 距上次巩固成功至少间隔的小时数（与参考实现 readLastConsolidatedAt 语义对齐） */
     minHours: number;
-    /** 当前进程内见过的不同 session 数（跨重启持久化见计划文档） */
+    /** 触发 dream 前至少见过的不同 session 数 */
     minSessions: number;
+    /** 单 session 场景下的兜底阈值：累计轮次达到后也可触发 */
+    minTurns: number;
     /** 两次做梦评估之间的最短间隔（分钟），对应参考实现的 SESSION_SCAN_INTERVAL */
     scanThrottleMinutes: number;
   };
@@ -45,7 +47,8 @@ export const DEFAULT_MEMORY_SYSTEM_CONFIG: MemorySystemConfig = {
     enabled: true,
     /** 与 restored autoDream 默认（GrowthBook tengu_onyx_plover）一致 */
     minHours: 24,
-    minSessions: 5,
+    minSessions: 1,
+    minTurns: 20,
     scanThrottleMinutes: 10,
   },
 };

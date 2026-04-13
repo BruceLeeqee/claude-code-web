@@ -1789,7 +1789,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         return acc;
       }, []),
     };
+
     await this.agentMemory.runMemoryPipelineNow(turn);
+    try {
+      await this.agentMemory.appendProjectLongTermTurn(turn);
+    } catch {
+      /* 长期记忆落盘失败不阻断主流程 */
+    }
     await this.refreshShortTermMemoryStats();
   }
 

@@ -255,6 +255,37 @@ export class AgentMemoryService {
     await this.memoryOrchestrator.runNow(turn ?? fallbackTurn);
   }
 
+  /**
+   * 每轮对话落盘一条「项目长期记忆」到固定文件，避免仅依赖分散 JSON 导致用户看到“长期记忆文件为空”。
+   */
+  async appendProjectLongTermTurn(turn: TurnContext): Promise<{ ok: boolean; path?: string }> {
+    await this.directoryManager.ensureVaultReady();
+    const relDir = await this.directoryManager.getRelativePathByKey('agent-long-project');
+    const relPath = `${relDir}/PROJECT-LONG-TERM-MEMORY.md`;
+
+    const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
+    const old = read.ok
+      ? read.content
+      : '# Project Long-Term Memory\n\n> Auto-appended after each successful conversation turn.\n';
+
+    const lastUser = [...turn.messages].reverse().find((m) => m.role === 'user');
+    const lastAssistant = [...turn.messages].reverse().find((m) => m.role === 'assistant');
+    const userText = String(lastUser?.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 320);
+    const assistantText = String(lastAssistant?.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 560);
+
+    const block = [
+      `## ${new Date(turn.timestamp).toISOString()} / ${turn.turnId}`,
+      `- session: ${turn.sessionId}`,
+      `- user: ${userText || '(empty)'}`,
+      `- assistant: ${assistantText || '(empty)'}`,
+      '',
+    ].join('\n');
+
+    const next = `${old.trimEnd()}\n\n${block}`;
+    const write = await window.zytrader.fs.write(relPath, next, { scope: 'vault' });
+    return { ok: Boolean(write.ok), path: relPath };
+  }
+
   getTeamSyncState(): TeamSyncState {
     return this.teamSync.getState();
   }

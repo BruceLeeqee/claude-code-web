@@ -156,6 +156,45 @@ export class SkillIndexService {
     return this.readSkillFileCompat(record.contentPath, record.scope);
   }
 
+  /**
+   * 在 Vault 技能根（key: agent-skills）下创建技能目录与 SKILL.md。
+   * 目录根来自 directory.config/vault 配置，不硬编码 AGENT-ROOT，也不落到当前 workspace。
+   */
+  async createSkillInVault(payload: { name: string; desc: string }): Promise<{ ok: boolean; id?: string; contentPath?: string; error?: string }> {
+    const root = await this.resolveVaultSkillDir();
+    const baseSlug = this.slugifySkillId(payload.name || 'new-skill');
+    const id = await this.ensureUniqueSkillId(baseSlug, root, 'vault');
+    const skillDir = this.normalizeSkillPath(`${root}/${id}`);
+    const contentPath = this.normalizeSkillPath(`${skillDir}/SKILL.md`);
+
+    const title = (payload.name || '').trim() || this.prettyNameFromId(id);
+    const desc = (payload.desc || '').trim() || '由向导创建';
+    const body = [
+      '---',
+      `name: ${id}`,
+      `description: ${desc}`,
+      '---',
+      '',
+      `# ${title}`,
+      '',
+      '## Instructions',
+      '- 在此补充技能执行步骤、约束与输出格式。',
+      '',
+      '## Examples',
+      '- 在此补充典型输入与期望输出。',
+      '',
+    ].join('\n');
+
+    const write = await window.zytrader.fs.write(contentPath, body, { scope: 'vault' });
+    if (!write.ok) {
+      return { ok: false, error: '写入 SKILL.md 失败，请检查 Vault 配置与目录权限。' };
+    }
+
+    // 目录缓存可能已变更，创建后立刻失效以便下一次扫描命中新文件。
+    this.invalidateSkillRoot();
+    return { ok: true, id, contentPath };
+  }
+
   private async scanVaultSkillDir(): Promise<SkillScanEntry[]> {
     const dir = await this.resolveVaultSkillDir();
     return this.scanDir(this.normalizeSkillPath(dir), 'vault', 'vault');
@@ -237,6 +276,34 @@ export class SkillIndexService {
     const name = titleLine?.replace(/^#+\s*/, '').trim() || this.prettyNameFromId(fallbackId);
     const desc = (firstPlain || '本地技能').slice(0, 200);
     return { name, desc };
+  }
+
+  private slugifySkillId(input: string): string {
+    const raw = String(input || '').trim().toLowerCase();
+    const ascii = raw
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    if (ascii) return ascii.slice(0, 64);
+    return `skill-${Date.now().toString(36)}`;
+  }
+
+  private async ensureUniqueSkillId(baseId: string, root: string, scope: 'vault'): Promise<string> {
+    const fallback = `skill-${Date.now().toString(36)}`;
+    const seed = (baseId || '').trim() || fallback;
+    const exists = async (id: string): Promise<boolean> => {
+      const p = this.normalizeSkillPath(`${root}/${id}/SKILL.md`);
+      const r = await this.readSkillFileCompat(p, scope);
+      return r.ok;
+    };
+
+    if (!(await exists(seed))) return seed;
+    for (let i = 2; i <= 999; i++) {
+      const cand = `${seed}-${i}`;
+      if (!(await exists(cand))) return cand;
+    }
+    return `${seed}-${Date.now().toString(36)}`;
   }
 
   private prettyNameFromId(id: string): string {

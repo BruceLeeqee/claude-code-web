@@ -133,7 +133,35 @@ export class SkillsPrototypePageComponent implements OnDestroy {
   }
 
   completeCreateWizard(payload: { name: string; desc: string }): void {
-    this.facade.addSkill({ ...payload, outputMode: 'standard' });
+    void this.createSkillFromWizard(payload);
+  }
+
+  private async createSkillFromWizard(payload: { name: string; desc: string }): Promise<void> {
+    this.hubError.set('');
+    const created = await this.skillIndex.createSkillInVault(payload);
+    if (!created.ok) {
+      this.hubError.set(created.error ?? '创建技能失败');
+      this.cdr.markForCheck();
+      return;
+    }
+
+    await this.refreshInstalledSkills();
+    const rec = this.installedSkills().find((x) => x.id === created.id);
+    if (rec) {
+      this.facade.installSkillFromHub({
+        id: rec.id,
+        name: rec.name,
+        desc: rec.desc,
+        source: rec.source,
+        status: rec.status,
+        installedAt: rec.installedAt,
+        updatedAt: rec.updatedAt,
+        activate: true,
+      });
+      this.selectedHubSkillId.set(rec.id);
+      await this.loadSkillPreview(rec.id);
+    }
+
     this.createMode.set(false);
     this.cdr.markForCheck();
   }

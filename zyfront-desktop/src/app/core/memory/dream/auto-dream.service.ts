@@ -7,6 +7,9 @@ import { type MemoryPipelineResult, type TurnContext } from '../memory.types';
 
 interface DreamStateFile {
   lastConsolidatedAtMs?: number;
+  lastProbeAtMs?: number;
+  turnCounter?: number;
+  recentSessionIds?: string[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -36,19 +39,6 @@ export class AutoDreamService {
       };
     }
 
-    const scanMs = Math.max(1, cfg.scanThrottleMinutes) * 60 * 1000;
-    if (this.lastProbeAtMs > 0 && Date.now() - this.lastProbeAtMs < scanMs) {
-      return {
-        pipeline: 'dream',
-        status: 'skipped',
-        reason: 'dream_scan_throttled',
-        durationMs: Date.now() - startedAt,
-      };
-    }
-    this.lastProbeAtMs = Date.now();
-
-    this.recentSessionIds.add(turn.sessionId);
-
     this.inProgress = true;
     let lockPath = '';
     try {
@@ -60,19 +50,61 @@ export class AutoDreamService {
 
       const stateRead = await window.zytrader.fs.read(statePath, { scope: 'vault' });
       let lastConsolidatedAtMs = 0;
+      let persistedProbeAtMs = 0;
+      let turnCounter = 0;
+      let persistedSessionIds: string[] = [];
       if (stateRead.ok && stateRead.content.trim()) {
         try {
           const doc = JSON.parse(stateRead.content) as DreamStateFile;
           if (typeof doc.lastConsolidatedAtMs === 'number' && Number.isFinite(doc.lastConsolidatedAtMs)) {
             lastConsolidatedAtMs = doc.lastConsolidatedAtMs;
           }
+          if (typeof doc.lastProbeAtMs === 'number' && Number.isFinite(doc.lastProbeAtMs)) {
+            persistedProbeAtMs = doc.lastProbeAtMs;
+          }
+          if (typeof doc.turnCounter === 'number' && Number.isFinite(doc.turnCounter)) {
+            turnCounter = Math.max(0, Math.floor(doc.turnCounter));
+          }
+          if (Array.isArray(doc.recentSessionIds)) {
+            persistedSessionIds = doc.recentSessionIds.map((x) => String(x)).filter(Boolean).slice(-50);
+          }
         } catch {
           /* ignore corrupt state */
         }
       }
 
+      if (persistedSessionIds.length > 0) {
+        this.recentSessionIds = new Set(persistedSessionIds);
+      }
+      this.recentSessionIds.add(turn.sessionId);
+      turnCounter += 1;
+
+      const scanMs = Math.max(1, cfg.scanThrottleMinutes) * 60 * 1000;
+      const probeAt = Math.max(this.lastProbeAtMs, persistedProbeAtMs);
+      if (probeAt > 0 && Date.now() - probeAt < scanMs) {
+        await this.persistDreamState(statePath, {
+          lastConsolidatedAtMs,
+          lastProbeAtMs: probeAt,
+          turnCounter,
+          recentSessionIds: [...this.recentSessionIds].slice(-50),
+        });
+        return {
+          pipeline: 'dream',
+          status: 'skipped',
+          reason: 'dream_scan_throttled',
+          durationMs: Date.now() - startedAt,
+        };
+      }
+      this.lastProbeAtMs = Date.now();
+
       const minHoursMs = Math.max(1, cfg.minHours) * 60 * 60 * 1000;
       if (lastConsolidatedAtMs > 0 && Date.now() - lastConsolidatedAtMs < minHoursMs) {
+        await this.persistDreamState(statePath, {
+          lastConsolidatedAtMs,
+          lastProbeAtMs: this.lastProbeAtMs,
+          turnCounter,
+          recentSessionIds: [...this.recentSessionIds].slice(-50),
+        });
         return {
           pipeline: 'dream',
           status: 'skipped',
@@ -81,11 +113,19 @@ export class AutoDreamService {
         };
       }
 
-      if (this.recentSessionIds.size < Math.max(1, cfg.minSessions)) {
+      const sessionReady = this.recentSessionIds.size >= Math.max(1, cfg.minSessions);
+      const turnReady = turnCounter >= Math.max(1, cfg.minTurns);
+      if (!sessionReady && !turnReady) {
+        await this.persistDreamState(statePath, {
+          lastConsolidatedAtMs,
+          lastProbeAtMs: this.lastProbeAtMs,
+          turnCounter,
+          recentSessionIds: [...this.recentSessionIds].slice(-50),
+        });
         return {
           pipeline: 'dream',
           status: 'skipped',
-          reason: 'session_threshold_not_met',
+          reason: 'session_or_turn_threshold_not_met',
           durationMs: Date.now() - startedAt,
         };
       }
@@ -134,12 +174,13 @@ export class AutoDreamService {
       }
 
       const nowMs = Date.now();
-      const stateWrite = await window.zytrader.fs.write(
-        statePath,
-        JSON.stringify({ lastConsolidatedAtMs: nowMs } satisfies DreamStateFile, null, 2),
-        { scope: 'vault' },
-      );
-      if (!stateWrite.ok) {
+      const persisted = await this.persistDreamState(statePath, {
+        lastConsolidatedAtMs: nowMs,
+        lastProbeAtMs: this.lastProbeAtMs,
+        turnCounter: 0,
+        recentSessionIds: [turn.sessionId],
+      });
+      if (!persisted) {
         throw new Error('failed_to_write_dream_state');
       }
 
@@ -213,6 +254,11 @@ export class AutoDreamService {
       `- messages(user/assistant): ${userCount}/${assistantCount}`,
       `- insight: ${String(lastAssistant?.content ?? '').slice(0, 400)}`,
     ].join('\n');
+  }
+
+  private async persistDreamState(statePath: string, state: DreamStateFile): Promise<boolean> {
+    const w = await window.zytrader.fs.write(statePath, JSON.stringify(state, null, 2), { scope: 'vault' });
+    return Boolean(w.ok);
   }
 
   private assertSafeRelativePath(relPath: string): void {

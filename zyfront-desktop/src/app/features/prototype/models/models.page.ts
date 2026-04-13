@@ -107,7 +107,8 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
   protected readonly memoryPipelineEnabled = signal(true);
   protected readonly dreamEnabled = signal(true);
   protected readonly dreamMinHours = signal(24);
-  protected readonly dreamMinSessions = signal(5);
+  protected readonly dreamMinSessions = signal(1);
+  protected readonly dreamMinTurns = signal(20);
   protected readonly dreamScanThrottleMinutes = signal(10);
   protected readonly memoryPipelineMessage = signal('');
 
@@ -178,6 +179,7 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     this.dreamEnabled.set(c.dream.enabled);
     this.dreamMinHours.set(c.dream.minHours);
     this.dreamMinSessions.set(c.dream.minSessions);
+    this.dreamMinTurns.set(c.dream.minTurns);
     this.dreamScanThrottleMinutes.set(c.dream.scanThrottleMinutes);
   }
 
@@ -185,9 +187,11 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     this.memoryPipelineMessage.set('');
     const h = Math.max(1, Math.floor(Number(this.dreamMinHours())) || 1);
     const s = Math.max(1, Math.floor(Number(this.dreamMinSessions())) || 1);
+    const mt = Math.max(1, Math.floor(Number(this.dreamMinTurns())) || 1);
     const t = Math.max(1, Math.floor(Number(this.dreamScanThrottleMinutes())) || 1);
     this.dreamMinHours.set(h);
     this.dreamMinSessions.set(s);
+    this.dreamMinTurns.set(mt);
     this.dreamScanThrottleMinutes.set(t);
     this.memoryConfig.applyPartial({
       enabled: this.memoryPipelineEnabled(),
@@ -195,6 +199,7 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
         enabled: this.dreamEnabled(),
         minHours: h,
         minSessions: s,
+        minTurns: mt,
         scanThrottleMinutes: t,
       },
     });
@@ -219,6 +224,12 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     const raw = (ev.target as HTMLInputElement).value;
     const n = Math.floor(Number(raw));
     this.dreamMinSessions.set(Number.isFinite(n) && n >= 1 ? n : 1);
+  }
+
+  protected onDreamMinTurnsInput(ev: Event): void {
+    const raw = (ev.target as HTMLInputElement).value;
+    const n = Math.floor(Number(raw));
+    this.dreamMinTurns.set(Number.isFinite(n) && n >= 1 ? n : 1);
   }
 
   protected onDreamScanThrottleInput(ev: Event): void {

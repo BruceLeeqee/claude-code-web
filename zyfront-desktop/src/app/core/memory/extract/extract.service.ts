@@ -124,6 +124,8 @@ export class ExtractService {
       const nextIndex = `${oldIndex.trimEnd()}\n${line}\n`;
       await window.zytrader.fs.write(indexPath, nextIndex, { scope: 'vault' });
 
+      const longTermTouched = await this.writeLongTermMemoriesFromTurn(turn, newMessages);
+
       const lastMsg = turn.messages.at(-1);
       this.lastCursorMessageId = lastMsg?.id;
       this.lastSummaryFingerprint = fingerprint;
@@ -133,7 +135,7 @@ export class ExtractService {
         status: 'succeeded',
         reason: 'memory_written',
         durationMs: Date.now() - startedAt,
-        filesTouched: [relPath, indexPath],
+        filesTouched: [relPath, indexPath, ...longTermTouched],
       };
 
       this.teamSync.notifyWrite();
@@ -207,6 +209,310 @@ export class ExtractService {
       hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
     }
     return `fp_${(hash >>> 0).toString(16)}`;
+  }
+
+  private async writeLongTermMemoriesFromTurn(turn: TurnContext, messages: TurnMessage[]): Promise<string[]> {
+    const touched: string[] = [];
+    const indexPatches: Array<{ type: 'user' | 'feedback' | 'project' | 'reference'; topicKey: string; path: string; updatedAt: string }> = [];
+    const userMsg = [...messages].reverse().find((m) => m.role === 'user');
+    const assistantMsg = [...messages].reverse().find((m) => m.role === 'assistant');
+    const userText = String(userMsg?.content ?? '').trim();
+    const assistantText = String(assistantMsg?.content ?? '').trim();
+    if (!userText && !assistantText) return touched;
+
+    const candidates = [
+      this.buildLongTermCandidate('user', turn, userText, assistantText),
+      this.buildLongTermCandidate('feedback', turn, userText, assistantText),
+      this.buildLongTermCandidate('project', turn, userText, assistantText),
+      this.buildLongTermCandidate('reference', turn, userText, assistantText),
+    ].filter(
+      (x): x is { type: 'user' | 'feedback' | 'project' | 'reference'; content: string; topicKey: string } =>
+        Boolean(x),
+    );
+
+    for (const c of candidates) {
+      const relDir = await this.resolveLongTermDir(c.type);
+      const existing = await this.findLongTermMemoryByTopicKey(relDir, c.topicKey);
+      const memoryId = existing?.id ?? this.buildLongTermId(c.type, turn.turnId);
+      const file = `${relDir}/${memoryId}.md`;
+      this.assertSafeRelativePath(file);
+
+      const createdAt = existing?.createdAt ?? new Date(turn.timestamp).toISOString();
+      const updatedAt = new Date(turn.timestamp).toISOString();
+      const frontmatter = [
+        '---',
+        `name: ${memoryId}`,
+        `description: ${c.type} memory from ${turn.turnId}`,
+        `type: ${c.type}`,
+        `topicKey: ${c.topicKey}`,
+        `createdAt: ${createdAt}`,
+        `updatedAt: ${updatedAt}`,
+        `sourceSession: ${turn.sessionId}`,
+        `sourceTurn: ${turn.turnId}`,
+        '---',
+        '',
+      ].join('\n');
+      const body = `${frontmatter}${c.content}\n`;
+      const w = await window.zytrader.fs.write(file, body, { scope: 'vault' });
+      if (w.ok) {
+        touched.push(file);
+        indexPatches.push({ type: c.type, topicKey: c.topicKey, path: file, updatedAt });
+      }
+    }
+
+    if (indexPatches.length > 0) {
+      const topicIndexFile = await this.updateTopicIndex(indexPatches);
+      if (topicIndexFile) touched.push(topicIndexFile);
+      const timeIndexFile = await this.updateTimeIndex(indexPatches);
+      if (timeIndexFile) touched.push(timeIndexFile);
+      const manifestFile = await this.updateManifest(indexPatches);
+      if (manifestFile) touched.push(manifestFile);
+    }
+
+    return touched;
+  }
+
+  private buildLongTermCandidate(
+    type: 'user' | 'feedback' | 'project' | 'reference',
+    turn: TurnContext,
+    userText: string,
+    assistantText: string,
+  ): { type: 'user' | 'feedback' | 'project' | 'reference'; content: string; topicKey: string } | null {
+    const compactUser = userText.replace(/\s+/g, ' ').slice(0, 280);
+    const compactAsst = assistantText.replace(/\s+/g, ' ').slice(0, 360);
+    if (type === 'user' && !/(我是|I am|my role|偏好|习惯|负责|经验|背景)/i.test(userText)) return null;
+    if (type === 'feedback' && !/(不要|别|请|建议|prefer|should|must|风格|格式)/i.test(userText)) return null;
+    if (type === 'project' && !/(项目|计划|里程碑|发布|deadline|freeze|roadmap|本周|下周)/i.test(userText)) return null;
+    if (type === 'reference' && !/(http|链接|文档|Linear|Jira|Grafana|看板|地址)/i.test(userText)) return null;
+
+    const content = [
+      `Fact: ${compactUser || '(empty user)'}`,
+      `Why: Captured from turn ${turn.turnId} for long-term retrieval.`,
+      `How to apply: Use with current repo state verification before acting.`,
+      compactAsst ? `Assistant context: ${compactAsst}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    const topicSource = `${type}|${compactUser.slice(0, 120).toLowerCase()}`;
+    const topicKey = this.fingerprint(topicSource).slice(0, 18);
+    return { type, content, topicKey };
+  }
+
+  private async resolveLongTermDir(type: 'user' | 'feedback' | 'project' | 'reference'): Promise<string> {
+    if (type === 'user') return this.directoryManager.getRelativePathByKey('agent-long-user');
+    if (type === 'feedback') return this.directoryManager.getRelativePathByKey('agent-long-feedback');
+    if (type === 'project') return this.directoryManager.getRelativePathByKey('agent-long-project');
+    return this.directoryManager.getRelativePathByKey('agent-long-reference');
+  }
+
+  private async findLongTermMemoryByTopicKey(
+    relDir: string,
+    topicKey: string,
+  ): Promise<{ id: string; createdAt?: string } | null> {
+    const listed = await window.zytrader.fs.list(relDir, { scope: 'vault' });
+    if (!listed.ok) return null;
+
+    for (const e of listed.entries) {
+      if (e.type !== 'file' || !/\.md$/i.test(e.name)) continue;
+      const path = `${relDir}/${e.name}`;
+      const read = await window.zytrader.fs.read(path, { scope: 'vault' });
+      if (!read.ok) continue;
+      const meta = this.parseYamlLikeFrontmatter(read.content);
+      if (meta['topicKey'] !== topicKey) continue;
+      const id = e.name.replace(/\.md$/i, '');
+      const createdAt = typeof meta['createdAt'] === 'string' ? meta['createdAt'] : undefined;
+      return { id, createdAt };
+    }
+
+    return null;
+  }
+
+  private parseYamlLikeFrontmatter(text: string): Record<string, string> {
+    const m = text.match(/^---\n([\s\S]*?)\n---/);
+    if (!m?.[1]) return {};
+    const out: Record<string, string> = {};
+    for (const line of m[1].split(/\r?\n/)) {
+      const idx = line.indexOf(':');
+      if (idx <= 0) continue;
+      const k = line.slice(0, idx).trim();
+      const v = line.slice(idx + 1).trim();
+      if (k) out[k] = v;
+    }
+    return out;
+  }
+
+  private async updateTopicIndex(
+    patches: Array<{ type: 'user' | 'feedback' | 'project' | 'reference'; topicKey: string; path: string; updatedAt: string }>,
+  ): Promise<string | null> {
+    const metaRel = await this.directoryManager.getRelativePathByKey('agent-memory-index');
+    const indexPath = `${metaRel}/topic-index.json`;
+    this.assertSafeRelativePath(indexPath);
+
+    const read = await window.zytrader.fs.read(indexPath, { scope: 'vault' });
+    const base: {
+      updatedAt?: string;
+      topics?: Record<string, { type: string; path: string; updatedAt: string }>;
+    } = read.ok
+      ? (() => {
+          try {
+            return JSON.parse(read.content) as {
+              updatedAt?: string;
+              topics?: Record<string, { type: string; path: string; updatedAt: string }>;
+            };
+          } catch {
+            return {};
+          }
+        })()
+      : {};
+
+    const topics = { ...(base.topics ?? {}) };
+    for (const p of patches) {
+      topics[p.topicKey] = {
+        type: p.type,
+        path: p.path,
+        updatedAt: p.updatedAt,
+      };
+    }
+
+    const doc = {
+      updatedAt: new Date().toISOString(),
+      topics,
+    };
+
+    const write = await window.zytrader.fs.write(indexPath, JSON.stringify(doc, null, 2), { scope: 'vault' });
+    if (!write.ok) return null;
+    return indexPath;
+  }
+
+  private async updateTimeIndex(
+    patches: Array<{ type: 'user' | 'feedback' | 'project' | 'reference'; topicKey: string; path: string; updatedAt: string }>,
+  ): Promise<string | null> {
+    const metaRel = await this.directoryManager.getRelativePathByKey('agent-memory-index');
+    const indexPath = `${metaRel}/time-index.json`;
+    this.assertSafeRelativePath(indexPath);
+
+    const read = await window.zytrader.fs.read(indexPath, { scope: 'vault' });
+    const base: {
+      updatedAt?: string;
+      entries?: Array<{ type: string; topicKey: string; path: string; updatedAt: string }>;
+    } = read.ok
+      ? (() => {
+          try {
+            return JSON.parse(read.content) as {
+              updatedAt?: string;
+              entries?: Array<{ type: string; topicKey: string; path: string; updatedAt: string }>;
+            };
+          } catch {
+            return {};
+          }
+        })()
+      : {};
+
+    const map = new Map<string, { type: string; topicKey: string; path: string; updatedAt: string }>();
+    for (const e of base.entries ?? []) {
+      const key = `${e.type}|${e.topicKey}`;
+      if (!map.has(key)) map.set(key, e);
+    }
+    for (const p of patches) {
+      const key = `${p.type}|${p.topicKey}`;
+      map.set(key, {
+        type: p.type,
+        topicKey: p.topicKey,
+        path: p.path,
+        updatedAt: p.updatedAt,
+      });
+    }
+
+    const entries = [...map.values()]
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+      .slice(0, 2000);
+
+    const doc = {
+      updatedAt: new Date().toISOString(),
+      entries,
+    };
+
+    const write = await window.zytrader.fs.write(indexPath, JSON.stringify(doc, null, 2), { scope: 'vault' });
+    if (!write.ok) return null;
+    return indexPath;
+  }
+
+  private async updateManifest(
+    patches: Array<{ type: 'user' | 'feedback' | 'project' | 'reference'; topicKey: string; path: string; updatedAt: string }>,
+  ): Promise<string | null> {
+    const metaRel = await this.directoryManager.getRelativePathByKey('agent-memory-index');
+    const manifestPath = `${metaRel}/manifest.json`;
+    this.assertSafeRelativePath(manifestPath);
+
+    const read = await window.zytrader.fs.read(manifestPath, { scope: 'vault' });
+    const base: {
+      updatedAt?: string;
+      lastExtractAt?: string;
+      totals?: {
+        all?: number;
+        byType?: Record<string, number>;
+      };
+    } = read.ok
+      ? (() => {
+          try {
+            return JSON.parse(read.content) as {
+              updatedAt?: string;
+              lastExtractAt?: string;
+              totals?: {
+                all?: number;
+                byType?: Record<string, number>;
+              };
+            };
+          } catch {
+            return {};
+          }
+        })()
+      : {};
+
+    const topicIndexPath = `${metaRel}/topic-index.json`;
+    const topicRead = await window.zytrader.fs.read(topicIndexPath, { scope: 'vault' });
+    const topics: Record<string, { type: string; path: string; updatedAt: string }> = topicRead.ok
+      ? (() => {
+          try {
+            const parsed = JSON.parse(topicRead.content) as {
+              topics?: Record<string, { type: string; path: string; updatedAt: string }>;
+            };
+            return parsed.topics ?? {};
+          } catch {
+            return {};
+          }
+        })()
+      : {};
+
+    const byType: Record<string, number> = { user: 0, feedback: 0, project: 0, reference: 0 };
+    for (const v of Object.values(topics)) {
+      const t = String(v.type || '');
+      byType[t] = (byType[t] ?? 0) + 1;
+    }
+
+    const lastExtractAt = patches
+      .map((p) => p.updatedAt)
+      .sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))[0] ?? base.lastExtractAt ?? new Date().toISOString();
+
+    const doc = {
+      updatedAt: new Date().toISOString(),
+      lastExtractAt,
+      totals: {
+        all: Object.keys(topics).length,
+        byType,
+      },
+    };
+
+    const write = await window.zytrader.fs.write(manifestPath, JSON.stringify(doc, null, 2), { scope: 'vault' });
+    if (!write.ok) return null;
+    return manifestPath;
+  }
+
+  private buildLongTermId(type: 'user' | 'feedback' | 'project' | 'reference', turnId: string): string {
+    const ts = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+    const safeTurn = turnId.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 24);
+    return `long-${type}-${ts}-${safeTurn}`;
   }
 
   private assertSafeRelativePath(relPath: string): void {
