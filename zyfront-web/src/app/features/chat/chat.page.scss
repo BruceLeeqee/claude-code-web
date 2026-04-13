@@ -156,6 +156,51 @@
   }
 }
 
+.turn-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.turn-row {
+  border: 1px solid #2f3a4a;
+  border-radius: 8px;
+  background: #111827;
+  padding: 8px 10px;
+}
+
+.turn-label {
+  font-size: 11px;
+  color: #93c5fd;
+  margin-bottom: 6px;
+  letter-spacing: 0.02em;
+}
+
+.turn-content {
+  color: #e4e4e7;
+}
+
+.thinking-details {
+  summary {
+    cursor: pointer;
+    color: #fbbf24;
+    font-size: 13px;
+    list-style: none;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  &[open] .thinking-full {
+    margin-top: 8px;
+  }
+}
+
+.thinking-full {
+  color: #cbd5e1;
+}
+
 .bubble-label {
   font-size: 10px;
   text-transform: uppercase;

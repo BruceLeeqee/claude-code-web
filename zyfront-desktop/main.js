@@ -152,7 +152,7 @@ const VAULT_README_CONTENT = `AGENT-ROOT/  # 根目录（可自定义路径）
 │   ├── 06-Context/
 │   └── 07-Meta/       # 索引 manifest / time-index / topic-index；子目录 tools 构建索引
 ├── 03-AGENT-TOOLS/
-│   ├── 01-Skills/     # 技能根（SKILL.md）
+│   ├── 01-Skills/     # 技能根：每技能一子目录，入口须为 SKILL.md 或 Skill.md 或 skill.md
 │   └── 02-Plugins/    # 插件根
 ├── 04-PROJECTS/       # 工程与代码仓库（唯一 projects 根）
 ├── 05-RESOURCES/
