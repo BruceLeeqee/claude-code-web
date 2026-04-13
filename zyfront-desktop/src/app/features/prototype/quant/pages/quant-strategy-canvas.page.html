@@ -1,0 +1,91 @@
+<app-quant-layout title="AI 策略生成中心" subtitle="自然语言 -> 可视化策略节点，支持模板与参数编辑">
+  <button type="button" quant-header-actions class="shell-toggle" (click)="toggleRightSidebar()">
+    {{ rightSidebarVisible() ? '隐藏右侧栏' : '显示右侧栏' }}
+  </button>
+
+  <div class="sc-toast" *ngIf="actionToast()">{{ actionToast() }}</div>
+
+  <div class="sc-layout" [class.right-collapsed]="!rightSidebarVisible()">
+    <section class="sc-canvas-wrap">
+      <header class="sc-canvas-head">
+        <div>
+          <h4>{{ selectedTemplate().name }}</h4>
+          <p>{{ selectedTemplate().summary }}</p>
+        </div>
+        <div class="sc-head-actions">
+          <button type="button" class="primary" (click)="runBacktest()">运行回测</button>
+          <button type="button" (click)="saveTemplate()">保存模板</button>
+        </div>
+      </header>
+
+      <div class="sc-canvas">
+        <button
+          *ngFor="let node of selectedTemplate().nodes; trackBy: trackByNode"
+          type="button"
+          class="sc-node"
+          [ngClass]="'kind-' + node.kind"
+          [class.active]="selectedNodeId() === node.id"
+          [style.left.%]="node.x"
+          [style.top.%]="node.y"
+          (click)="selectNode(node.id)"
+        >
+          <small>{{ node.subtitle }}</small>
+          <strong>{{ node.title }}</strong>
+        </button>
+      </div>
+    </section>
+
+    <aside class="sc-right-sidebar" *ngIf="rightSidebarVisible()">
+      <div class="sc-sidebar-top">
+        <section class="sc-panel">
+          <h4>策略描述</h4>
+          <textarea [value]="promptInput()" (input)="onPromptInput($event)" placeholder="描述你的交易想法..."></textarea>
+          <div class="sc-actions">
+            <button type="button" class="primary" (click)="generateStrategy()">生成策略</button>
+          </div>
+        </section>
+
+        <section class="sc-panel">
+          <h4>模板快捷加载</h4>
+          <div class="sc-template-list">
+            <button
+              *ngFor="let tpl of templates()"
+              type="button"
+              [class.active]="selectedTemplateId() === tpl.id"
+              (click)="useTemplate(tpl.id)"
+            >
+              {{ tpl.name }}
+            </button>
+          </div>
+        </section>
+
+        <section class="sc-panel">
+          <h4>AI 解析日志</h4>
+          <ul>
+            <li *ngFor="let log of generationLog()">{{ log }}</li>
+          </ul>
+        </section>
+
+        <section class="sc-panel" *ngIf="selectedNode() as node">
+          <h4>节点参数</h4>
+          <label>节点类型</label>
+          <input type="text" [value]="node.subtitle" readonly />
+
+          <label>节点标题</label>
+          <input type="text" [value]="node.title" (input)="updateSelectedNodeTitle($event)" />
+        </section>
+      </div>
+
+      <section class="sc-chat-window">
+        <div class="sc-chat-window__title">策略助手聊天</div>
+        <div class="sc-chat-window__messages">
+          <div class="msg assistant" *ngFor="let log of generationLog()">{{ log }}</div>
+        </div>
+        <div class="sc-chat-window__input">
+          <input type="text" [value]="promptInput()" (input)="onPromptInput($event)" placeholder="继续输入你的策略想法..." />
+          <button type="button" class="primary" (click)="generateStrategy()">发送</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+</app-quant-layout>

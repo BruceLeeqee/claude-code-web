@@ -1,0 +1,63 @@
+<app-quant-layout title="AI 决策全链路追溯" subtitle="链路可解释性 + 风控自证明 + 审计导出">
+  <div class="tr-toast" *ngIf="toast()">{{ toast() }}</div>
+
+  <div class="tr-headbar">
+    <span>决策 ID：<strong>{{ decisionId() }}</strong></span>
+    <div class="ops">
+      <button type="button" (click)="refreshDecision()">刷新链路</button>
+      <button type="button" class="primary" (click)="exportAudit()">下载审计存证</button>
+    </div>
+  </div>
+
+  <div class="tr-layout">
+    <section class="tr-card tr-timeline">
+      <div class="line"></div>
+
+      <article
+        class="tr-step"
+        *ngFor="let step of steps(); trackBy: trackByStep"
+        [class.active]="selectedStepId() === step.id"
+        (click)="pickStep(step.id)"
+      >
+        <div class="node" [ngClass]="{ focus: step.status === 'focus' }">{{ step.index }}</div>
+        <div class="content">
+          <h4>{{ step.title }}</h4>
+          <p>{{ step.subtitle }}</p>
+          <small>{{ step.summary }}</small>
+        </div>
+      </article>
+    </section>
+
+    <aside class="tr-card tr-detail" *ngIf="selectedStep() as step">
+      <h4>{{ step.title }}</h4>
+
+      <section>
+        <h5>AI 可解释性分析 (SHAP Value)</h5>
+        <div class="shap-row" *ngFor="let row of step.detail.shap">
+          <span>{{ row.label }}</span>
+          <div class="bar">
+            <i [style.width.%]="(row.value < 0 ? -row.value : row.value) * 180" [class.neg]="row.value < 0"></i>
+          </div>
+          <b [ngClass]="{ pos: row.value >= 0, neg: row.value < 0 }">
+            {{ row.value >= 0 ? '+' : '' }}{{ row.value | number: '1.2-2' }}
+          </b>
+        </div>
+      </section>
+
+      <section>
+        <h5>关联证据</h5>
+        <p class="evidence">{{ step.detail.source }}</p>
+      </section>
+
+      <section>
+        <h5>风控自证明</h5>
+        <div class="proof-grid">
+          <article *ngFor="let p of step.detail.riskProof">
+            <span>{{ p.label }}</span>
+            <b>{{ p.value }}</b>
+          </article>
+        </div>
+      </section>
+    </aside>
+  </div>
+</app-quant-layout>

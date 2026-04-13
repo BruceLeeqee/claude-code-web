@@ -1,0 +1,245 @@
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+.rc-toast {
+  position: fixed;
+  right: 24px;
+  top: 72px;
+  z-index: 40;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  background: rgba(30, 41, 59, 0.94);
+  color: #dbeafe;
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 8px 12px;
+}
+
+.rc-layout {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1fr;
+  gap: 12px;
+}
+
+.rc-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(15, 23, 35, 0.92);
+  padding: 12px;
+  min-height: 0;
+}
+
+.rc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+
+  h4 {
+    margin: 0;
+    color: #f1f5f9;
+    font-size: 14px;
+  }
+}
+
+.rc-rule-list,
+.rc-alert-list {
+  display: grid;
+  gap: 8px;
+  max-height: calc(100vh - 240px);
+  overflow: auto;
+}
+
+.rc-rule {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 8px;
+  background: #0f172a;
+  padding: 10px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+
+  &.active {
+    border-color: rgba(59, 130, 246, 0.65);
+    background: rgba(30, 64, 175, 0.25);
+  }
+
+  h5 {
+    margin: 0;
+    color: #e2e8f0;
+    font-size: 13px;
+  }
+
+  p {
+    margin: 4px 0 0;
+    color: #94a3b8;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .ops {
+    display: grid;
+    gap: 8px;
+    justify-items: end;
+
+    span {
+      color: #93c5fd;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    button {
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: #1e293b;
+      color: #cbd5e1;
+      border-radius: 999px;
+      font-size: 11px;
+      padding: 4px 10px;
+      cursor: pointer;
+
+      &.on {
+        border-color: rgba(16, 185, 129, 0.55);
+        color: #86efac;
+      }
+    }
+  }
+}
+
+.rc-editor {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+
+  label {
+    color: #93c5fd;
+    font-size: 11px;
+  }
+
+  input {
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 8px;
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 7px 9px;
+    font-size: 12px;
+    outline: none;
+  }
+
+  .rc-summary {
+    margin-top: 2px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    span {
+      color: #94a3b8;
+      font-size: 12px;
+    }
+
+    b {
+      font-size: 12px;
+
+      &.up {
+        color: #22c55e;
+      }
+
+      &.down {
+        color: #ef4444;
+      }
+    }
+  }
+
+  .primary {
+    margin-top: 6px;
+    border: 1px solid rgba(59, 130, 246, 0.65);
+    background: rgba(37, 99, 235, 0.35);
+    color: #dbeafe;
+    border-radius: 8px;
+    font-size: 12px;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+}
+
+.badge {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 999px;
+  color: #cbd5e1;
+  font-size: 11px;
+  padding: 2px 8px;
+
+  &.danger {
+    border-color: rgba(239, 68, 68, 0.55);
+    color: #fca5a5;
+  }
+}
+
+.rc-alert {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 8px;
+  background: #0f172a;
+  padding: 10px;
+
+  .line1 {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    span {
+      color: #94a3b8;
+      font-size: 11px;
+    }
+
+    b {
+      font-size: 11px;
+
+      &.danger {
+        color: #ef4444;
+      }
+
+      &.warn {
+        color: #f59e0b;
+      }
+    }
+  }
+
+  h5 {
+    margin: 6px 0 0;
+    color: #e2e8f0;
+    font-size: 13px;
+  }
+
+  p {
+    margin: 6px 0 0;
+    color: #cbd5e1;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  button {
+    margin-top: 8px;
+    border: 1px solid rgba(59, 130, 246, 0.55);
+    background: rgba(30, 64, 175, 0.28);
+    color: #dbeafe;
+    border-radius: 8px;
+    font-size: 11px;
+    padding: 6px 9px;
+    cursor: pointer;
+  }
+
+  &.done {
+    opacity: 0.68;
+  }
+}
+
+@media (max-width: 1340px) {
+  .rc-layout {
+    grid-template-columns: 1fr;
+  }
+}

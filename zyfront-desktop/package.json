@@ -43,6 +43,7 @@
     "@ctrl/tinycolor": "^4.2.0",
     "@monaco-editor/loader": "^1.7.0",
     "cors": "^2.8.6",
+    "echarts": "^6.0.0",
     "express": "^5.2.1",
     "marked": "^17.0.0",
     "monaco-editor": "^0.55.1",
