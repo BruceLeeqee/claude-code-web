@@ -1,0 +1,83 @@
+<app-quant-layout title="实盘交易系统" subtitle="盘口行情 + 下单面板 + 持仓与执行反馈">
+  <div class="lt-toast" *ngIf="toast()">{{ toast() }}</div>
+
+  <div class="lt-layout">
+    <section class="lt-card lt-watchlist">
+      <h4>实时行情</h4>
+      <div class="lt-list">
+        <button
+          type="button"
+          *ngFor="let q of quotes(); trackBy: trackByQuote"
+          [class.active]="selectedSymbol() === q.symbol"
+          (click)="pickSymbol(q.symbol)"
+        >
+          <div>
+            <strong>{{ q.symbol }}</strong>
+            <p>{{ q.name }}</p>
+          </div>
+          <div class="num">
+            <b>{{ q.price | number: '1.2-2' }}</b>
+            <span [ngClass]="{ up: q.changePct > 0, down: q.changePct < 0 }">
+              {{ q.changePct > 0 ? '+' : '' }}{{ q.changePct }}%
+            </span>
+          </div>
+        </button>
+      </div>
+    </section>
+
+    <section class="lt-card lt-order" *ngIf="selectedQuote() as quote">
+      <h4>下单面板 · {{ quote.symbol }}</h4>
+
+      <div class="lt-order-side">
+        <button type="button" [class.active]="orderSide() === 'Buy'" (click)="setOrderSide('Buy')">买入</button>
+        <button type="button" [class.active]="orderSide() === 'Sell'" (click)="setOrderSide('Sell')">卖出</button>
+      </div>
+
+      <label>限价</label>
+      <input type="number" [value]="orderPrice()" (input)="onPriceInput($event)" step="0.01" />
+
+      <label>数量 (股)</label>
+      <input type="number" [value]="orderQty()" (input)="onQtyInput($event)" step="1" />
+
+      <div class="lt-estimate">
+        <span>预估成交金额</span>
+        <b>${{ estimatedAmount() | number: '1.2-2' }}</b>
+      </div>
+
+      <button type="button" class="submit" (click)="submitOrder()">提交委托</button>
+    </section>
+
+    <section class="lt-card lt-feed">
+      <h4>执行反馈流</h4>
+      <ul>
+        <li *ngFor="let row of executionFeed()">{{ row }}</li>
+      </ul>
+    </section>
+
+    <section class="lt-card lt-positions">
+      <h4>当前持仓</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>标的</th>
+            <th class="num">数量</th>
+            <th class="num">成本价</th>
+            <th class="num">最新价</th>
+            <th class="num">浮动盈亏</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let row of positions(); trackBy: trackByPosition">
+            <td>{{ row.symbol }}</td>
+            <td class="num">{{ row.qty }}</td>
+            <td class="num">{{ row.avgCost | number: '1.2-2' }}</td>
+            <td class="num">{{ row.lastPrice | number: '1.2-2' }}</td>
+            <td class="num" [ngClass]="{ up: row.pnl > 0, down: row.pnl < 0 }">
+              {{ row.pnl > 0 ? '+' : '' }}{{ row.pnl | number: '1.0-0' }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</app-quant-layout>

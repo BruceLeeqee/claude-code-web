@@ -1,0 +1,134 @@
+<app-quant-layout title="中枢调度控制台" subtitle="行情连接正常 · AI引擎在线 · 动态交互原型">
+  <div class="q-toolbar">
+    <button type="button" (click)="onOpenSearch()">搜索</button>
+    <button type="button" (click)="onOpenNotification()">通知 (3)</button>
+    <button type="button" class="primary" (click)="onCreateStrategy()">新建AI策略</button>
+  </div>
+
+  <div class="q-toast" *ngIf="toastMessage()">{{ toastMessage() }}</div>
+
+  <div class="q-grid q-grid--kpi">
+    <article class="q-card">
+      <p class="q-label">累计资产净值 (NAV)</p>
+      <div class="q-row">
+        <h3>{{ navValueText() }}</h3>
+        <span class="q-up">{{ navDeltaText() }}</span>
+      </div>
+    </article>
+
+    <article class="q-card">
+      <p class="q-label">今日盈亏</p>
+      <div class="q-row">
+        <h3 class="q-up">+¥42,105</h3>
+        <span class="q-muted">胜率: 68.2%</span>
+      </div>
+    </article>
+
+    <article class="q-card">
+      <p class="q-label">运行中策略数</p>
+      <div class="q-row">
+        <h3>14 / 20</h3>
+        <span class="q-info">4个AI优化中</span>
+      </div>
+    </article>
+
+    <article class="q-card q-card--warn">
+      <p class="q-label">风控预警</p>
+      <div class="q-row">
+        <h3 class="q-down">02</h3>
+        <span class="q-muted">杠杆率接近阈值</span>
+      </div>
+    </article>
+  </div>
+
+  <div class="q-grid q-grid--main">
+    <section class="q-card q-chart">
+      <div class="q-head">
+        <h4>策略综合收益曲线</h4>
+        <div class="q-tabs">
+          <button
+            *ngFor="let item of ranges"
+            type="button"
+            [class.active]="selectedRange() === item.key"
+            (click)="switchRange(item.key)"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+      </div>
+      <div class="q-chart-real" #chartRef></div>
+    </section>
+
+    <section class="q-card q-rank">
+      <div class="q-head">
+        <h4>策略评分与优选排行</h4>
+      </div>
+      <div class="q-rank-list">
+        <button
+          *ngFor="let item of ranking(); let i = index; trackBy: trackByRanking"
+          type="button"
+          class="q-rank-item"
+          [class.active]="selectedRankingId() === item.id"
+          (click)="pickRanking(item.id)"
+        >
+          <span class="idx">{{ i + 1 < 10 ? '0' + (i + 1) : i + 1 }}</span>
+          <div class="meta">
+            <p>{{ item.name }}</p>
+            <div class="bar">
+              <i [style.width.%]="item.score * 10"></i>
+            </div>
+          </div>
+          <div class="val" [class.q-up]="item.pnlPct > 0" [class.q-down]="item.pnlPct < 0">
+            {{ item.pnlPct > 0 ? '+' : '' }}{{ item.pnlPct }}%
+          </div>
+        </button>
+      </div>
+
+      <div class="q-selected" *ngIf="selectedRanking() as sel">
+        当前选中：<strong>{{ sel.name }}</strong>（评分 {{ sel.score }}）
+      </div>
+    </section>
+  </div>
+
+  <div class="q-grid q-grid--bottom">
+    <section class="q-card">
+      <div class="q-head">
+        <h4>AI决策实时追溯流</h4>
+        <span class="q-info">监控中...</span>
+      </div>
+      <div class="q-stream">
+        <article class="q-stream-item" *ngFor="let event of decisionEvents(); trackBy: trackByDecision">
+          <div class="q-stream-meta">
+            <span>{{ event.ts }}</span>
+            <b>{{ event.tag }}</b>
+          </div>
+          <p>{{ event.content }}</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="q-card">
+      <div class="q-head">
+        <h4>全流程追溯概览</h4>
+      </div>
+      <div class="q-mini-grid">
+        <article>
+          <p>数据接入质量</p>
+          <h5>99.8%</h5>
+        </article>
+        <article>
+          <p>AI决策透明度</p>
+          <h5>L4 级</h5>
+        </article>
+        <article>
+          <p>平均回测耗时</p>
+          <h5>1.2s</h5>
+        </article>
+        <article>
+          <p>系统可用性</p>
+          <h5>99.99%</h5>
+        </article>
+      </div>
+    </section>
+  </div>
+</app-quant-layout>

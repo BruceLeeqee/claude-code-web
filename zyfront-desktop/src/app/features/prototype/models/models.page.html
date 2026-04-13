@@ -125,25 +125,20 @@
   </section>
 
   <section class="card-panel conn-panel">
-    <h3 class="panel-title">Vault 布局（技能 / 插件根目录）</h3>
-    <p class="panel-sub">相对 Vault 根的路径，写入 <code>06-SYSTEM/directory.config.json</code>（若仅有旧库则为 <code>05-SYSTEM</code>）。与资源管理器「记忆目录」结构一致。</p>
+    <h3 class="panel-title">Vault 根目录与记忆管道</h3>
+    <p class="panel-sub">
+      这里的配置本质上只需要一个：<strong>Vault 根目录</strong>（例如 <code>E:/AGENT-ROOT</code>）。
+      保存时会同步更新最新目录结构键（skills/plugins/agent-memory 等）。
+    </p>
+
     <div class="conn-grid">
-      <label class="conn-field">
-        <span>技能根目录（agent-skills）</span>
+      <label class="conn-field" style="grid-column: 1 / -1">
+        <span>Vault 根目录</span>
         <input
           type="text"
-          [value]="vaultSkillRel()"
-          (input)="vaultSkillRel.set($any($event.target).value)"
-          placeholder="03-AGENT-TOOLS/01-Skills"
-        />
-      </label>
-      <label class="conn-field">
-        <span>插件根目录（agent-plugins）</span>
-        <input
-          type="text"
-          [value]="vaultPluginRel()"
-          (input)="vaultPluginRel.set($any($event.target).value)"
-          placeholder="03-AGENT-TOOLS/02-Plugins"
+          [value]="vaultRootPath()"
+          (input)="vaultRootPath.set($any($event.target).value)"
+          placeholder="E:/AGENT-ROOT"
         />
       </label>
       <div class="conn-field" style="grid-column: 1 / -1; display: flex; gap: 8px; align-items: center">
@@ -154,13 +149,13 @@
     @if (vaultLayoutMessage()) {
       <p class="panel-sub" style="margin-top: 8px">{{ vaultLayoutMessage() }}</p>
     }
-  </section>
 
-  <section class="card-panel conn-panel">
+    <div style="height: 12px"></div>
+
     <h3 class="panel-title">记忆管道与自动做梦</h3>
     <p class="panel-sub">
       控制每轮对话结束后的提取 / 会话记忆 / 自动做梦管线。参数保存在本机
-      <code>zyfront:memory-pipeline-config-v1</code>；巩固时间戳写在 Vault 的
+      <code>zyfront:memory-pipeline-config-v2</code>；巩固时间戳写在 Vault 的
       <code>02-AGENT-MEMORY/07-Meta/.dream.state.json</code>，做梦摘要追加到长期用户目录下的
       <code>AUTO_DREAM.md</code>。
     </p>

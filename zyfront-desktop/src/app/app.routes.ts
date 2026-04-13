@@ -42,6 +42,44 @@ export const routes: Routes = [
         path: 'plugins',
         loadComponent: () => import('./features/prototype/plugins/plugins.page').then((m) => m.PluginsPrototypePageComponent),
       },
+      {
+        path: 'quant',
+        loadComponent: () => import('./features/prototype/quant/quant-shell.component').then((m) => m.QuantShellComponent),
+        children: [
+          { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
+          {
+            path: 'dashboard',
+            loadComponent: () =>
+              import('./features/prototype/quant/pages/quant-dashboard.page').then((m) => m.QuantDashboardPageComponent),
+          },
+          {
+            path: 'strategy-canvas',
+            loadComponent: () =>
+              import('./features/prototype/quant/pages/quant-strategy-canvas.page').then(
+                (m) => m.QuantStrategyCanvasPageComponent,
+              ),
+          },
+          {
+            path: 'backtest',
+            loadComponent: () => import('./features/prototype/quant/pages/quant-backtest.page').then((m) => m.QuantBacktestPageComponent),
+          },
+          {
+            path: 'live-trading',
+            loadComponent: () =>
+              import('./features/prototype/quant/pages/quant-live-trading.page').then((m) => m.QuantLiveTradingPageComponent),
+          },
+          {
+            path: 'risk-control',
+            loadComponent: () =>
+              import('./features/prototype/quant/pages/quant-risk-control.page').then((m) => m.QuantRiskControlPageComponent),
+          },
+          {
+            path: 'traceability',
+            loadComponent: () =>
+              import('./features/prototype/quant/pages/quant-traceability.page').then((m) => m.QuantTraceabilityPageComponent),
+          },
+        ],
+      },
     ],
   },
   {

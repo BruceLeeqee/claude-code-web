@@ -1,0 +1,36 @@
+<div class="quant-layout" [class.nav-collapsed]="!navVisible()">
+  <aside class="quant-nav" *ngIf="navVisible()">
+    <div class="quant-nav__brand">QuantAI Pro</div>
+    <nav class="quant-nav__menu">
+      <a
+        *ngFor="let item of navItems"
+        class="quant-nav__item"
+        [routerLink]="item.path"
+        routerLinkActive="quant-nav__item--active"
+      >
+        {{ item.label }}
+      </a>
+    </nav>
+  </aside>
+
+  <main class="quant-main">
+    <header class="quant-header">
+      <div class="quant-header__left">
+        <h1>{{ title }}</h1>
+        <p *ngIf="subtitle">{{ subtitle }}</p>
+      </div>
+
+      <div class="quant-header__right">
+        <ng-content select="[quant-header-actions]"></ng-content>
+        <button type="button" class="shell-toggle" (click)="toggleNav()" [title]="navVisible() ? '隐藏左侧边栏' : '显示左侧边栏'">
+          <span class="shell-toggle__icon">{{ navVisible() ? '◧' : '◨' }}</span>
+          <span>{{ navVisible() ? '隐藏左侧栏' : '显示左侧栏' }}</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="quant-content">
+      <ng-content></ng-content>
+    </section>
+  </main>
+</div>

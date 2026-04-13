@@ -1,0 +1,72 @@
+<app-quant-layout title="风险控制中心" subtitle="规则开关 + 阈值调节 + 告警闭环确认">
+  <div class="rc-toast" *ngIf="toast()">{{ toast() }}</div>
+
+  <div class="rc-layout">
+    <section class="rc-card rc-rules">
+      <div class="rc-head">
+        <h4>风控规则</h4>
+      </div>
+
+      <div class="rc-rule-list">
+        <article
+          class="rc-rule"
+          *ngFor="let rule of rules(); trackBy: trackByRule"
+          [class.active]="selectedRuleId() === rule.id"
+          (click)="selectRule(rule.id)"
+        >
+          <div class="meta">
+            <h5>{{ rule.name }}</h5>
+            <p>{{ rule.desc }}</p>
+          </div>
+
+          <div class="ops">
+            <span>{{ rule.threshold }}{{ rule.unit }}</span>
+            <button type="button" [class.on]="rule.enabled" (click)="toggleRule(rule.id); $event.stopPropagation()">
+              {{ rule.enabled ? '已启用' : '已停用' }}
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="rc-card rc-editor" *ngIf="selectedRule() as rule">
+      <div class="rc-head">
+        <h4>规则参数编辑</h4>
+      </div>
+
+      <label>规则名称</label>
+      <input type="text" [value]="rule.name" readonly />
+
+      <label>风险阈值（{{ rule.unit }}）</label>
+      <input type="number" [value]="rule.threshold" (input)="updateThreshold($event)" step="0.01" />
+
+      <div class="rc-summary">
+        <span>当前状态</span>
+        <b [ngClass]="{ up: rule.enabled, down: !rule.enabled }">{{ rule.enabled ? '启用中' : '已停用' }}</b>
+      </div>
+
+      <button type="button" class="primary" (click)="saveRule()">保存规则</button>
+    </section>
+
+    <section class="rc-card rc-alerts">
+      <div class="rc-head">
+        <h4>实时告警流</h4>
+        <span class="badge" [ngClass]="{ danger: pendingAlerts() > 0 }">待处理 {{ pendingAlerts() }}</span>
+      </div>
+
+      <div class="rc-alert-list">
+        <article class="rc-alert" *ngFor="let alert of alerts(); trackBy: trackByAlert" [class.done]="alert.acknowledged">
+          <div class="line1">
+            <span>{{ alert.ts }}</span>
+            <b [ngClass]="{ danger: alert.level === 'high', warn: alert.level === 'medium' }">
+              {{ alert.level === 'high' ? '高优先级' : '中优先级' }}
+            </b>
+          </div>
+          <h5>{{ alert.title }}</h5>
+          <p>{{ alert.detail }}</p>
+          <button type="button" *ngIf="!alert.acknowledged" (click)="acknowledgeAlert(alert.id)">确认告警</button>
+        </article>
+      </div>
+    </section>
+  </div>
+</app-quant-layout>

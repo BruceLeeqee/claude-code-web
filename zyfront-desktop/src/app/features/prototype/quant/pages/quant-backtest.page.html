@@ -1,0 +1,71 @@
+<app-quant-layout title="策略回测详情：AI-动量-XLK-001" subtitle="已完成回测 · 可导出报告与部署到实盘候选池">
+  <div class="bt-toast" *ngIf="actionToast()">{{ actionToast() }}</div>
+
+  <header class="bt-head-actions">
+    <button type="button" class="primary" (click)="exportReport()">导出报告</button>
+    <button type="button" (click)="deployToLive()">部署至实盘</button>
+  </header>
+
+  <section class="bt-kpis">
+    <article class="bt-kpi" *ngFor="let item of metrics()">
+      <p>{{ item.label }}</p>
+      <h3 [ngClass]="{ up: item.tone === 'up', down: item.tone === 'down' }">{{ item.value }}</h3>
+    </article>
+  </section>
+
+  <section class="bt-card">
+    <div class="bt-card-head">
+      <h4>收益曲线比较</h4>
+      <div class="legend">
+        <span><i class="s"></i>策略收益</span>
+        <span><i class="b"></i>基准收益 (SPY)</span>
+      </div>
+    </div>
+    <div class="bt-curve" #curveChartRef></div>
+  </section>
+
+  <section class="bt-grid">
+    <article class="bt-card bt-table-card">
+      <div class="bt-card-head">
+        <h4>成交历史（最新 50 笔）</h4>
+        <button type="button" class="text" (click)="viewAllTrades()">查看全部</button>
+      </div>
+
+      <div class="bt-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>标的</th>
+              <th>方向</th>
+              <th class="num">成交价</th>
+              <th class="num">成交量</th>
+              <th class="num">收益</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let row of trades(); trackBy: trackByTrade">
+              <td>{{ row.time }}</td>
+              <td class="symbol">{{ row.symbol }}</td>
+              <td [ngClass]="{ up: row.side === 'Buy', down: row.side === 'Sell' }">{{ row.side }}</td>
+              <td class="num">{{ row.price }}</td>
+              <td class="num">{{ row.volume }}</td>
+              <td class="num" [ngClass]="{ up: row.pnlTone === 'up', down: row.pnlTone === 'down' }">{{ row.pnl }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="bt-card bt-risk-card">
+      <h4>持仓风险分布</h4>
+      <div class="bt-pie" #riskPieRef></div>
+
+      <div class="bt-risk-stats">
+        <div><span>最大回撤历时</span><b>14 天</b></div>
+        <div><span>平均持仓周期</span><b>3.2 天</b></div>
+        <div><span>资金利用率</span><b>88.4%</b></div>
+      </div>
+    </article>
+  </section>
+</app-quant-layout>

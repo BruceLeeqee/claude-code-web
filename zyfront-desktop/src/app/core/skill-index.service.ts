@@ -84,8 +84,16 @@ export class SkillIndexService {
     if (this.skillRootRel) return this.skillRootRel;
     const r = await window.zytrader.vault.resolve('agent-skills');
     if (r.ok && r.relative) {
-      this.skillRootRel = this.normalizeSkillPath(r.relative);
-      return this.skillRootRel;
+      const rel = this.normalizeSkillPath(r.relative);
+      // 防御：vault.resolve 应返回「相对 Vault 根」的路径；若误返回 absolute，会导致扫描整个盘/整个 Vault
+      const looksAbsolute =
+        /^[a-zA-Z]:\//.test(rel) || rel.startsWith('/') || rel.startsWith('\\\\') || rel.startsWith('//');
+      // 也不允许过宽的相对路径
+      const tooBroad = rel === '.' || rel === '';
+      if (!looksAbsolute && !tooBroad) {
+        this.skillRootRel = rel;
+        return this.skillRootRel;
+      }
     }
     this.skillRootRel = this.normalizeSkillPath('03-AGENT-TOOLS/01-Skills');
     return this.skillRootRel;

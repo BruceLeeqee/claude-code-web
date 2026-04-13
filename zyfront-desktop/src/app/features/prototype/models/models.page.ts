@@ -27,6 +27,19 @@ const CUSTOM_MODELS_KEY = 'zyfront:custom-model-ids';
 const REQUEST_CFG_JSON_KEY = 'zyfront:model-request-config-json';
 const DEFAULT_MODEL_MAX_TOKENS = 81920;
 const LEGACY_DEFAULT_MAX_TOKENS = 32;
+const LATEST_DIRECTORY_KEY_OVERRIDES: Record<string, string> = {
+  'agent-short-term': '02-AGENT-MEMORY/01-Short-Term',
+  'agent-long-term': '02-AGENT-MEMORY/02-Long-User',
+  'agent-long-user': '02-AGENT-MEMORY/02-Long-User',
+  'agent-long-feedback': '02-AGENT-MEMORY/03-Long-Feedback',
+  'agent-long-project': '02-AGENT-MEMORY/04-Long-Projects',
+  'agent-long-reference': '02-AGENT-MEMORY/05-Long-Reference',
+  'agent-context': '02-AGENT-MEMORY/06-Context',
+  'agent-meta': '02-AGENT-MEMORY/07-Meta',
+  'agent-memory-index': '02-AGENT-MEMORY/07-Meta',
+  'agent-skills': '03-AGENT-TOOLS/01-Skills',
+  'agent-plugins': '03-AGENT-TOOLS/02-Plugins',
+};
 
 export type ConnectionIndicator = 'untested' | 'testing' | 'ok' | 'error';
 
@@ -98,9 +111,8 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
   protected requestConfigJson = signal<string>('{}');
   private requestJsonAutoSaveTimer?: ReturnType<typeof setTimeout>;
 
-  /** Vault 内相对路径，写入 06/05-SYSTEM/directory.config.json */
-  protected readonly vaultSkillRel = signal('');
-  protected readonly vaultPluginRel = signal('');
+  /** 统一 Vault 根目录（例如 E:/AGENT-ROOT） */
+  protected readonly vaultRootPath = signal('');
   protected readonly vaultLayoutMessage = signal('');
 
   /** 记忆管道 / 做梦：与 MemoryConfigService（localStorage key `zyfront:memory-pipeline-config-v2`）同步 */
@@ -241,10 +253,11 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
   protected async loadVaultLayoutPaths(): Promise<void> {
     this.vaultLayoutMessage.set('');
     try {
-      await this.directoryManager.ensureVaultReady();
-      const cfg = await this.directoryManager.readDirectoryConfig(true);
-      this.vaultSkillRel.set(cfg.keys['agent-skills'] ?? '03-AGENT-TOOLS/01-Skills');
-      this.vaultPluginRel.set(cfg.keys['agent-plugins'] ?? '03-AGENT-TOOLS/02-Plugins');
+      const info = await this.bridge.health();
+      if (!info.ok || !info.vaultRoot) {
+        throw new Error('读取 Vault 根目录失败');
+      }
+      this.vaultRootPath.set(info.vaultRoot);
     } catch (e) {
       this.vaultLayoutMessage.set(e instanceof Error ? e.message : String(e));
     }
@@ -254,6 +267,14 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
   protected async saveVaultLayoutPaths(): Promise<void> {
     this.vaultLayoutMessage.set('');
     try {
+      const root = this.vaultRootPath().trim();
+      if (!root) {
+        throw new Error('请先填写 Vault 根目录');
+      }
+      const set = await window.zytrader.vault.setConfig({ mode: 'global', globalRoot: root });
+      if (!set.ok) {
+        throw new Error(set.error ?? '设置 Vault 根目录失败');
+      }
       await this.directoryManager.ensureVaultReady();
       const candidates = ['06-SYSTEM/directory.config.json', '05-SYSTEM/directory.config.json'];
       let target = '';
@@ -271,19 +292,25 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
         existing.trim() !== ''
           ? (JSON.parse(existing) as Record<string, unknown>)
           : { version: 1, keys: {} as Record<string, string> };
-      const keys = { ...((doc['keys'] as Record<string, string>) ?? {}) };
-      keys['agent-skills'] = this.vaultSkillRel().trim() || '03-AGENT-TOOLS/01-Skills';
-      keys['agent-plugins'] = this.vaultPluginRel().trim() || '03-AGENT-TOOLS/02-Plugins';
+      const keys = this.applyLatestDirectoryStructure((doc['keys'] as Record<string, string>) ?? {});
       const next = { ...doc, version: Number(doc['version'] ?? 1), keys };
       const wr = await window.zytrader.fs.write(target, JSON.stringify(next, null, 2), { scope: 'vault' });
       if (!wr.ok) throw new Error('写入 directory.config.json 失败');
       this.directoryManager.invalidateCache();
       this.skillIndex.invalidateSkillRoot();
-      this.vaultLayoutMessage.set(`已保存到 Vault/${target}`);
+      this.vaultRootPath.set(set.vaultRoot ?? root);
+      this.vaultLayoutMessage.set(`已统一为单一 Vault 根目录，并更新最新目录结构：${this.vaultRootPath()}`);
     } catch (e) {
       this.vaultLayoutMessage.set(e instanceof Error ? e.message : String(e));
     }
     this.cdr.markForCheck();
+  }
+
+  private applyLatestDirectoryStructure(current: Record<string, string>): Record<string, string> {
+    return {
+      ...current,
+      ...LATEST_DIRECTORY_KEY_OVERRIDES,
+    };
   }
 
   protected switchModel(modelId: string): void {
