@@ -4,6 +4,7 @@ import {
   Component,
   computed,
   inject,
+  OnDestroy,
   OnInit,
   signal,
 } from '@angular/core';
@@ -37,7 +38,7 @@ export type ConnectionIndicator = 'untested' | 'testing' | 'ok' | 'error';
   styleUrl: './models.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class ModelsPrototypePageComponent implements OnInit {
+export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
   private readonly settingsService = inject(AppSettingsService);
   private readonly bridge = inject(LocalBridgeService);
   protected readonly usageLedger = inject(ModelUsageLedgerService);
@@ -95,6 +96,7 @@ export class ModelsPrototypePageComponent implements OnInit {
   protected requestType = signal<UiRequestKind>('anthropic');
   protected endpointInput = signal('');
   protected requestConfigJson = signal<string>('{}');
+  private requestJsonAutoSaveTimer?: ReturnType<typeof setTimeout>;
 
   /** Vault 内相对路径，写入 06/05-SYSTEM/directory.config.json */
   protected readonly vaultSkillRel = signal('');
@@ -124,6 +126,14 @@ export class ModelsPrototypePageComponent implements OnInit {
   ngOnInit(): void {
     this.hydrateMemoryPipelineUi();
     void this.loadVaultLayoutPaths();
+  }
+
+  ngOnDestroy(): void {
+    if (this.requestJsonAutoSaveTimer !== undefined) {
+      clearTimeout(this.requestJsonAutoSaveTimer);
+      this.requestJsonAutoSaveTimer = undefined;
+      this.tryAutoSaveRequestConfigJson();
+    }
   }
 
   constructor() {
@@ -277,14 +287,45 @@ export class ModelsPrototypePageComponent implements OnInit {
     this.cdr.markForCheck();
   }
 
-  protected save(): void {
+  protected onRequestConfigJsonInput(ev: Event): void {
+    const raw = (ev.target as HTMLTextAreaElement).value;
+    this.requestConfigJson.set(raw);
     this.validationMessage.set('');
+    if (this.requestJsonAutoSaveTimer !== undefined) {
+      clearTimeout(this.requestJsonAutoSaveTimer);
+    }
+    this.requestJsonAutoSaveTimer = setTimeout(() => {
+      this.requestJsonAutoSaveTimer = undefined;
+      this.tryAutoSaveRequestConfigJson();
+    }, 700);
+  }
+
+  /** 合法 JSON 时静默落盘并同步 AppSettings，不改写文本框（避免打断输入光标）。 */
+  private tryAutoSaveRequestConfigJson(): void {
+    const raw = this.requestConfigJson().trim();
+    if (!raw) return;
+    try {
+      const p = JSON.parse(raw) as unknown;
+      if (!p || typeof p !== 'object' || Array.isArray(p)) return;
+      const parsedCfg = this.normalizeRequestConfig(p as Record<string, unknown>);
+      this.applyRequestConfigFromParsed(parsedCfg, { syncTextarea: false });
+    } catch {
+      return;
+    }
+    this.cdr.markForCheck();
+  }
+
+  private applyRequestConfigFromParsed(
+    parsedCfg: Record<string, unknown>,
+    opts: { syncTextarea: boolean },
+  ): void {
     const cur = this.activeCatalogEntry();
     const provider = this.requestType() as AppSettings['modelProvider'];
     const endpoint = this.endpointInput().trim();
-    const parsedCfg = this.parseRequestJsonOrSetError();
-    if (!parsedCfg) return;
-    const effectiveModel = typeof parsedCfg['model'] === 'string' && parsedCfg['model'].trim() ? String(parsedCfg['model']).trim() : cur.id;
+    const effectiveModel =
+      typeof parsedCfg['model'] === 'string' && parsedCfg['model'].trim()
+        ? String(parsedCfg['model']).trim()
+        : cur.id;
     const nextCompression = this.resolveCompressionFromConfig(parsedCfg);
     const nextCost = this.resolveCostFromConfig(parsedCfg);
     const nextTheme = this.resolveThemeFromConfig(parsedCfg, this.settings().theme ?? 'dark');
@@ -304,10 +345,19 @@ export class ModelsPrototypePageComponent implements OnInit {
     });
     try {
       localStorage.setItem(REQUEST_CFG_JSON_KEY, JSON.stringify(parsedCfg, null, 2));
-      this.requestConfigJson.set(JSON.stringify(parsedCfg, null, 2));
+      if (opts.syncTextarea) {
+        this.requestConfigJson.set(JSON.stringify(parsedCfg, null, 2));
+      }
     } catch {
       /* ignore */
     }
+  }
+
+  protected save(): void {
+    this.validationMessage.set('');
+    const parsedCfg = this.parseRequestJsonOrSetError();
+    if (!parsedCfg) return;
+    this.applyRequestConfigFromParsed(parsedCfg, { syncTextarea: true });
     this.saveFeedback.set('saved');
     this.cdr.markForCheck();
     window.setTimeout(() => {

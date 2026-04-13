@@ -160,7 +160,9 @@ export class SkillsPrototypePageComponent implements OnDestroy {
       await this.refreshInstalledSkills();
       const local = this.loadLocalSkillsFromIndex();
       if (!local.length) {
-        this.hubError.set('未发现已安装技能：请在 Vault 的 `03-AGENT-TOOLS/01-Skills/<技能ID>/SKILL.md`（或模型页配置的技能根）维护技能。');
+        this.hubError.set(
+          '未发现已安装技能：请在技能根目录下为每个技能建子文件夹，并放置入口文件 `SKILL.md` 或 `Skill.md` 或 `skill.md`（见 zyfront-desktop/docs/agent-skills-vault-convention.md）。',
+        );
       }
       const remote = await this.loadRemoteSkills(q);
 
@@ -266,7 +268,7 @@ export class SkillsPrototypePageComponent implements OnDestroy {
         id: x.id,
         name: x.name,
         desc: x.desc,
-        tags: ['Vault', ...this.guessTags(x.id, x.desc)].slice(0, 3),
+        tags: ['Vault', ...this.guessTags(x.id, x.desc)].slice(0, 5),
         category: this.guessCategory(x.id, x.desc),
         rating: 5.0,
         installs: 0,
@@ -411,8 +413,10 @@ export class SkillsPrototypePageComponent implements OnDestroy {
     if (src.includes('test')) tags.push('Testing');
     if (src.includes('refactor')) tags.push('Refactor');
     if (src.includes('api')) tags.push('API');
+    // 路径常为 douyin/…，中文检索「抖音」需可命中
+    if (/douyin|tiktok|抖音/.test(`${id} ${desc}`)) tags.push('抖音');
     if (!tags.length) tags.push('General');
-    return tags.slice(0, 3);
+    return tags.slice(0, 4);
   }
 
   protected formatInstalledMeta(item: InstalledSkillVm): string {

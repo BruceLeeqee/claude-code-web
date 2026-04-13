@@ -27,11 +27,34 @@
           </div>
         } @else {
           <ul #messageList class="msg-list" (click)="onMessageAction($event)">
-            @for (msg of vm.messages; track msg.id) {
-              <li [class]="'bubble ' + msg.role">
-                <div class="bubble-label">{{ msg.role === 'user' ? 'You' : 'Claude' }}</div>
-                <div class="bubble-body markdown" [innerHTML]="renderMarkdown(msg.content)"></div>
+            @for (turn of buildTurns(vm.messages); track turn.assistant.id) {
+              <li class="bubble assistant turn-card">
+                <div class="turn-row">
+                  <div class="turn-label">用户提示词</div>
+                  <div class="turn-content markdown" [innerHTML]="renderMarkdown(turn.userPrompt)"></div>
+                </div>
+
+                <div class="turn-row">
+                  <div class="turn-label">思考过程</div>
+                  <details class="thinking-details">
+                    <summary>{{ getThinkingPreview(turn.assistant.content, turn.assistant.metadata) }}</summary>
+                    <div
+                      class="thinking-full markdown"
+                      [innerHTML]="renderMarkdown(getThinkingFull(turn.assistant.content, turn.assistant.metadata))"
+                    ></div>
+                  </details>
+                </div>
+
+                <div class="turn-row final-row">
+                  <div class="turn-label">最终回答</div>
+                  <div class="turn-content markdown" [innerHTML]="renderMarkdown(turn.assistant.content)"></div>
+                </div>
               </li>
+            } @empty {
+              <div class="thread-empty">
+                <p>开始对话</p>
+                <p class="muted">在下方输入问题，Enter 发送（Shift+Enter 换行）。</p>
+              </div>
             }
           </ul>
         }

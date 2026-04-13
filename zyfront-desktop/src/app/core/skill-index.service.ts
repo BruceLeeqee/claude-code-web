@@ -1,6 +1,10 @@
 import { Injectable } from '@angular/core';
 
-/** 技能来自 Vault `agent-skills` 目录（默认 `03-AGENT-TOOLS/01-Skills/<id>/SKILL.md`） */
+/**
+ * 技能来自 Vault `agent-skills` 目录（默认 `03-AGENT-TOOLS/01-Skills/<id>/`）。
+ * 入口文件（自动生成须遵守，否则可能检测不到）：依次尝试 `SKILL.md` → `Skill.md` → `skill.md`。
+ * 约定说明见本包 `docs/agent-skills-vault-convention.md`。
+ */
 export type SkillSource = 'vault';
 export type SkillStatus = 'ok' | 'invalid';
 
@@ -43,6 +47,34 @@ type FsWithWatch = typeof window.zytrader.fs & {
 export class SkillIndexService {
   private skillRootRel: string | null = null;
 
+  /**
+   * 统一路径格式（Windows/WSL2 兼容）：
+   * - 去掉首尾空白
+   * - 统一为 / 分隔，避免 `a\\b\\SKILL.md` 在 preload 中解析失败
+   * - 去掉重复斜杠（保留协议头，如 https://）
+   */
+  private normalizeSkillPath(path: string): string {
+    const trimmed = String(path ?? '').trim();
+    if (!trimmed) return '';
+    const slash = trimmed.replace(/\\/g, '/');
+    return slash.replace(/(^|[^:])\/\/+?/g, '$1/');
+  }
+
+  /** 针对 Windows/WSL2 的兜底读取：先标准路径，再尝试反斜杠路径 */
+  private async readSkillFileCompat(path: string, scope: 'vault'): Promise<{ ok: boolean; content: string }> {
+    const normalized = this.normalizeSkillPath(path);
+    const first = await window.zytrader.fs.read(normalized, { scope });
+    if (first.ok) return { ok: true, content: first.content };
+
+    const backslash = normalized.replace(/\//g, '\\');
+    if (backslash !== normalized) {
+      const second = await window.zytrader.fs.read(backslash, { scope });
+      if (second.ok) return { ok: true, content: second.content };
+    }
+
+    return { ok: false, content: '' };
+  }
+
   /** 在模型页等处修改 directory.config 后调用，使下次扫描重新解析路径 */
   invalidateSkillRoot(): void {
     this.skillRootRel = null;
@@ -52,10 +84,10 @@ export class SkillIndexService {
     if (this.skillRootRel) return this.skillRootRel;
     const r = await window.zytrader.vault.resolve('agent-skills');
     if (r.ok && r.relative) {
-      this.skillRootRel = r.relative;
-      return r.relative;
+      this.skillRootRel = this.normalizeSkillPath(r.relative);
+      return this.skillRootRel;
     }
-    this.skillRootRel = '03-AGENT-TOOLS/01-Skills';
+    this.skillRootRel = this.normalizeSkillPath('03-AGENT-TOOLS/01-Skills');
     return this.skillRootRel;
   }
 
@@ -120,52 +152,76 @@ export class SkillIndexService {
   }
 
   async readSkillMd(record: Pick<SkillRecord, 'contentPath' | 'scope'>): Promise<{ ok: boolean; content: string }> {
-    const read = await window.zytrader.fs.read(record.contentPath, { scope: record.scope });
-    if (!read.ok) return { ok: false, content: '' };
-    return { ok: true, content: read.content };
+    // 原则：路径读取要跨 Windows/WSL2 稳定，不能因分隔符差异导致偶发读不到 SKILL.md
+    return this.readSkillFileCompat(record.contentPath, record.scope);
   }
 
   private async scanVaultSkillDir(): Promise<SkillScanEntry[]> {
     const dir = await this.resolveVaultSkillDir();
-    return this.scanDir(dir, 'vault', 'vault');
+    return this.scanDir(this.normalizeSkillPath(dir), 'vault', 'vault');
   }
 
   private async scanDir(dir: string, scope: 'vault', source: SkillSource): Promise<SkillScanEntry[]> {
-    const listed = await window.zytrader.fs.list(dir, { scope });
-    if (!listed.ok) return [];
-
     const out: SkillScanEntry[] = [];
-    for (const e of listed.entries) {
-      if (e.type !== 'dir') continue;
-      const id = e.name;
-      const contentPath = `${dir}/${id}/SKILL.md`;
-      const read = await window.zytrader.fs.read(contentPath, { scope });
-      if (!read.ok) {
-        out.push({
-          id,
-          source,
-          scope,
-          contentPath,
-          name: this.prettyNameFromId(id),
-          desc: 'SKILL.md 不存在或不可读。',
-          status: 'invalid',
-        });
-        continue;
+
+    const walk = async (currentDir: string, depth: number): Promise<void> => {
+      // 支持 agent 自动生成的多级技能目录（如 01-Skills/douyin/text-to-ppt/SKILL.md）
+      // 兼容较深的 agent 生成目录（如多级子技能）
+      if (depth > 10) return;
+      const listed = await window.zytrader.fs.list(currentDir, { scope });
+      if (!listed.ok) return;
+
+      for (const e of listed.entries) {
+        if (e.type !== 'dir') continue;
+        const fullDir = this.normalizeSkillPath(`${currentDir}/${e.name}`);
+        /** 与本包 docs/agent-skills-vault-convention.md 一致；自动生成请使用其中任一名 */
+        const skillNameCandidates = ['SKILL.md', 'Skill.md', 'skill.md'];
+        let read: { ok: boolean; content: string } = { ok: false, content: '' };
+        let contentPath = '';
+        for (const fname of skillNameCandidates) {
+          const p = this.normalizeSkillPath(`${fullDir}/${fname}`);
+          read = await this.readSkillFileCompat(p, scope);
+          if (read.ok) {
+            contentPath = p;
+            break;
+          }
+        }
+        // 仅有 *.md 而无 SKILL.md 的目录（如只放了 douyin-search.md）仍视为一个技能
+        if (!read.ok) {
+          const inner = await window.zytrader.fs.list(fullDir, { scope });
+          if (inner.ok) {
+            const mdFiles = inner.entries.filter((x) => x.type === 'file' && /\.md$/i.test(x.name));
+            const preferred = mdFiles.find((x) => /^skill\.md$/i.test(x.name));
+            const single = mdFiles.length === 1 ? mdFiles[0] : undefined;
+            const pick = preferred ?? single;
+            if (pick) {
+              contentPath = this.normalizeSkillPath(`${fullDir}/${pick.name}`);
+              read = await this.readSkillFileCompat(contentPath, scope);
+            }
+          }
+        }
+
+        if (read.ok && contentPath) {
+          const id = this.normalizeSkillPath(fullDir.replace(`${dir}/`, ''));
+          const parsed = this.parseSkillMarkdown(read.content, id);
+          out.push({
+            id,
+            source,
+            scope,
+            contentPath,
+            updatedAt: Date.now(),
+            name: parsed.name,
+            desc: parsed.desc,
+            status: 'ok',
+          });
+          // 命中技能目录后继续向下扫描，兼容“技能组/子技能”混合结构
+        }
+
+        await walk(fullDir, depth + 1);
       }
+    };
 
-      const parsed = this.parseSkillMarkdown(read.content, id);
-      out.push({
-        id,
-        source,
-        scope,
-        contentPath,
-        updatedAt: Date.now(),
-        name: parsed.name,
-        desc: parsed.desc,
-        status: 'ok',
-      });
-    }
-
+    await walk(dir, 0);
     return out;
   }
 

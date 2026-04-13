@@ -271,12 +271,12 @@
 
   <section class="card-panel json-config-panel">
     <h3 class="panel-title">配置文件（JSON）</h3>
-    <p class="panel-sub">统一配置模型参数、上下文压缩、成本与主题。保存时一次性生效。</p>
+    <p class="panel-sub">统一配置模型参数、上下文压缩、成本与主题。合法 JSON 会在停止输入约 0.7s 后自动写入并生效；「保存」可格式化文本框。</p>
     <div class="json-editor-wrap">
       <textarea
         class="json-editor"
         [value]="requestConfigJson()"
-        (input)="requestConfigJson.set($any($event.target).value)"
+        (input)="onRequestConfigJsonInput($event)"
         placeholder='{
   "provider": "anthropic",
   "max_tokens": 81920,

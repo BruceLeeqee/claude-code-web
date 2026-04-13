@@ -124,10 +124,10 @@ export class ClaudeAgentService {
 
   constructor(
     @Inject(CLAUDE_RUNTIME) private readonly runtime: ClaudeCoreRuntime,
-    @Inject(CLAUDE_CORE_CONFIG) private readonly config: { defaultSessionId?: string },
+    @Inject(CLAUDE_CORE_CONFIG) coreConfig: { defaultSessionId?: string },
     private readonly appSettings: AppSettingsService,
   ) {
-    this.sessionId = config.defaultSessionId ?? 'default';
+    this.sessionId = coreConfig.defaultSessionId ?? 'default';
     this.toolsSubject.next(this.runtime.tools.list().map((t) => t.name));
 
     this.appSettings.settings$.subscribe((settings) => {
@@ -435,6 +435,11 @@ export class ClaudeAgentService {
     this.toolLogsSubject.next([next, ...this.toolLogsSubject.value].slice(0, 100));
   }
 
+  /** 生成流式临时消息 id，避免同毫秒冲突导致 track 复用异常 */
+  private nextStreamMessageId(): string {
+    return `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
   /** 将流式分片映射到消息列表与工具日志 */
   private applyChunk(chunk: StreamChunk, partial: string): void {
     const current = this.messagesSubject.value;
@@ -453,13 +458,49 @@ export class ClaudeAgentService {
         this.messagesSubject.next([
           ...current,
           {
-            id: `stream_${Date.now()}`,
+            id: this.nextStreamMessageId(),
             role: 'assistant',
             content: chunk.textDelta,
             timestamp: Date.now(),
+            metadata: {
+              thinkingText: '',
+            },
           },
         ]);
       }
+      return;
+    }
+
+    if (chunk.type === 'thinking_delta') {
+      const last = current[current.length - 1];
+      if (last?.role !== 'assistant') {
+        this.messagesSubject.next([
+          ...current,
+          {
+            id: this.nextStreamMessageId(),
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            metadata: {
+              thinkingText: chunk.textDelta,
+            },
+          },
+        ]);
+        return;
+      }
+
+      const prevThinking =
+        last.metadata && typeof last.metadata['thinkingText'] === 'string' ? (last.metadata['thinkingText'] as string) : '';
+      this.messagesSubject.next([
+        ...current.slice(0, -1),
+        {
+          ...last,
+          metadata: {
+            ...(last.metadata ?? {}),
+            thinkingText: prevThinking + chunk.textDelta,
+          },
+        },
+      ]);
       return;
     }
 

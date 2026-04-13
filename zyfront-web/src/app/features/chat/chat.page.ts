@@ -24,8 +24,13 @@ import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-json';
 import 'prismjs/components/prism-bash';
 import { AppSettingsService } from '../../core/app-settings.service';
-import type { CoordinationMode, CoordinationStep } from 'zyfront-core';
+import type { ChatMessage, CoordinationMode, CoordinationStep, JsonObject } from 'zyfront-core';
 import { ClaudeAgentService, type UiMcpServer, type UiToggleItem } from '../../core/claude-agent.service';
+
+interface ChatTurnVm {
+  userPrompt: string;
+  assistant: ChatMessage;
+}
 
 @Component({
   selector: 'app-chat-page',
@@ -219,6 +224,53 @@ export class ChatPageComponent implements OnInit, AfterViewChecked, OnDestroy {
   renderMarkdown(content: string): SafeHtml {
     const html = marked.parse(content) as string;
     return this.sanitizer.bypassSecurityTrustHtml(html);
+  }
+
+  /** 将消息序列折叠为“用户提示词 + assistant 回答”的展示单元 */
+  buildTurns(messages: ChatMessage[]): ChatTurnVm[] {
+    const turns: ChatTurnVm[] = [];
+    let pendingUserPrompt = '';
+
+    for (const msg of messages) {
+      if (msg.role === 'user') {
+        pendingUserPrompt = msg.content;
+        continue;
+      }
+
+      if (msg.role === 'assistant') {
+        turns.push({
+          userPrompt: pendingUserPrompt || '（无）',
+          assistant: msg,
+        });
+      }
+    }
+
+    return turns;
+  }
+
+  /** 思考过程预览：默认只展示一行，超出以省略号表示 */
+  getThinkingPreview(content: string, metadata?: JsonObject): string {
+    const thinking = this.extractThinking(content, metadata);
+    if (!thinking.trim()) return '（无思考内容）';
+    const lines = thinking.replace(/\r/g, '').split('\n').filter((line) => line.trim().length > 0);
+    const first = (lines[0] ?? thinking).trim();
+    if (lines.length > 1) return `${first} …`;
+    return first;
+  }
+
+  /** 思考过程全文（details 展开后可见） */
+  getThinkingFull(content: string, metadata?: JsonObject): string {
+    const thinking = this.extractThinking(content, metadata);
+    return thinking.trim() || '（无思考内容）';
+  }
+
+  private extractThinking(content: string, metadata?: JsonObject): string {
+    const metaThinking = metadata && typeof metadata['thinkingText'] === 'string' ? (metadata['thinkingText'] as string) : '';
+    if (metaThinking.trim()) return metaThinking;
+
+    const lines = content.replace(/\r/g, '').split('\n');
+    const thinkingLines = lines.filter((line) => /^\s*\[(thinking|思考)/i.test(line));
+    return thinkingLines.join('\n');
   }
 
   /** 代码块内 Copy / Edit / Save / Cancel 的事件委托 */
