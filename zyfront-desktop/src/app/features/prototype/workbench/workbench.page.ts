@@ -31,6 +31,7 @@ import { REQUEST_CFG_JSON_KEY } from '../../../core/runtime-settings-sync.servic
 import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
 import { AgentMemoryService } from '../../../core/agent-memory.service';
 import { SkillIndexService, type SkillRecord } from '../../../core/skill-index.service';
+import { PromptMemoryBuilderService } from '../../../core/memory/prompt-memory-builder.service';
 import { Terminal, type IDisposable, type IMarker } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import type { ChatMessage, CoordinationMode, CoordinationStep, StreamChunk } from 'zyfront-core';
@@ -188,10 +189,14 @@ interface RecentTurn {
   title: string;
   prompt: string;
   at: number;
-  /** 该会话完整消息序列（点击「最近会话」时按序回放） */
+  /** 该会话完整消息序列（用于回放） */
   transcript?: RecentTranscriptLine[];
   /** transcript 详情文件路径（vault 相对路径） */
   transcriptPath?: string;
+  /** 每条最近会话记录对应的 session 记忆文件路径 */
+  sessionMemoryPath?: string;
+  /** 最近会话摘要（直接展示，替代折叠 transcript） */
+  summary?: string;
   /** Agent 到当前时刻的上下文状态快照 */
   contextSnapshot?: RecentContextSnapshot;
 }
@@ -325,6 +330,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly usageLedger = inject(ModelUsageLedgerService);
   private readonly memoryGraph = inject(TerminalMemoryGraphService);
   private readonly agentMemory = inject(AgentMemoryService);
+  private readonly promptMemoryBuilder = inject(PromptMemoryBuilderService);
   private readonly directoryManager = inject(DirectoryManagerService);
   private readonly skillIndex = inject(SkillIndexService);
   protected readonly prototypeFacade = inject(PrototypeCoreFacade);
@@ -382,6 +388,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly sessionCostUsd = signal(0);
   protected readonly planSteps = signal<CoordinationStep[]>([]);
   protected readonly memoryItems = signal<MemoryVm[]>([]);
+  protected readonly selectedRecentTurnId = signal<string | null>(null);
 
   protected readonly planProgressPercent = computed(() => {
     const total = this.stepTotal();
@@ -1549,6 +1556,37 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
+  protected async onRecentTurnClick(r: RecentTurn): Promise<void> {
+    this.selectedRecentTurnId.set(r.id);
+    await this.replayRecent(r);
+  }
+
+  protected isRecentTurnSelected(id: string): boolean {
+    return this.selectedRecentTurnId() === id;
+  }
+
+  protected recentTurnSummary(r: RecentTurn): string {
+    const summary = String(r.summary ?? '').trim();
+    if (summary.length >= 8) return summary;
+    const prompt = String(r.prompt ?? '').trim();
+    if (prompt.length > 0) return prompt;
+    return '（暂无摘要内容）';
+  }
+
+  protected shouldShowRecentTurnSummary(r: RecentTurn): boolean {
+    const title = String(r.title ?? '').replace(/\s+/g, ' ').trim();
+    const summary = this.recentTurnSummary(r).replace(/\s+/g, ' ').trim();
+    if (!summary) return false;
+    if (!title) return true;
+
+    const titleCore = title.replace(/…$/, '');
+    const summaryCore = summary.replace(/…$/, '');
+
+    if (summaryCore === titleCore) return false;
+    if (summaryCore.startsWith(titleCore) || titleCore.startsWith(summaryCore)) return false;
+    return true;
+  }
+
   protected async replayRecent(r: RecentTurn): Promise<void> {
     if (this.terminalBusy()) return;
     const loaded = await this.ensureRecentTurnTranscriptLoaded(r.id);
@@ -1568,7 +1606,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       rows = [{ role: 'user' as const, content: turn.prompt.trim() }, ...rows];
     }
 
-    const showThinking = this.isRecentThinkingVisible(turn.id);
+    const showThinking = this.recentThinkingVisibleIds().includes(turn.id);
     for (const row of rows) {
       const raw = typeof row.content === 'string' ? row.content : '';
       const text = raw.replace(/\r\n/g, '\n').trim();
@@ -1767,6 +1805,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
             at: typeof x.at === 'number' && x.at > 0 ? x.at : Date.now(),
             transcript,
             transcriptPath: typeof x.transcriptPath === 'string' && x.transcriptPath.trim() ? x.transcriptPath : undefined,
+            sessionMemoryPath:
+              typeof x.sessionMemoryPath === 'string' && x.sessionMemoryPath.trim() ? x.sessionMemoryPath : undefined,
+            summary: typeof x.summary === 'string' && x.summary.trim() ? x.summary.trim() : normalizedPrompt,
             contextSnapshot:
               x.contextSnapshot && typeof x.contextSnapshot === 'object'
                 ? {
@@ -1813,7 +1854,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         return;
       }
       const parsed = JSON.parse(read.content);
-      this.recentTurns.set(this.normalizeRecentTurns(parsed));
+      const normalized = this.normalizeRecentTurns(parsed);
+      this.recentTurns.set(normalized);
+      if (!this.selectedRecentTurnId() && normalized.length > 0) {
+        this.selectedRecentTurnId.set(normalized[0]!.id);
+      }
     } catch {
       this.recentTurns.set([]);
     }
@@ -1828,6 +1873,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         prompt: x.prompt,
         at: x.at,
         transcriptPath: x.transcriptPath,
+        sessionMemoryPath: x.sessionMemoryPath,
+        summary: x.summary,
         contextSnapshot: x.contextSnapshot,
       }));
       await window.zytrader.fs.write(relPath, JSON.stringify(indexList, null, 2), { scope: 'vault' });
@@ -1908,12 +1955,17 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     const title = trimmed.length > 56 ? `${trimmed.slice(0, 53)}…` : trimmed;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const now = Date.now();
+    const sessionMemoryPath = await this.resolveSessionMemoryPathForRecent();
+    const summary = this.buildRecentSummary(transcript, trimmed);
     const entry: RecentTurn = {
       id,
       title,
       prompt: trimmed,
-      at: Date.now(),
+      at: now,
       transcript,
+      sessionMemoryPath,
+      summary,
       contextSnapshot: {
         mode: this.coordinatorMode(),
         stepTotal: this.stepTotal(),
@@ -1922,55 +1974,37 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         stepPending: this.stepPending(),
         toolCallCount: this.toolCallCount(),
         sessionCostUsd: this.sessionCostUsd(),
-        capturedAt: Date.now(),
+        capturedAt: now,
       },
     };
     entry.transcriptPath = await this.persistRecentTurnTranscript(entry);
     const next = [entry, ...this.recentTurns()].slice(0, 30);
     this.recentTurns.set(next);
+    this.selectedRecentTurnId.set(entry.id);
     await this.persistRecentTurns(next);
   }
 
-  protected async toggleRecentTurnExpand(id: string): Promise<void> {
-    const open = this.expandedRecentTurnId() !== id;
-    this.expandedRecentTurnId.update((cur) => (cur === id ? null : id));
-    if (open) {
-      await this.ensureRecentTurnTranscriptLoaded(id);
-    }
+  private async resolveSessionMemoryPathForRecent(): Promise<string> {
+    const relDir = await this.directoryManager.getRelativePathByKey('agent-context');
+    return `${relDir}/sessions/${SESSION_ID}.md`;
   }
 
-  protected isRecentTurnExpanded(id: string): boolean {
-    return this.expandedRecentTurnId() === id;
-  }
+  private buildRecentSummary(transcript: RecentTranscriptLine[], fallbackPrompt: string): string {
+    const turns = transcript
+      .filter((x) => x.role === 'user' || x.role === 'assistant')
+      .slice(-6)
+      .map((x) => {
+        if (x.role === 'user') {
+          const t = stripUserContentForHistoryReplay(x.content) || x.content.trim();
+          return t ? `用户：${t.replace(/\s+/g, ' ').slice(0, 90)}` : '';
+        }
+        const t = stripAssistantContentForHistoryReplay(x.content) || x.content.trim();
+        return t ? `助手：${t.replace(/\s+/g, ' ').slice(0, 140)}` : '';
+      })
+      .filter(Boolean);
 
-  protected toggleRecentThinkingVisibility(id: string): void {
-    this.recentThinkingVisibleIds.update((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
-  }
-
-  protected isRecentThinkingVisible(id: string): boolean {
-    return this.recentThinkingVisibleIds().includes(id);
-  }
-
-  protected getRecentTurnTranscriptForView(r: RecentTurn): RecentTranscriptLine[] {
-    const list = Array.isArray(r.transcript) ? r.transcript : [];
-    return list;
-  }
-
-  protected formatRecentTranscriptRole(role: RecentTranscriptLine['role']): string {
-    if (role === 'user') return '用户';
-    if (role === 'assistant') return '助手';
-    return '步骤';
-  }
-
-  protected formatRecentTranscriptContent(row: RecentTranscriptLine, showThinking: boolean): string {
-    const raw = typeof row.content === 'string' ? row.content : '';
-    if (row.role === 'assistant' && !showThinking) {
-      return stripAssistantContentForHistoryReplay(raw) || '（思考内容已折叠）';
-    }
-    if (row.role === 'user') {
-      return stripUserContentForHistoryReplay(raw) || raw.trim();
-    }
-    return raw.trim();
+    if (turns.length > 0) return turns.join(' / ');
+    return fallbackPrompt.replace(/\s+/g, ' ').slice(0, 180);
   }
 
   private async triggerMemoryPipelineFromHistory(userPrompt: string): Promise<void> {
@@ -3990,10 +4024,30 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.currentTurnSkillEchoedToXterm = true;
     }
     const hasZytrader = typeof (window as unknown as { zytrader?: unknown }).zytrader !== 'undefined';
+    const runtimeSystemPrompt = hasZytrader ? WORKBENCH_ELECTRON_TOOLS_SYSTEM_PROMPT : '';
+    const fullPrompt = await this.promptMemoryBuilder.buildFullPromptForInput(
+      SESSION_ID,
+      effectiveUserInput,
+      runtimeSystemPrompt,
+    );
+    const buildReport = this.promptMemoryBuilder.getLastBuildReport(SESSION_ID);
+    if (buildReport) {
+      const layerBrief = buildReport.layers
+        .map((x) => `${x.name}:${x.charsAfter}${x.truncated ? 'T' : ''}`)
+        .join(' | ');
+      const truncatedLayers = buildReport.layers.filter((x) => x.truncated).map((x) => x.name);
+      const summary = `\r\n[MemoryBuild] total=${buildReport.totalChars} ${layerBrief}`;
+      this.aiXtermWrite(`\r\n\x1b[90m[MemoryBuild]\x1b[0m total=${buildReport.totalChars} ${layerBrief}`);
+      this.bumpStreamLineBudgetForWrite(summary);
+      if (truncatedLayers.length > 0) {
+        const detail = `\r\n\x1b[33m[MemoryBuild]\x1b[0m truncated=${truncatedLayers.join(',')}`;
+        this.aiXtermWrite(detail);
+        this.bumpStreamLineBudgetForWrite(detail.replace(/\x1b\[[0-9;]*m/g, ''));
+      }
+    }
     const { stream, cancel } = this.runtime.assistant.stream(SESSION_ID, {
-      userInput: effectiveUserInput,
+      userInput: fullPrompt,
       config: this.runtime.client.getModel(),
-      ...(hasZytrader ? { systemPrompt: WORKBENCH_ELECTRON_TOOLS_SYSTEM_PROMPT } : {}),
     });
     this.streamStop = cancel;
     const reader = stream.getReader();

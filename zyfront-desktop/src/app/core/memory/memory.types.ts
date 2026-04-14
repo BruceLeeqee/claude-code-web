@@ -1,4 +1,4 @@
-export type MemoryPipelineName = 'extract' | 'session' | 'dream';
+export type MemoryPipelineName = 'extract' | 'session' | 'dream' | 'prompt_build';
 
 export interface TurnMessage {
   id?: string;
@@ -29,7 +29,7 @@ export interface MemoryPipelineResult {
 }
 
 export interface MemoryPipelineEvent {
-  event: 'gate' | 'run' | 'error';
+  event: 'gate' | 'run' | 'error' | 'build';
   pipeline: MemoryPipelineName;
   gate_passed: boolean;
   skip_reason: string;
@@ -39,6 +39,8 @@ export interface MemoryPipelineEvent {
   session_id?: string;
   turn_id?: string;
   timestamp: number;
+  prompt_total_chars?: number;
+  prompt_layer_stats?: string;
 }
 
 export interface MemoryPipelineStatus {

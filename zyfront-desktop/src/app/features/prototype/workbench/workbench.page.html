@@ -130,33 +130,26 @@
               <div class="left-activity">
                 <div class="panel-title vscode-section-title">最近会话</div>
                 <div class="recent-scroll">
-                  <p class="activity-hint" *ngIf="recentTurns().length === 0">在主终端完成一次成功对话后，会记录该 Agent 生命周期快照（聊天、工具、上下文状态）。</p>
-                  <div class="recent-item" *ngFor="let r of recentTurns()">
-                    <button type="button" class="recent-item-head" (click)="toggleRecentTurnExpand(r.id)">
-                      <span class="recent-item-title">{{ r.title }}</span>
-                      <span class="recent-item-meta">{{ formatRecentTime(r.at) }}</span>
+                  <p class="activity-hint" *ngIf="recentTurns().length === 0">在主终端完成一次成功对话后，会记录一条 session 记忆与对话摘要。</p>
+
+                  <ng-container *ngIf="recentTurns().length > 0">
+                    <button
+                      type="button"
+                      class="recent-item"
+                      *ngFor="let r of recentTurns()"
+                      [class.is-selected]="isRecentTurnSelected(r.id)"
+                      (click)="onRecentTurnClick(r)"
+                      title="点击回放到主终端"
+                    >
+                      <div class="recent-item-head">
+                        <span class="recent-item-title">{{ r.title || '未命名会话' }}</span>
+                        <span class="recent-item-meta">{{ formatRecentTime(r.at) }}</span>
+                      </div>
+                      <div class="recent-item-body" [class.centered-only]="!shouldShowRecentTurnSummary(r)">
+                        <div class="recent-summary" *ngIf="shouldShowRecentTurnSummary(r)">{{ recentTurnSummary(r) }}</div>
+                      </div>
                     </button>
-                    <div class="recent-item-body" *ngIf="isRecentTurnExpanded(r.id)">
-                      <div class="recent-actions">
-                        <button type="button" class="recent-action-btn" (click)="replayRecent(r)">回放到主终端</button>
-                        <button type="button" class="recent-action-btn" (click)="toggleRecentThinkingVisibility(r.id)">
-                          {{ isRecentThinkingVisible(r.id) ? '隐藏思考' : '显示思考' }}
-                        </button>
-                      </div>
-                      <div class="recent-context" *ngIf="r.contextSnapshot as ctx">
-                        <span>模式：{{ formatWorkbenchModeLabel(ctx.mode) }}</span>
-                        <span>步骤：{{ ctx.stepDone }}/{{ ctx.stepTotal }}</span>
-                        <span>工具：{{ ctx.toolCallCount }}</span>
-                        <span>成本：${{ ctx.sessionCostUsd.toFixed(4) }}</span>
-                      </div>
-                      <div class="recent-transcript">
-                        <div class="recent-row" *ngFor="let row of getRecentTurnTranscriptForView(r)" [attr.data-role]="row.role">
-                          <span class="recent-row-role">{{ formatRecentTranscriptRole(row.role) }}</span>
-                          <span class="recent-row-content">{{ formatRecentTranscriptContent(row, isRecentThinkingVisible(r.id)) }}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  </ng-container>
                 </div>
               </div>
             </ng-container>

@@ -5,12 +5,17 @@ import { MemoryTelemetryService } from '../memory.telemetry';
 import { TeamMemorySyncService } from '../team/team-memory-sync.service';
 import { type MemoryPipelineResult, type TurnContext, type TurnMessage } from '../memory.types';
 
+interface ExtractSessionState {
+  inProgress: boolean;
+  eligibleTurns: number;
+  lastCursorMessageId?: string;
+  lastSummaryFingerprint?: string;
+  pendingTurn?: TurnContext;
+}
+
 @Injectable({ providedIn: 'root' })
 export class ExtractService {
-  private inProgress = false;
-  private eligibleTurns = 0;
-  private lastCursorMessageId?: string;
-  private lastSummaryFingerprint?: string;
+  private readonly sessionStates = new Map<string, ExtractSessionState>();
 
   constructor(
     private readonly configService: MemoryConfigService,
@@ -22,18 +27,20 @@ export class ExtractService {
   async run(turn: TurnContext): Promise<MemoryPipelineResult> {
     const startedAt = Date.now();
     const cfg = this.configService.getConfig().extract;
+    const state = this.getSessionState(turn.sessionId);
 
-    if (this.inProgress) {
+    if (state.inProgress) {
+      state.pendingTurn = turn;
       return {
         pipeline: 'extract',
         status: 'skipped',
-        reason: 'in_progress',
+        reason: 'in_progress_coalesced',
         durationMs: Date.now() - startedAt,
       };
     }
 
-    this.eligibleTurns += 1;
-    if (this.eligibleTurns < Math.max(1, cfg.everyNTurns)) {
+    state.eligibleTurns += 1;
+    if (state.eligibleTurns < Math.max(1, cfg.everyNTurns)) {
       this.telemetry.track({
         event: 'run',
         pipeline: 'extract',
@@ -54,15 +61,14 @@ export class ExtractService {
       };
     }
 
-    this.eligibleTurns = 0;
-    this.inProgress = true;
+    state.eligibleTurns = 0;
+    state.inProgress = true;
 
     try {
       await this.directoryManager.ensureVaultReady();
-      // Extract pipeline writes turn-level summary into short-term memory bucket.
       const relDir = await this.directoryManager.getRelativePathByKey('agent-short-term');
 
-      const newMessages = this.sliceMessagesAfterCursor(turn.messages, this.lastCursorMessageId);
+      const newMessages = this.sliceMessagesAfterCursor(turn.messages, state.lastCursorMessageId);
       if (newMessages.length === 0) {
         return {
           pipeline: 'extract',
@@ -83,9 +89,9 @@ export class ExtractService {
       }
 
       const fingerprint = this.fingerprint(summary);
-      if (fingerprint === this.lastSummaryFingerprint) {
+      if (fingerprint === state.lastSummaryFingerprint) {
         const lastMsg = turn.messages.at(-1);
-        this.lastCursorMessageId = lastMsg?.id;
+        state.lastCursorMessageId = lastMsg?.id;
         return {
           pipeline: 'extract',
           status: 'skipped',
@@ -127,8 +133,8 @@ export class ExtractService {
       const longTermTouched = await this.writeLongTermMemoriesFromTurn(turn, newMessages);
 
       const lastMsg = turn.messages.at(-1);
-      this.lastCursorMessageId = lastMsg?.id;
-      this.lastSummaryFingerprint = fingerprint;
+      state.lastCursorMessageId = lastMsg?.id;
+      state.lastSummaryFingerprint = fingerprint;
 
       const result: MemoryPipelineResult = {
         pipeline: 'extract',
@@ -174,8 +180,26 @@ export class ExtractService {
         durationMs: Date.now() - startedAt,
       };
     } finally {
-      this.inProgress = false;
+      state.inProgress = false;
+      const trailing = state.pendingTurn;
+      state.pendingTurn = undefined;
+      if (trailing) {
+        queueMicrotask(() => {
+          void this.run(trailing);
+        });
+      }
     }
+  }
+
+  private getSessionState(sessionId: string): ExtractSessionState {
+    const existing = this.sessionStates.get(sessionId);
+    if (existing) return existing;
+    const created: ExtractSessionState = {
+      inProgress: false,
+      eligibleTurns: 0,
+    };
+    this.sessionStates.set(sessionId, created);
+    return created;
   }
 
   private buildMemoryId(turnId: string): string {
