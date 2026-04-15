@@ -1,4 +1,15 @@
-import type { TeammateBackendHealth, TeammateMode, TeammateSpawnConfig, TeammateSpawnResult } from './multi-agent.types';
+import type { BackendCapability, TeammateBackendHealth, TeammateMode, TeammateSpawnConfig, TeammateSpawnResult } from './multi-agent.types';
+
+export interface BackendProbeResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  code: number;
+}
+
+export interface BackendProbeService {
+  exec(command: string, cwd?: string): Promise<BackendProbeResult>;
+}
 
 export interface TeammateSendMessageInput {
   teamName: string;
@@ -30,4 +41,6 @@ export interface BackendDetectionResult {
   fallbackReason?: string;
   blocking: boolean;
   health: TeammateBackendHealth;
+  capability: BackendCapability;
+  snapshotAt: number;
 }

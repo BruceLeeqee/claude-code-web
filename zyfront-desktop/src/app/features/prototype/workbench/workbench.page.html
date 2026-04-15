@@ -442,6 +442,15 @@
 
           <div class="multi-agent-block">
             <div class="section-label">多智能体（Phase 1）</div>
+            <div class="ma-manual-card">
+              <div class="ma-manual-title">操作手册</div>
+              <div class="ma-manual-grid">
+                <div class="ma-manual-step"><span>1</span><p>先切换模式：`auto` 会自动回退，`tmux` 强制走 WSL2，`in-process` 适合本机快速验证。</p></div>
+                <div class="ma-manual-step"><span>2</span><p>填写 teammate 名称和首条指令，点击 <strong>Spawn</strong> 创建 Agent。</p></div>
+                <div class="ma-manual-step"><span>3</span><p>运行后可用 <strong>Attach / Detach / Stop / Kill</strong> 管理会话，右侧会显示恢复态与附着态。</p></div>
+                <div class="ma-manual-step"><span>4</span><p>若创建失败，直接看下方事件时间线；黄色是后端回退，红色是阻塞或错误。</p></div>
+              </div>
+            </div>
 
             <div class="ma-mode-row">
               <button type="button" class="ma-mode-btn" [class.active]="teammateBackendMode() === 'auto'" (click)="setTeammateMode('auto')">auto</button>
@@ -504,17 +513,42 @@
               <button type="button" class="search-run" (click)="spawnTeammateFromWorkbench()" [disabled]="teammateTeamVm()?.health?.blocking">Spawn</button>
             </div>
 
+            <div class="ma-session-toolbar" *ngIf="teammateTeamVm()?.teammates?.length">
+              <div class="ma-session-toolbar-left">
+                <button type="button" class="ma-toolbar-btn" (click)="saveWorkbenchRecoverySnapshot()">保存恢复快照</button>
+                <button type="button" class="ma-toolbar-btn" [disabled]="!recoveryAvailable()" (click)="restoreWorkbenchRecoverySnapshot()">恢复快照</button>
+              </div>
+              <div class="ma-session-toolbar-right">
+                <span class="ma-session-meta" *ngIf="recoveryAvailable()">快照时间：{{ recoverySyncedAt() || '未知' }}</span>
+              </div>
+            </div>
+
             <div class="ma-list" *ngIf="teammateTeamVm()?.teammates?.length; else maEmpty">
               <div class="ma-item" *ngFor="let t of teammateTeamVm()?.teammates" [attr.data-agent-id]="t.agentId" [class.is-focused]="isTeammateFocused(t.agentId)">
                 <span class="ma-dot" [style.background]="t.color"></span>
                 <div class="ma-main">
                   <span class="ma-name">{{ t.name }}</span>
                   <span class="ma-meta">{{ teammateBackendBadge(t) }}</span>
+                  <span class="ma-submeta">
+                    状态：{{ teammateRuntimeStatusLabel(t.status) }}
+                    <ng-container *ngIf="t.recoveryState">· 恢复：{{ teammateRecoveryLabel(t.recoveryState) }}</ng-container>
+                    <ng-container *ngIf="t.sessionName">· 会话：{{ t.sessionName }}</ng-container>
+                  </span>
                 </div>
                 <span class="ma-status">{{ teammateRuntimeStatusLabel(t.status) }}</span>
+                <div class="ma-state-badges">
+                  <span class="ma-state-badge" [attr.data-state]="t.recoveryState || 'live'">{{ t.recoveryState || 'live' }}</span>
+                  <span class="ma-state-badge is-muted" *ngIf="t.attached === true">attached</span>
+                  <span class="ma-state-badge is-muted" *ngIf="t.attached === false">detached</span>
+                  <span class="ma-state-badge is-muted" *ngIf="t.canAttach && !t.attached">可附着</span>
+                  <span class="ma-state-badge is-muted" *ngIf="t.canDetach && t.attached">可分离</span>
+                </div>
                 <div class="ma-actions">
                   <button type="button" class="ma-stop" [disabled]="t.status === 'stopped' || t.status === 'error'" (click)="stopTeammateFromWorkbench(t.agentId)">Stop</button>
                   <button type="button" class="ma-kill" [disabled]="t.status === 'stopped'" (click)="killTeammateFromWorkbench(t.agentId)">Kill</button>
+                  <button type="button" class="ma-stop" [disabled]="!t.canDetach" (click)="detachTeammateFromWorkbench(t.agentId)">Detach</button>
+                  <button type="button" class="ma-stop" [disabled]="!t.canAttach" (click)="attachTeammateFromWorkbench(t.agentId)">Attach</button>
+                  <button type="button" class="ma-stop" (click)="copyTeammateSessionInfo(t)">复制会话信息</button>
                 </div>
               </div>
             </div>
@@ -530,7 +564,7 @@
                   <button type="button" [class.active]="eventReadableMode() === 'technical'" (click)="setEventReadableMode('technical')">技术视角</button>
                 </div>
               </div>
-              <div class="ma-event-row" *ngFor="let e of teammateEvents()">
+              <div class="ma-event-row" *ngFor="let e of teammateEvents()" (click)="focusFocusedTeammateFromEvent(e)">
                 <span class="ma-event-time">{{ e.at | date: 'HH:mm:ss' }}</span>
                 <span class="ma-event-text" [attr.data-tier]="e.tier">{{ renderEventText(e) }}</span>
               </div>

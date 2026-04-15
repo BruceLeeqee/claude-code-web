@@ -11,6 +11,25 @@ export type TeammateRuntimeStatus =
   | 'stopped'
   | 'error';
 
+export interface ExecutionModeSnapshot {
+  configuredMode: TeammateMode;
+  effectiveBackend: BackendType;
+  snapshotAt: number;
+  capturedAt?: number;
+  reason?: string;
+}
+
+export interface BackendCapability {
+  platform: string;
+  wslAvailable?: boolean;
+  tmuxExecutable?: string;
+  tmuxAvailable: boolean;
+  itermAvailable: boolean;
+  inProcessAvailable: boolean;
+  blocking: boolean;
+  setupHints: string[];
+}
+
 export interface TeammateIdentity {
   agentId: string;
   agentName: string;
@@ -46,6 +65,9 @@ export interface TeammateSpawnResult {
   fallbackFromMode?: TeammateMode;
   fallbackReason?: string;
   startedAt: number;
+  lastUpdatedAt?: number;
+  lastStoppedAt?: number;
+  lastError?: string;
 }
 
 export interface TeammateCapabilitySnapshot {
@@ -88,6 +110,12 @@ export interface WorkbenchTeammateVm {
   planModeRequired: boolean;
   lastMessagePreview?: string;
   updatedAt: number;
+  attached?: boolean;
+  canAttach?: boolean;
+  canDetach?: boolean;
+  recoveryState?: 'live' | 'detached' | 'reconnecting' | 'restored' | 'blocked';
+  sessionName?: string;
+  sessionLastSeenAt?: number;
 }
 
 export interface WorkbenchTeamVm {

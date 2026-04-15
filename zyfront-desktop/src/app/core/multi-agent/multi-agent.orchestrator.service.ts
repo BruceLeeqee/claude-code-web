@@ -6,7 +6,14 @@ import { MultiAgentITermBackend } from './multi-agent.iterm.backend';
 import { MultiAgentSessionService } from './multi-agent.session';
 import { MultiAgentTmuxBackend } from './multi-agent.tmux.backend';
 import type { BackendDetectionResult, TeammateBackend } from './multi-agent.backend';
-import type { TeammateMode, TeammateSpawnConfig, TeammateSpawnResult, WorkbenchTeamVm, WorkbenchTeammateVm } from './multi-agent.types';
+import type {
+  BackendCapability,
+  TeammateMode,
+  TeammateSpawnConfig,
+  TeammateSpawnResult,
+  WorkbenchTeamVm,
+  WorkbenchTeammateVm,
+} from './multi-agent.types';
 import { buildBackendBlockingReason, buildBackendSetupHints } from './multi-agent.backend-setup';
 
 @Injectable({ providedIn: 'root' })
@@ -17,7 +24,7 @@ export class MultiAgentOrchestratorService {
   private version = 0;
   private readonly teammates = new Map<string, TeammateSpawnResult>();
   private readonly lastMessagePreviewByAgent = new Map<string, string>();
-  private readonly backendHealth$ = new BehaviorSubject<BackendDetectionResult>(this.detectBackend(this.configuredMode));
+  private readonly backendHealth$ = new BehaviorSubject<BackendDetectionResult>(this.createFallbackDetection(this.configuredMode));
   private readonly teamVm$ = new BehaviorSubject<WorkbenchTeamVm>(this.buildVm(this.backendHealth$.value));
 
   constructor(
@@ -26,15 +33,16 @@ export class MultiAgentOrchestratorService {
     private readonly inProcessBackend: MultiAgentInProcessBackend,
     private readonly tmuxBackend: MultiAgentTmuxBackend,
     private readonly itermBackend: MultiAgentITermBackend,
-  ) {}
+  ) {
+    void this.refreshBackendHealth();
+  }
 
   readonly workbenchTeamVm$ = this.teamVm$.asObservable();
   readonly events$ = this.eventBus.events$;
 
-  setMode(mode: TeammateMode): BackendDetectionResult {
+  async setMode(mode: TeammateMode): Promise<BackendDetectionResult> {
     this.configuredMode = mode;
-    const detection = this.detectBackend(mode);
-    this.backendHealth$.next(detection);
+    const detection = await this.refreshBackendHealth();
     this.emitModeEvents(detection);
     this.refreshVm();
     return detection;
@@ -52,12 +60,13 @@ export class MultiAgentOrchestratorService {
       source: 'system',
       payload: {
         configuredMode: snapshot.configuredMode,
-        snapshotAt: snapshot.capturedAt,
+        effectiveBackend: snapshot.effectiveBackend,
+        snapshotAt: snapshot.capturedAt ?? snapshot.snapshotAt,
+        capturedAt: snapshot.capturedAt ?? snapshot.snapshotAt,
       },
     });
 
-    const detection = this.detectBackend(snapshot.configuredMode);
-    this.backendHealth$.next(detection);
+    const detection = await this.refreshBackendHealth();
     this.emitModeEvents(detection);
     if (detection.blocking || !detection.effectiveBackend) {
       const reason = detection.fallbackReason || `Backend mode "${snapshot.configuredMode}" is blocked in current environment`;
@@ -72,12 +81,16 @@ export class MultiAgentOrchestratorService {
           message: reason,
           details: {
             configuredMode: snapshot.configuredMode,
-            platform: detection.health.capabilities.platform,
+            platform: detection.capability.platform,
             setupHints,
           },
         },
       });
       throw new Error(reason);
+    }
+
+    if (config.mode === 'in-process' && this.configuredMode === 'auto') {
+      config = { ...config, mode: 'in-process' };
     }
 
     this.teamName = config.teamName;
@@ -213,6 +226,20 @@ export class MultiAgentOrchestratorService {
     this.refreshVm();
   }
 
+  async attachTeammate(agentId: string): Promise<boolean> {
+    if (this.teammates.get(agentId)?.backend !== 'tmux') return false;
+    return this.tmuxBackend.attach(agentId);
+  }
+
+  async detachTeammate(agentId: string): Promise<boolean> {
+    if (this.teammates.get(agentId)?.backend !== 'tmux') return false;
+    return this.tmuxBackend.detach(agentId);
+  }
+
+  getTmuxSessionState(agentId: string): ReturnType<MultiAgentTmuxBackend['getSessionState']> {
+    return this.tmuxBackend.getSessionState(agentId);
+  }
+
   getCurrentVm(): WorkbenchTeamVm {
     return this.teamVm$.value;
   }
@@ -228,44 +255,53 @@ export class MultiAgentOrchestratorService {
     return this.inProcessBackend;
   }
 
-  private detectBackend(mode: TeammateMode): BackendDetectionResult {
+  private async refreshBackendHealth(): Promise<BackendDetectionResult> {
+    const detection = await this.detectBackend(this.configuredMode);
+    this.backendHealth$.next(detection);
+    return detection;
+  }
+
+  private async detectBackend(mode: TeammateMode): Promise<BackendDetectionResult> {
     const platform = this.detectPlatform();
     const isWindows = platform.includes('win');
     const isMac = platform.includes('mac');
-    const tmuxEnv = this.getEnvValue('TMUX');
-    const termProgram = this.getEnvValue('TERM_PROGRAM');
-    const term = this.getEnvValue('TERM');
 
-    const tmuxAvailable = !isWindows && Boolean((tmuxEnv && tmuxEnv.trim()) || (term && term.toLowerCase().includes('tmux')));
-    const itermAvailable = isMac && termProgram.toLowerCase() === 'iterm.app';
-    const inProcessAvailable = true;
-
+    const capability = await this.detectCapability(platform, isWindows, isMac);
     const baseHealth = {
       configuredMode: mode,
       isNative: false,
       blocking: false,
       capabilities: {
         platform,
-        tmuxAvailable,
-        itermAvailable,
-        inProcessAvailable,
+        tmuxAvailable: capability.tmuxAvailable,
+        itermAvailable: capability.itermAvailable,
+        inProcessAvailable: capability.inProcessAvailable,
       },
       needsSetup: false,
       updatedAt: Date.now(),
     };
 
     if (mode === 'in-process') {
-      return { configuredMode: mode, effectiveBackend: 'in-process', blocking: false, health: { ...baseHealth, effectiveBackend: 'in-process' } };
+      return {
+        configuredMode: mode,
+        effectiveBackend: 'in-process',
+        blocking: false,
+        capability,
+        snapshotAt: Date.now(),
+        health: { ...baseHealth, effectiveBackend: 'in-process' },
+      };
     }
 
     if (mode === 'tmux') {
-      if (!tmuxAvailable) {
+      if (!capability.tmuxAvailable) {
         const reason = buildBackendBlockingReason({ mode: 'tmux', platform });
-        const setupHints = buildBackendSetupHints({ mode: 'tmux', platform });
+        const setupHints = capability.setupHints.length ? capability.setupHints : buildBackendSetupHints({ mode: 'tmux', platform });
         return {
           configuredMode: mode,
           blocking: true,
           fallbackReason: reason,
+          capability: { ...capability, setupHints },
+          snapshotAt: Date.now(),
           health: { ...baseHealth, blocking: true, needsSetup: true, fallbackReason: reason, setupHints },
         };
       }
@@ -273,18 +309,22 @@ export class MultiAgentOrchestratorService {
         configuredMode: mode,
         effectiveBackend: 'tmux',
         blocking: false,
+        capability,
+        snapshotAt: Date.now(),
         health: { ...baseHealth, isNative: true, effectiveBackend: 'tmux' },
       };
     }
 
     if (mode === 'iterm2') {
-      if (!itermAvailable) {
+      if (!capability.itermAvailable) {
         const reason = buildBackendBlockingReason({ mode: 'iterm2', platform });
-        const setupHints = buildBackendSetupHints({ mode: 'iterm2', platform });
+        const setupHints = capability.setupHints.length ? capability.setupHints : buildBackendSetupHints({ mode: 'iterm2', platform });
         return {
           configuredMode: mode,
           blocking: true,
           fallbackReason: reason,
+          capability: { ...capability, setupHints },
+          snapshotAt: Date.now(),
           health: { ...baseHealth, blocking: true, needsSetup: true, fallbackReason: reason, setupHints },
         };
       }
@@ -292,39 +332,109 @@ export class MultiAgentOrchestratorService {
         configuredMode: mode,
         effectiveBackend: 'iterm2',
         blocking: false,
+        capability,
+        snapshotAt: Date.now(),
         health: { ...baseHealth, isNative: true, effectiveBackend: 'iterm2' },
       };
     }
 
-    if (tmuxAvailable) {
+    if (capability.tmuxAvailable) {
       return {
         configuredMode: mode,
         effectiveBackend: 'tmux',
         blocking: false,
+        capability,
+        snapshotAt: Date.now(),
         health: { ...baseHealth, isNative: true, effectiveBackend: 'tmux' },
       };
     }
-    if (itermAvailable) {
+
+    if (capability.itermAvailable) {
       return {
         configuredMode: mode,
         effectiveBackend: 'iterm2',
         blocking: false,
+        capability,
+        snapshotAt: Date.now(),
         health: { ...baseHealth, isNative: true, effectiveBackend: 'iterm2' },
       };
     }
 
+    const reason = 'No pane backend available; fallback to in-process';
     return {
       configuredMode: mode,
       effectiveBackend: 'in-process',
       fallbackFromMode: 'auto',
-      fallbackReason: 'No pane backend available; fallback to in-process',
+      fallbackReason: reason,
       blocking: false,
+      capability,
+      snapshotAt: Date.now(),
       health: {
         ...baseHealth,
         effectiveBackend: 'in-process',
-        fallbackReason: 'No pane backend available; fallback to in-process',
+        fallbackReason: reason,
       },
     };
+  }
+
+  private async detectCapability(platform: string, isWindows: boolean, isMac: boolean): Promise<BackendCapability> {
+    const setupHints: string[] = [];
+    const inProcessAvailable = true;
+
+    let tmuxAvailable = false;
+    let wslAvailable: boolean | undefined;
+    let tmuxExecutable: string | undefined;
+
+    if (isWindows) {
+      const probe = await this.tmuxBackend.detectAvailability();
+      wslAvailable = probe.wslAvailable;
+      tmuxAvailable = probe.tmuxAvailable;
+      tmuxExecutable = tmuxAvailable ? 'wsl.exe -e bash -lc' : undefined;
+      setupHints.push(...probe.hints);
+      if (tmuxAvailable) {
+        setupHints.push('Windows 下 tmux 将通过 wsl.exe 在 WSL2 内执行。');
+      }
+    } else {
+      const tmuxVersion = await this.tryExec('tmux -V');
+      tmuxExecutable = tmuxVersion.ok ? 'tmux' : undefined;
+      tmuxAvailable = tmuxVersion.ok;
+      if (!tmuxAvailable) {
+        setupHints.push('请先安装 tmux。');
+        setupHints.push('安装完成后请重新启动终端会话。');
+      }
+    }
+
+    let itermAvailable = false;
+    if (isMac) {
+      const termProgram = this.getEnvValue('TERM_PROGRAM').toLowerCase();
+      itermAvailable = termProgram === 'iterm.app';
+      if (!itermAvailable) {
+        setupHints.push('iTerm2 仅在使用 iTerm.app 启动时可用。');
+      }
+    }
+
+    return {
+      platform,
+      wslAvailable,
+      tmuxExecutable,
+      tmuxAvailable,
+      itermAvailable,
+      inProcessAvailable,
+      blocking: false,
+      setupHints,
+    };
+  }
+
+  private async tryExec(command: string): Promise<{ ok: boolean; stdout: string; stderr: string; code: number }> {
+    const z = window.zytrader;
+    if (!z?.terminal?.exec) {
+      return { ok: false, stdout: '', stderr: 'terminal.exec unavailable', code: -1 };
+    }
+    try {
+      return await z.terminal.exec(command, '.', 'workspace');
+    } catch (error) {
+      return { ok: false, stdout: '', stderr: error instanceof Error ? error.message : String(error), code: -1 };
+    }
   }
 
   private emitModeEvents(detection: BackendDetectionResult): void {
@@ -338,12 +448,8 @@ export class MultiAgentOrchestratorService {
         payload: {
           configuredMode: detection.configuredMode,
           effectiveBackend: detection.effectiveBackend,
-          platform: detection.health.capabilities.platform,
-          capabilities: {
-            tmuxAvailable: detection.health.capabilities.tmuxAvailable,
-            itermAvailable: detection.health.capabilities.itermAvailable,
-            inProcessAvailable: detection.health.capabilities.inProcessAvailable,
-          },
+          platform: detection.capability.platform,
+          capabilities: detection.capability,
         },
       });
     }
@@ -363,7 +469,7 @@ export class MultiAgentOrchestratorService {
     }
 
     if (detection.blocking && detection.fallbackReason) {
-      const setupHints = detection.health.setupHints ?? [];
+      const setupHints = detection.capability.setupHints ?? [];
       this.eventBus.emit({
         type: 'multiagent.error',
         sessionId,
@@ -374,7 +480,7 @@ export class MultiAgentOrchestratorService {
           message: detection.fallbackReason,
           details: {
             configuredMode: detection.configuredMode,
-            platform: detection.health.capabilities.platform,
+            platform: detection.capability.platform,
             setupHints,
           },
         },
@@ -382,9 +488,52 @@ export class MultiAgentOrchestratorService {
     }
   }
 
+  private createFallbackDetection(mode: TeammateMode): BackendDetectionResult {
+    return {
+      configuredMode: mode,
+      effectiveBackend: 'in-process',
+      fallbackFromMode: mode,
+      fallbackReason: 'Capability detection pending; using in-process bootstrap backend',
+      blocking: false,
+      capability: {
+        platform: this.detectPlatform(),
+        wslAvailable: false,
+        tmuxExecutable: undefined,
+        tmuxAvailable: false,
+        itermAvailable: false,
+        inProcessAvailable: true,
+        blocking: false,
+        setupHints: [],
+      },
+      snapshotAt: Date.now(),
+      health: {
+        configuredMode: mode,
+        effectiveBackend: 'in-process',
+        isNative: false,
+        blocking: false,
+        capabilities: {
+          platform: this.detectPlatform(),
+          tmuxAvailable: false,
+          itermAvailable: false,
+          inProcessAvailable: true,
+        },
+        needsSetup: false,
+        fallbackReason: 'Capability detection pending; using in-process bootstrap backend',
+        updatedAt: Date.now(),
+      },
+    };
+  }
+
   private detectPlatform(): string {
-    const fromNavigator = (typeof navigator !== 'undefined' ? navigator.platform : '').toLowerCase();
-    if (fromNavigator) return fromNavigator;
+    const g = globalThis as unknown as { process?: { platform?: string } };
+    const fromProcess = (g.process?.platform ?? '').toLowerCase();
+    if (fromProcess) return fromProcess;
+
+    const fromUserAgent = (typeof navigator !== 'undefined' ? navigator.userAgent : '').toLowerCase();
+    if (fromUserAgent.includes('windows')) return 'win32';
+    if (fromUserAgent.includes('mac os')) return 'darwin';
+    if (fromUserAgent.includes('linux')) return 'linux';
+
     return this.getEnvValue('OS').toLowerCase() || 'unknown';
   }
 
@@ -398,20 +547,38 @@ export class MultiAgentOrchestratorService {
   }
 
   private buildVm(detection: BackendDetectionResult): WorkbenchTeamVm {
-    const teammates = [...this.teammates.values()].map<WorkbenchTeammateVm>((x) => ({
-      agentId: x.identity.agentId,
-      name: x.identity.agentName,
-      color: x.identity.color,
-      backend: x.backend,
-      paneId: x.paneId,
-      windowId: x.windowId,
-      status: x.status,
-      model: x.identity.model,
-      cwd: x.identity.cwd,
-      planModeRequired: Boolean(x.identity.planModeRequired),
-      lastMessagePreview: this.lastMessagePreviewByAgent.get(x.identity.agentId),
-      updatedAt: Date.now(),
-    }));
+    const teammates = [...this.teammates.values()].map<WorkbenchTeammateVm>((x) => {
+      const sessionState = x.backend === 'tmux' ? this.tmuxBackend.getSessionState(x.identity.agentId) : undefined;
+      const attached = sessionState ? sessionState.attached : undefined;
+      const recoveryState = x.status === 'stopped'
+        ? 'detached'
+        : sessionState?.attached
+          ? 'live'
+          : x.backend === 'tmux'
+            ? 'reconnecting'
+            : 'live';
+
+      return {
+        agentId: x.identity.agentId,
+        name: x.identity.agentName,
+        color: x.identity.color,
+        backend: x.backend,
+        paneId: x.paneId,
+        windowId: x.windowId,
+        status: x.status,
+        model: x.identity.model,
+        cwd: x.identity.cwd,
+        planModeRequired: Boolean(x.identity.planModeRequired),
+        lastMessagePreview: this.lastMessagePreviewByAgent.get(x.identity.agentId),
+        updatedAt: Date.now(),
+        attached,
+        canAttach: x.backend === 'tmux' && Boolean(sessionState),
+        canDetach: x.backend === 'tmux' && Boolean(sessionState),
+        recoveryState: x.backend === 'tmux' ? recoveryState : 'live',
+        sessionName: sessionState?.sessionName,
+        sessionLastSeenAt: sessionState?.lastSeenAt,
+      };
+    });
 
     const runningCount = teammates.filter((x) => x.status === 'running').length;
     const stoppedCount = teammates.filter((x) => x.status === 'stopped').length;

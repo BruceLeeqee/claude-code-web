@@ -1,4 +1,4 @@
-import type { BackendType, TeammateIdentity, TeammateMode, TeammateRuntimeStatus } from './multi-agent.types';
+import type { BackendCapability, BackendType, ExecutionModeSnapshot, TeammateIdentity, TeammateMode, TeammateRuntimeStatus } from './multi-agent.types';
 
 export type MultiAgentEventSource = 'system' | 'leader' | 'teammate' | 'backend' | 'user';
 
@@ -24,20 +24,16 @@ export type MultiAgentEventType =
   | 'multiagent.team.updated'
   | 'multiagent.error';
 
-export interface MultiAgentModeCapturedPayload {
-  configuredMode: TeammateMode;
+export interface MultiAgentModeCapturedPayload extends ExecutionModeSnapshot {
   snapshotAt: number;
+  capturedAt?: number;
 }
 
 export interface MultiAgentBackendDetectedPayload {
   configuredMode: TeammateMode;
   effectiveBackend: BackendType;
   platform: string;
-  capabilities: {
-    tmuxAvailable: boolean;
-    itermAvailable: boolean;
-    inProcessAvailable: boolean;
-  };
+  capabilities: BackendCapability;
 }
 
 export interface MultiAgentBackendFallbackPayload {

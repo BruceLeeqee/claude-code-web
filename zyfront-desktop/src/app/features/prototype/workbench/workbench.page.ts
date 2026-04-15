@@ -1104,6 +1104,16 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return this.eventReadableMode() === 'user' ? item.userText : item.text;
   }
 
+  protected focusFocusedTeammateFromEvent(item: { text: string; userText: string }): void {
+    const text = this.eventReadableMode() === 'user' ? item.userText : item.text;
+    const match = text.match(/([a-zA-Z0-9_-]+@[^\s·]+)/);
+    if (match?.[1]) {
+      this.focusedTeammateId.set(match[1]);
+      this.rightPanelVisible.set(true);
+      this.scrollFocusedTeammateIntoView();
+    }
+  }
+
   protected agentNextActionHint(): string {
     const id = this.activeAgentId();
     if (!id) return '先创建 Agent Tab。';
@@ -2069,6 +2079,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected async stopTeammateFromWorkbench(agentId: string): Promise<void> {
     if (!agentId) return;
+    const t = this.teammateTeamVm()?.teammates?.find((x) => x.agentId === agentId);
+    const label = t?.name ?? agentId;
+    if (!window.confirm(`确定要停止 ${label} 吗？`)) return;
     try {
       await this.withTeammateRetry(() => this.multiAgent.stopTeammate(agentId, 'workbench stop'), `停止 ${agentId}`);
       this.setActionFeedback('info', '已请求停止 Agent');
@@ -2081,6 +2094,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected async killTeammateFromWorkbench(agentId: string): Promise<void> {
     if (!agentId) return;
+    const t = this.teammateTeamVm()?.teammates?.find((x) => x.agentId === agentId);
+    const label = t?.name ?? agentId;
+    if (!window.confirm(`确定要强制终止 ${label} 吗？该操作不可轻易恢复。`)) return;
     try {
       await this.withTeammateRetry(
         () => this.multiAgent.killTeammate(agentId, 'workbench force kill', 'SIGKILL'),
@@ -2094,10 +2110,47 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  protected async attachTeammateFromWorkbench(agentId: string): Promise<void> {
+    if (!agentId) return;
+    try {
+      const ok = await this.multiAgent.attachTeammate(agentId);
+      this.setActionFeedback(ok ? 'success' : 'warning', ok ? '已请求附着 tmux 会话' : '当前 Agent 不支持附着');
+      this.saveWorkbenchRecoverySnapshot();
+    } catch {
+      this.setActionFeedback('error', '附着会话失败');
+    }
+  }
+
+  protected async detachTeammateFromWorkbench(agentId: string): Promise<void> {
+    if (!agentId) return;
+    try {
+      const ok = await this.multiAgent.detachTeammate(agentId);
+      this.setActionFeedback(ok ? 'success' : 'warning', ok ? '已请求分离 tmux 会话' : '当前 Agent 不支持分离');
+      this.saveWorkbenchRecoverySnapshot();
+    } catch {
+      this.setActionFeedback('error', '分离会话失败');
+    }
+  }
+
   protected teammateBackendBadge(t: WorkbenchTeamVm['teammates'][number]): string {
     const pane = t.paneId ? ` · pane ${t.paneId}` : '';
     const win = t.windowId ? ` · win ${t.windowId}` : '';
-    return `${t.backend}${pane}${win}`;
+    const attach = t.attached === true ? ' · attached' : t.attached === false ? ' · detached' : '';
+    return `${t.backend}${pane}${win}${attach}`;
+  }
+
+  protected copyTeammateSessionInfo(t: WorkbenchTeamVm['teammates'][number]): void {
+    const parts = [
+      `agentId=${t.agentId}`,
+      t.sessionName ? `session=${t.sessionName}` : '',
+      t.paneId ? `pane=${t.paneId}` : '',
+      t.windowId ? `window=${t.windowId}` : '',
+      t.attached !== undefined ? `attached=${String(t.attached)}` : '',
+      t.recoveryState ? `recovery=${t.recoveryState}` : '',
+    ].filter(Boolean);
+    const text = parts.join(' · ');
+    void navigator.clipboard.writeText(text);
+    this.setActionFeedback('success', '会话信息已复制');
   }
 
   protected teammateRuntimeStatusLabel(status: string): string {
@@ -2111,6 +2164,17 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       error: '错误',
     };
     return map[status] ?? status;
+  }
+
+  protected teammateRecoveryLabel(state?: string): string {
+    const map: Record<string, string> = {
+      live: '在线',
+      detached: '已分离',
+      reconnecting: '重连中',
+      restored: '已恢复',
+      blocked: '受阻',
+    };
+    return state ? map[state] ?? state : '未知';
   }
 
   protected isTeammateFocused(agentId: string): boolean {
