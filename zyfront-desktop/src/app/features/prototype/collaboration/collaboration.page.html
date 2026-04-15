@@ -14,7 +14,22 @@
             <nz-option nzValue="8" nzLabel="8个"></nz-option>
           </nz-select>
         </div>
-        <button nz-button nzType="primary" class="btn-add-agent" type="button">
+        <div class="toolbar-field">
+          <span class="field-label">执行后端</span>
+          <nz-select
+            [ngModel]="teamVm()?.mode ?? 'auto'"
+            (ngModelChange)="setMode($event)"
+            nzSize="small"
+            class="collab-count-select"
+            nzPlaceHolder="选择模式"
+          >
+            <nz-option nzValue="auto" nzLabel="auto"></nz-option>
+            <nz-option nzValue="in-process" nzLabel="in-process"></nz-option>
+            <nz-option nzValue="tmux" nzLabel="tmux"></nz-option>
+            <nz-option nzValue="iterm2" nzLabel="iterm2"></nz-option>
+          </nz-select>
+        </div>
+        <button nz-button nzType="primary" class="btn-add-agent" type="button" (click)="addAgent()" [disabled]="!!backendBlockingHint()">
           <span nz-icon nzType="plus" nzTheme="outline"></span>
           添加新 Agent
         </button>
@@ -25,69 +40,177 @@
     </header>
 
     <div class="agent-grid">
-      <article class="agent-card" *ngFor="let agent of facade.agents()" [attr.data-status]="agent.status">
+      <section class="m3-center">
+        <div class="m3-head">恢复中心（M3）</div>
+        <div class="m3-row">
+          <span>可恢复快照：{{ hasRecoverySnapshot() ? '有' : '无' }}</span>
+          <span *ngIf="lastRecoveryAt()">最近快照：{{ lastRecoveryAt() }}</span>
+          <button nz-button nzType="default" type="button" (click)="saveRecoverySnapshot()">保存快照</button>
+          <button nz-button nzType="default" type="button" (click)="restoreRecoverySnapshot()" [disabled]="!hasRecoverySnapshot()">恢复快照</button>
+        </div>
+      </section>
+
+      <section class="flow-guide">
+        <div class="flow-head">
+          <span>协作主路径（M1）</span>
+          <span class="flow-next">推荐下一步：{{ nextRecommendation() }}</span>
+        </div>
+        <div class="flow-steps">
+          <span class="flow-step">1. 创建 Agent</span>
+          <span class="flow-step">2. 选择任务卡</span>
+          <span class="flow-step">3. 一键分派</span>
+          <span class="flow-step">4. 观察回传并收敛</span>
+        </div>
+      </section>
+
+      <div class="collab-feedback" *ngIf="actionFeedback() as fb" [attr.data-tier]="fb.tier">
+        <div class="feedback-title">{{ fb.text }}</div>
+        <div class="feedback-detail" *ngIf="fb.reason">原因：{{ fb.reason }}</div>
+        <div class="feedback-detail" *ngIf="fb.impact">影响：{{ fb.impact }}</div>
+        <div class="feedback-detail" *ngIf="fb.suggestion">建议：{{ fb.suggestion }}</div>
+      </div>
+      <div class="backend-blocking-banner" *ngIf="backendBlockingHint()">
+        <span nz-icon nzType="warning" nzTheme="outline"></span>
+        <div class="backend-blocking-copy">
+          <div>当前后端模式被阻断：{{ backendBlockingHint() }}（可切换为 in-process 或 auto）。</div>
+          <ul class="backend-blocking-hints" *ngIf="backendSetupHints().length > 0">
+            <li *ngFor="let hint of backendSetupHints()">{{ hint }}</li>
+          </ul>
+        </div>
+      </div>
+
+      <section class="task-board">
+        <div class="task-board-head">
+          <span>任务卡工作流（M2）</span>
+          <span class="task-board-stats">
+            总 {{ taskSummary().total }} · 待开始 {{ taskSummary().todo }} · 进行中 {{ taskSummary().doing }} · 阻塞 {{ taskSummary().blocked }} · 已完成 {{ taskSummary().done }}
+          </span>
+        </div>
+        <div class="task-cards">
+          <article class="task-card" *ngFor="let task of taskCards()" [attr.data-status]="task.status">
+            <div class="task-card-head">
+              <h3>{{ task.title }}</h3>
+              <span class="task-status">{{ statusLabel(task.status) }}</span>
+            </div>
+            <p class="task-goal">{{ task.goal }}</p>
+            <div class="task-meta">
+              <span>负责人：{{ ownerName(task.ownerAgentId) }}</span>
+              <span>截止：{{ task.due }}</span>
+            </div>
+            <div class="task-summary">
+              <div>最新结论：{{ task.latestConclusion }}</div>
+              <div *ngIf="task.blocker">阻塞：{{ task.blocker }}</div>
+              <div>下一步：{{ task.nextStep }}</div>
+            </div>
+            <div class="task-actions">
+              <nz-select
+                [ngModel]="task.ownerAgentId"
+                (ngModelChange)="onAssignTask(task.id, $event)"
+                nzSize="small"
+                class="task-owner-select"
+                nzPlaceHolder="选择负责人"
+              >
+                <nz-option *ngFor="let agent of agents()" [nzValue]="agent.agentId" [nzLabel]="agent.name"></nz-option>
+              </nz-select>
+              <button nz-button nzType="default" class="task-dispatch-btn" type="button" (click)="dispatchTask(task.id)">
+                一键分派
+              </button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="m3-observability">
+        <div class="m3-head">可观测性面板（M3）</div>
+        <div class="obs-grid">
+          <div class="obs-item">自动重试次数：{{ observability().retries }}</div>
+          <div class="obs-item">动作失败率：{{ observability().failureRate }}%</div>
+          <div class="obs-item">平均延迟：{{ observability().avgLatency }}ms</div>
+          <div class="obs-item">活跃 Agent：{{ observability().active }}</div>
+          <div class="obs-item obs-item--wide">活跃趋势（最近10次）：{{ observability().trend }}</div>
+        </div>
+      </section>
+
+      <article class="agent-card" *ngFor="let agent of agents()" [attr.data-status]="agent.status">
         <div class="agent-head">
           <div class="agent-head-left">
-            <div class="agent-avatar" [attr.data-icon]="agent.iconKey">
-              <span nz-icon [nzType]="cardIconType(agent.iconKey)" nzTheme="outline"></span>
-            </div>
+            <div class="agent-avatar" [style.background]="agent.color"></div>
             <div class="agent-titles">
               <h3>{{ agent.name }}</h3>
-              <p class="agent-sub">{{ agent.role }}</p>
+              <p class="agent-sub">{{ agent.backend }} · {{ agent.model || 'default model' }}</p>
             </div>
           </div>
           <div class="agent-head-right">
             <span class="status-pill" [ngClass]="statusPill(agent).mod">
-              <span
-                nz-icon
-                [nzType]="statusPill(agent).icon"
-                nzTheme="outline"
-                [nzSpin]="statusPill(agent).spin === true"
-              ></span>
+              <span nz-icon [nzType]="statusPill(agent).icon" nzTheme="outline" [nzSpin]="statusPill(agent).spin === true"></span>
               {{ statusPill(agent).label }}
             </span>
-            <span class="agent-id-badge">ID: {{ agent.id }}</span>
+            <span class="agent-id-badge">ID: {{ agent.agentId }}</span>
           </div>
         </div>
 
-        <p class="task-hint">「{{ agent.taskHint }}」</p>
+        <p class="task-hint">「{{ agent.lastMessagePreview || '等待 leader 下发任务' }}」</p>
 
         <div class="agent-progress">
           <div class="progress-row">
             <div class="progress-track" aria-hidden="true">
-              <div class="progress-fill" [style.width.%]="agent.progress"></div>
+              <div class="progress-fill" [style.width.%]="agent.status === 'running' ? 72 : agent.status === 'stopped' ? 100 : 35"></div>
             </div>
-            <span class="progress-pct">{{ agent.progress }}%</span>
+            <span class="progress-pct">{{ agent.status === 'running' ? 72 : agent.status === 'stopped' ? 100 : 35 }}%</span>
           </div>
           <div class="progress-foot">
-            <span class="eta" *ngIf="agent.etaSec > 0">
+            <span class="eta" *ngIf="agent.status === 'running'">
               <span nz-icon nzType="clock-circle" nzTheme="outline"></span>
-              预计剩余: {{ agent.etaSec }}s
+              执行中
             </span>
-            <span class="eta eta--muted" *ngIf="agent.etaSec <= 0">—</span>
+            <span class="eta eta--muted" *ngIf="agent.status !== 'running'">{{ statusPill(agent).label }}</span>
             <span class="agent-date">{{ dashboardSyncedAt().slice(0, 10) }}</span>
           </div>
         </div>
 
         <div class="agent-log">
-          <div class="log-line" *ngFor="let row of agent.logs">
-            <span class="log-time">{{ row.time }}</span>
-            <span class="log-text">{{ row.text }}</span>
+          <div class="log-line">
+            <span class="log-time">now</span>
+            <span class="log-text">cwd: {{ agent.cwd || '.' }}</span>
+          </div>
+          <div class="log-line">
+            <span class="log-time">mode</span>
+            <span class="log-text">planModeRequired: {{ agent.planModeRequired ? 'yes' : 'no' }}</span>
           </div>
         </div>
 
         <div class="actions">
-          <button nz-button nzType="default" class="action-btn" type="button" (click)="facade.toggleAgent(agent.id)">
+          <button nz-button nzType="default" class="action-btn" type="button" (click)="toggleAgent(agent)">
             <span nz-icon nzType="pause" nzTheme="outline"></span>
-            {{ agent.status === 'paused' ? '恢复' : '暂停' }}
+            停止
           </button>
-          <button nz-button nzType="default" class="action-btn" type="button" (click)="facade.advanceAgent(agent.id)">
+          <button nz-button nzType="default" class="action-btn" type="button" (click)="jumpToWorkbench(agent)">
+            <span nz-icon nzType="send" nzTheme="outline"></span>
+            Workbench 聚焦
+          </button>
+          <button nz-button nzType="default" class="action-btn" type="button" (click)="advanceAgent(agent)">
             <span nz-icon nzType="reload" nzTheme="outline"></span>
             推进
           </button>
         </div>
       </article>
     </div>
+
+    <section class="collab-events">
+      <div class="events-head">
+        <span>事件时间线（实时）</span>
+        <div class="event-view-toggle">
+          <button type="button" [class.active]="eventReadableMode() === 'user'" (click)="setEventReadableMode('user')">用户视角</button>
+          <button type="button" [class.active]="eventReadableMode() === 'technical'" (click)="setEventReadableMode('technical')">技术视角</button>
+        </div>
+      </div>
+      <div class="events-list">
+        <div class="event-row" *ngFor="let e of recentEvents()">
+          <span class="event-time">{{ e.at | date : 'HH:mm:ss' }}</span>
+          <span class="event-text" [attr.data-tier]="e.tier">{{ renderEventText(e) }}</span>
+        </div>
+      </div>
+    </section>
 
     <footer class="collab-footer">
       <div class="footer-row footer-row--main">

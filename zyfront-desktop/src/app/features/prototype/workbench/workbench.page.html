@@ -280,7 +280,25 @@
           [style.top.px]="ctx.y"
           (click)="$event.stopPropagation()"
         >
-          <button type="button" class="ctx-item" (click)="closeEditorTab(ctx.tab)">关闭</button>
+          <button type="button" class="ctx-item" (click)="createAgentTabFromContext()">新建 Agent Tab</button>
+          <div class="ctx-sep"></div>
+          <button type="button" class="ctx-item" [disabled]="ctx.tab === 'Terminal - Main'" (click)="closeEditorTab(ctx.tab)">关闭</button>
+          <button
+            type="button"
+            class="ctx-item"
+            *ngIf="isAgentTab(ctx.tab)"
+            (click)="closeTabAndStopAgent(ctx.tab)"
+          >
+            关闭并 Stop Agent
+          </button>
+          <button
+            type="button"
+            class="ctx-item"
+            *ngIf="isAgentTab(ctx.tab)"
+            (click)="closeTabAndKillAgent(ctx.tab)"
+          >
+            关闭并 Kill Agent
+          </button>
           <button type="button" class="ctx-item" (click)="closeOtherTabs(ctx.tab)">关闭其他</button>
           <button type="button" class="ctx-item" (click)="closeTabsToLeft(ctx.tab)">关闭左侧</button>
           <button type="button" class="ctx-item" (click)="closeTabsToRight(ctx.tab)">关闭右侧</button>
@@ -291,6 +309,57 @@
             <section class="terminal-panel" [class.is-hidden]="activeTab() !== 'Terminal - Main'" (click)="focusAiTerminal()">
               <div class="terminal-body">
                 <div #xtermHost class="xterm-host"></div>
+              </div>
+            </section>
+
+            <section class="agent-panel" *ngIf="isAgentTab(activeTab())">
+              <div class="agent-panel-head">
+                <div class="agent-panel-title">Agent 会话</div>
+                <div class="agent-panel-head-right">
+                  <button type="button" class="agent-panel-btn" (click)="focusActiveAgentInRightPanel()">聚焦</button>
+                  <button type="button" class="agent-panel-btn" (click)="stopActiveAgent()">Stop</button>
+                  <button type="button" class="agent-panel-btn danger" (click)="killActiveAgent()">Kill</button>
+                </div>
+              </div>
+              <div class="agent-panel-sub">agentId={{ activeAgentId() }}</div>
+              <div class="agent-panel-body">
+                <div class="agent-next-hint">{{ agentNextActionHint() }}</div>
+                <div class="agent-chat">
+                  <div class="agent-chat-empty" *ngIf="activeAgentMessages().length === 0">暂无会话记录。</div>
+                  <div class="agent-chat-list" *ngIf="activeAgentMessages().length > 0">
+                    <div class="agent-chat-row" *ngFor="let m of activeAgentMessages()" [attr.data-role]="m.role">
+                      <span class="agent-chat-time">{{ m.at | date: 'HH:mm:ss' }}</span>
+                      <span class="agent-chat-role">{{ m.role }}</span>
+                      <span class="agent-chat-text">{{ m.text }}</span>
+                    </div>
+                  </div>
+                  <div class="agent-chat-input">
+                    <input
+                      class="search-input"
+                      type="text"
+                      placeholder="给该 agent 发送消息…"
+                      [value]="agentChatInput()"
+                      (input)="onAgentChatInput($event)"
+                      (keydown.enter)="sendAgentChat()"
+                    />
+                    <button type="button" class="search-run" (click)="sendAgentChat()">发送</button>
+                  </div>
+                </div>
+
+                <div class="agent-panel-events">
+                  <div class="agent-panel-events-head">
+                    <span>事件（该 agent）</span>
+                    <div class="event-view-toggle">
+                      <button type="button" [class.active]="eventReadableMode() === 'user'" (click)="setEventReadableMode('user')">用户视角</button>
+                      <button type="button" [class.active]="eventReadableMode() === 'technical'" (click)="setEventReadableMode('technical')">技术视角</button>
+                    </div>
+                  </div>
+                  <div class="agent-panel-empty" *ngIf="activeAgentEvents().length === 0">暂无事件。</div>
+                  <div class="agent-panel-row" *ngFor="let e of activeAgentEvents()">
+                    <span class="agent-panel-time">{{ e.at | date: 'HH:mm:ss' }}</span>
+                    <span class="agent-panel-text" [attr.data-tier]="e.tier">{{ renderEventText(e) }}</span>
+                  </div>
+                </div>
               </div>
             </section>
 
@@ -369,6 +438,103 @@
           <div class="right-header">
             <div class="panel-title vscode-section-title">任务拆解</div>
             <div class="panel-sub">{{ formatWorkbenchModeLabel(coordinatorMode()) }} · 共 {{ stepTotal() }} 步</div>
+          </div>
+
+          <div class="multi-agent-block">
+            <div class="section-label">多智能体（Phase 1）</div>
+
+            <div class="ma-mode-row">
+              <button type="button" class="ma-mode-btn" [class.active]="teammateBackendMode() === 'auto'" (click)="setTeammateMode('auto')">auto</button>
+              <button type="button" class="ma-mode-btn" [class.active]="teammateBackendMode() === 'in-process'" (click)="setTeammateMode('in-process')">in-process</button>
+              <button type="button" class="ma-mode-btn" [class.active]="teammateBackendMode() === 'tmux'" (click)="setTeammateMode('tmux')">tmux</button>
+              <button type="button" class="ma-mode-btn" [class.active]="teammateBackendMode() === 'iterm2'" (click)="setTeammateMode('iterm2')">iterm2</button>
+            </div>
+
+            <div class="ma-stats-row">
+              <span>总数 {{ teammateQuickStats().total }}</span>
+              <span>运行 {{ teammateQuickStats().running }}</span>
+              <span>停止 {{ teammateQuickStats().stopped }}</span>
+              <span>错误 {{ teammateQuickStats().error }}</span>
+            </div>
+            <div class="ma-sub">mode={{ teammateQuickStats().mode }} · backend={{ teammateQuickStats().backend }}</div>
+            <div class="ma-feedback" *ngIf="actionFeedback() as fb" [attr.data-tier]="fb.tier">
+              {{ fb.text }}
+            </div>
+            <div class="ma-recovery-center">
+              <div class="ma-recovery-head">恢复中心（M3）</div>
+              <div class="ma-recovery-row">
+                <span>快照：{{ recoveryAvailable() ? '可恢复' : '无' }}</span>
+                <span *ngIf="recoverySyncedAt()">最近：{{ recoverySyncedAt() }}</span>
+              </div>
+              <div class="ma-recovery-actions">
+                <button type="button" class="ma-stop" (click)="saveWorkbenchRecoverySnapshot()">保存快照</button>
+                <button type="button" class="ma-stop" [disabled]="!recoveryAvailable()" (click)="restoreWorkbenchRecoverySnapshot()">恢复快照</button>
+              </div>
+            </div>
+            <div class="ma-observability">
+              <div class="ma-recovery-head">可观测性（M3）</div>
+              <div class="ma-ob-row">
+                <span>重试 {{ teammateObservability().retries }}</span>
+                <span>失败率 {{ teammateObservability().failureRate }}%</span>
+                <span>平均延迟 {{ teammateObservability().avgLatency }}ms</span>
+              </div>
+              <div class="ma-ob-row">
+                <span>活跃 {{ teammateObservability().active }}</span>
+                <span>趋势 {{ teammateObservability().trend }}</span>
+              </div>
+            </div>
+            <div class="ma-blocking-hint" *ngIf="teammateTeamVm()?.health?.blocking && teammateTeamVm()?.health?.fallbackReason">
+              <span nz-icon nzType="warning" nzTheme="outline"></span>
+              <div class="ma-blocking-copy">
+                <div>{{ teammateTeamVm()?.health?.fallbackReason }}</div>
+                <ul class="ma-blocking-hints" *ngIf="teammateSetupHints().length > 0">
+                  <li *ngFor="let hint of teammateSetupHints()">{{ hint }}</li>
+                </ul>
+              </div>
+            </div>
+            <div class="ma-focus-pill" *ngIf="focusedTeammateId()">
+              <span nz-icon nzType="aim" nzTheme="outline"></span>
+              聚焦 agent: {{ focusedTeammateId() }}
+              <button type="button" class="ma-focus-clear" (click)="clearFocusedTeammate()">清除</button>
+            </div>
+
+            <div class="ma-spawn-row">
+              <input class="search-input" type="text" placeholder="teammate 名称" [value]="teammateSpawnName()" (input)="onTeammateSpawnNameInput($event)" />
+              <input class="search-input" type="text" placeholder="首条指令" [value]="teammateSpawnPrompt()" (input)="onTeammateSpawnPromptInput($event)" />
+              <button type="button" class="search-run" (click)="spawnTeammateFromWorkbench()" [disabled]="teammateTeamVm()?.health?.blocking">Spawn</button>
+            </div>
+
+            <div class="ma-list" *ngIf="teammateTeamVm()?.teammates?.length; else maEmpty">
+              <div class="ma-item" *ngFor="let t of teammateTeamVm()?.teammates" [attr.data-agent-id]="t.agentId" [class.is-focused]="isTeammateFocused(t.agentId)">
+                <span class="ma-dot" [style.background]="t.color"></span>
+                <div class="ma-main">
+                  <span class="ma-name">{{ t.name }}</span>
+                  <span class="ma-meta">{{ teammateBackendBadge(t) }}</span>
+                </div>
+                <span class="ma-status">{{ teammateRuntimeStatusLabel(t.status) }}</span>
+                <div class="ma-actions">
+                  <button type="button" class="ma-stop" [disabled]="t.status === 'stopped' || t.status === 'error'" (click)="stopTeammateFromWorkbench(t.agentId)">Stop</button>
+                  <button type="button" class="ma-kill" [disabled]="t.status === 'stopped'" (click)="killTeammateFromWorkbench(t.agentId)">Kill</button>
+                </div>
+              </div>
+            </div>
+            <ng-template #maEmpty>
+              <p class="plan-empty">暂无 teammate，点击 Spawn 创建。</p>
+            </ng-template>
+
+            <div class="ma-events" *ngIf="teammateEvents().length > 0">
+              <div class="ma-events-head">
+                <span>事件时间线</span>
+                <div class="event-view-toggle">
+                  <button type="button" [class.active]="eventReadableMode() === 'user'" (click)="setEventReadableMode('user')">用户视角</button>
+                  <button type="button" [class.active]="eventReadableMode() === 'technical'" (click)="setEventReadableMode('technical')">技术视角</button>
+                </div>
+              </div>
+              <div class="ma-event-row" *ngFor="let e of teammateEvents()">
+                <span class="ma-event-time">{{ e.at | date: 'HH:mm:ss' }}</span>
+                <span class="ma-event-text" [attr.data-tier]="e.tier">{{ renderEventText(e) }}</span>
+              </div>
+            </div>
           </div>
 
           <div class="task-summary-bar">
