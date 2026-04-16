@@ -12,11 +12,11 @@ import {
   signal,
 } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-import { DatePipe, NgFor, NgIf, NgTemplateOutlet } from '@angular/common';
+import { NgFor, NgIf, NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute } from '@angular/router';
 import { GlobalShellFrameComponent } from '../../../shared/global-shell-frame.component';
 import { PrototypeCoreFacade } from '../../../shared/prototype-core.facade';
 import {
@@ -42,9 +42,10 @@ import { DIRECTIVE_REGISTRY, isCoordinationMode, parseDirective, type DirectiveD
 import { Subscription } from 'rxjs';
 import { type TurnContext } from '../../../core/memory/memory.types';
 import { MultiAgentOrchestratorService } from '../../../core/multi-agent/multi-agent.orchestrator.service';
-import type { MultiAgentEvent } from '../../../core/multi-agent/multi-agent.events';
 import type { TeammateMode, WorkbenchTeamVm } from '../../../core/multi-agent/multi-agent.types';
-import { summarizeMultiAgentEvent, type MultiAgentTimelineTier } from '../../../core/multi-agent/multi-agent.timeline';
+import type { MultiAgentEvent } from '../../../core/multi-agent/multi-agent.events';
+
+type MultiAgentTimelineTier = 'info' | 'success' | 'warning' | 'error';
 
 /** 自动提交：主终端发给助手的固定提示（中文以走自然语言路由） */
 const AUTO_COMMIT_PROMPT =
@@ -317,14 +318,12 @@ function parsePlanStepsFromText(text: string): string[] {
     NgFor,
     NgIf,
     NgTemplateOutlet,
-    DatePipe,
     FormsModule,
     NzButtonModule,
     GlobalShellFrameComponent,
     NzIconModule,
     NzInputModule,
     NzProgressModule,
-    RouterLink,
     WorkbenchMonacoEditorComponent,
   ],
   templateUrl: './workbench.page.html',
@@ -342,7 +341,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly promptMemoryBuilder = inject(PromptMemoryBuilderService);
   private readonly directoryManager = inject(DirectoryManagerService);
   private readonly skillIndex = inject(SkillIndexService);
-  private readonly multiAgent = inject(MultiAgentOrchestratorService);
   protected readonly prototypeFacade = inject(PrototypeCoreFacade);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly cdr = inject(ChangeDetectorRef);
@@ -377,30 +375,16 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   /** 与 selectedPath 配对，区分 Vault / 工程树中高亮 */
   protected readonly selectedFileTreeRoot = signal<'vault' | 'workspace' | null>(null);
   protected readonly selectedPath = signal('');
- protected readonly selectedContent = signal('在左侧资源管理器中点击文件以在此预览。');
+  protected readonly selectedContent = signal('在左侧资源管理器中点击文件以在此预览。');
 
   protected readonly tabs = signal<string[]>(['Terminal - Main']);
   protected readonly activeTab = signal('Terminal - Main');
   protected readonly terminalBusy = signal(false);
   protected readonly visibleTabs = computed(() => this.tabs());
 
-  /** Phase 3-A：Tab=Agent 映射（tab label -> agentId）。MVP：只管理生命周期与事件投影。 */
+  /** Tab=会话 映射（tab label -> sessionId）。 */
   private readonly agentIdByTab = new Map<string, string>();
   private nextAgentTabSeq = 1;
-  protected readonly agentEventsById = signal<
-    Record<string, Array<{ at: number; text: string; userText: string; tier: MultiAgentTimelineTier }>>
-  >({});
-  protected readonly agentSessionsById = signal<
-    Record<
-      string,
-      {
-        agentId: string;
-        createdAt: number;
-        updatedAt: number;
-        messages: Array<{ at: number; role: 'leader' | 'user' | 'teammate' | 'system'; text: string }>;
-      }
-    >
-  >({});
   protected readonly agentChatInput = signal('');
 
   private readonly inputHistory = signal<string[]>([]);
@@ -409,80 +393,41 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly visibleDirectives = computed(() => this.directives);
 
   protected readonly coordinatorMode = signal<'single' | 'plan' | 'parallel'>('single');
-  protected readonly teammateTeamVm = signal<WorkbenchTeamVm | null>(null);
-  protected readonly teammateBackendMode = signal<'auto' | 'in-process' | 'tmux' | 'iterm2'>('auto');
-  protected readonly teammateSpawnName = signal('worker');
-  protected readonly teammateSpawnPrompt = signal('请接手一个子任务并返回简明进度。');
-  protected readonly teammateEvents = signal<Array<{ at: number; text: string; userText: string; tier: MultiAgentTimelineTier }>>([]);
-  protected readonly focusedTeammateId = signal('');
-  protected readonly eventReadableMode = signal<'user' | 'technical'>('user');
-  protected readonly actionFeedback = signal<{ tier: MultiAgentTimelineTier; text: string } | null>(null);
-  protected readonly retryCount = signal(0);
-  protected readonly actionAttemptCount = signal(0);
-  protected readonly actionFailureCount = signal(0);
-  protected readonly actionLatencyMs = signal<number[]>([]);
-  protected readonly activeAgentTrend = signal<number[]>([]);
-  protected readonly recoveryAvailable = signal(false);
-  protected readonly recoverySyncedAt = signal('');
+
+  /** 兼容旧模板/方法名：最近会话与展开状态 */
+  protected readonly recentTurns = signal<RecentTurn[]>([]);
+  protected readonly selectedRecentTurnId = signal<string | null>(null);
+  protected readonly expandedRecentTurnId = signal<string | null>(null);
+  protected readonly recentThinkingVisibleIds = signal<string[]>([]);
+
+  /** 兼容旧模板/方法名：计划 / 记忆 / 统计 */
+  protected readonly planSteps = signal<string[]>([]);
+  protected readonly memoryItems = signal<MemoryVm[]>([]);
   protected readonly stepTotal = signal(0);
   protected readonly stepDone = signal(0);
   protected readonly stepInProgress = signal(0);
   protected readonly stepPending = signal(0);
   protected readonly toolCallCount = signal(0);
   protected readonly sessionCostUsd = signal(0);
-  protected readonly planSteps = signal<CoordinationStep[]>([]);
-  protected readonly memoryItems = signal<MemoryVm[]>([]);
-  protected readonly selectedRecentTurnId = signal<string | null>(null);
 
-  protected readonly planProgressPercent = computed(() => {
-    const total = this.stepTotal();
-    if (total <= 0) return 0;
-    return Math.min(100, Math.round((this.stepDone() / total) * 100));
-  });
+  protected readonly teammateTeamVm = signal<WorkbenchTeamVm | null>(null);
+  protected readonly teammateBackendMode = signal<TeammateMode>('auto');
+  protected readonly focusedTeammateId = signal('');
+  protected readonly teammateSpawnName = signal('');
+  protected readonly teammateSpawnPrompt = signal('');
+  protected readonly eventReadableMode = signal<'user' | 'technical'>('user');
+  protected readonly workbenchRecoveryStorageKey = 'zyfront:workbench:recovery:v1';
+  protected readonly recoveryAvailable = signal(false);
+  protected readonly recoverySyncedAt = signal('');
+  protected readonly actionAttemptCount = signal(0);
+  protected readonly actionLatencyMs = signal<number[]>([]);
+  protected readonly actionFailureCount = signal(0);
+  protected readonly retryCount = signal(0);
+  protected readonly actionFeedback = signal<{ tier: MultiAgentTimelineTier; text: string } | null>(null);
+  protected readonly agentSessionsById = signal<Record<string, { agentId: string; createdAt: number; updatedAt: number; messages: { at: number; role: 'leader' | 'user' | 'teammate' | 'system'; text: string }[] }>>({});
 
-  protected readonly teammateQuickStats = computed(() => {
-    const vm = this.teammateTeamVm();
-    return {
-      total: vm?.teammates.length ?? 0,
-      running: vm?.runningCount ?? 0,
-      stopped: vm?.stoppedCount ?? 0,
-      error: vm?.errorCount ?? 0,
-      mode: vm?.mode ?? this.teammateBackendMode(),
-      backend: vm?.effectiveBackend ?? 'n/a',
-    };
-  });
-  protected readonly teammateSetupHints = computed(() => this.teammateTeamVm()?.health?.setupHints ?? []);
-  protected readonly teammateObservability = computed(() => {
-    const attempts = this.actionAttemptCount();
-    const failures = this.actionFailureCount();
-    const latencies = this.actionLatencyMs();
-    const failureRate = attempts > 0 ? Math.round((failures / attempts) * 100) : 0;
-    const avgLatency = latencies.length > 0 ? Math.round(latencies.reduce((acc, n) => acc + n, 0) / latencies.length) : 0;
-    return {
-      retries: this.retryCount(),
-      failureRate,
-      avgLatency,
-      active: this.teammateQuickStats().running,
-      trend: this.activeAgentTrend().join(' / ') || '-',
-    };
-  });
-  protected readonly activeAgentId = computed(() => this.agentIdByTab.get(this.activeTab()) ?? '');
+  private readonly multiAgent = inject(MultiAgentOrchestratorService);
 
-  protected readonly activeAgentEvents = computed(() => {
-    const id = this.activeAgentId();
-    if (!id) return [];
-    return this.agentEventsById()[id] ?? [];
-  });
-
-  protected readonly activeAgentMessages = computed(() => {
-    const id = this.activeAgentId();
-    if (!id) return [];
-    return this.agentSessionsById()[id]?.messages ?? [];
-  });
-
-  protected readonly recentTurns = signal<RecentTurn[]>([]);
-  protected readonly expandedRecentTurnId = signal<string | null>(null);
-  protected readonly recentThinkingVisibleIds = signal<string[]>([]);
   protected readonly llmAvailable = signal(this.hasLlmConfigured());
 
   /** 左侧：资源管理器 / 搜索 / Git */
@@ -697,19 +642,17 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private syncTimer?: number;
   private memoryStatsTimer?: number;
   private settingsSub?: Subscription;
-  private multiAgentSub?: Subscription;
-  private multiAgentEventSub?: Subscription;
   private routeQuerySub?: Subscription;
   private recentTurnsMemoryPath?: string;
   private recentTurnsIndexPath?: string;
   /** 工具调用轨迹，与历史消息合并为右栏「记忆」 */
   private readonly toolMemoryTrace = signal<MemoryVm[]>([]);
-  private readonly workbenchRecoveryStorageKey = 'zyfront.workbench.multiagent.recovery.v1';
 
   constructor() {
     void this.bootstrapWorkspace();
     void this.loadAgentSessionsFromVault();
     this.syncCoordinatorState();
+    this.ensureDefaultTeamReady();
     void this.rebuildMemoryPanel();
     void this.hydrateRecentTurnsFromMemory();
     void this.reloadInstalledSkills();
@@ -718,26 +661,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     });
     this.settingsSub = this.appSettings.settings$.subscribe(() => {
       this.llmAvailable.set(this.hasLlmConfigured());
-    });
-    this.multiAgentSub = this.multiAgent.workbenchTeamVm$.subscribe((vm) => {
-      this.teammateTeamVm.set(vm);
-      this.teammateBackendMode.set(vm.mode);
-      this.activeAgentTrend.update((trend) => [...trend.slice(-9), vm.runningCount]);
-      if (this.focusedTeammateId()) {
-        this.scrollFocusedTeammateIntoView();
-      }
-    });
-    this.multiAgentEventSub = this.multiAgent.events$.subscribe((ev: MultiAgentEvent) => {
-      const summary = summarizeMultiAgentEvent(ev);
-      const item = { at: ev.ts, text: summary.technicalText, userText: summary.userText, tier: summary.tier };
-      this.teammateEvents.set([item, ...this.teammateEvents()].slice(0, 40));
-      const agentId = this.extractAgentIdFromMultiAgentEvent(ev);
-      if (agentId) {
-        const map = this.agentEventsById();
-        const prev = map[agentId] ?? [];
-        this.agentEventsById.set({ ...map, [agentId]: [item, ...prev].slice(0, 80) });
-      }
-      this.maybeAppendAgentSessionFromEvent(ev);
     });
     this.routeQuerySub = this.route.queryParamMap.subscribe((params) => {
       const focusAgent = (params.get('focusAgent') ?? '').trim();
@@ -800,8 +723,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.psTerminal?.dispose();
 
     this.settingsSub?.unsubscribe();
-    this.multiAgentSub?.unsubscribe();
-    this.multiAgentEventSub?.unsubscribe();
     this.routeQuerySub?.unsubscribe();
     this.detachSkillRootWatcher?.();
     this.detachSkillRootWatcher = undefined;
@@ -988,63 +909,19 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return this.agentIdByTab.has(tab);
   }
 
-  protected async createAgentTabFromContext(): Promise<void> {
-    const health = this.teammateTeamVm()?.health;
-    if (health?.blocking) {
-      this.teammateEvents.set(
-        [
-          {
-            at: Date.now(),
-            text: `multiagent.error · ${health.fallbackReason ?? 'backend mode blocked'}`,
-            userText: '后端不可用，无法创建 Agent',
-            tier: 'error' as MultiAgentTimelineTier,
-          },
-          ...this.teammateEvents(),
-        ].slice(0, 40),
-      );
-      this.setActionFeedback('error', health.fallbackReason ?? 'backend mode blocked');
-      this.hideTabContextMenu();
-      return;
-    }
-    const name = `agent-${this.nextAgentTabSeq++}`;
-    const teamName = this.teammateTeamVm()?.teamName || 'workbench-team';
-    const prompt = '你是一个独立 agent，请接手一个可并行的子任务，推进并回传关键进展。';
-    try {
-      const spawned = await this.multiAgent.spawnTeammate({
-        name,
-        prompt,
-        teamName,
-        mode: this.teammateBackendMode(),
-      });
-      const short = spawned.identity.agentId.split('@')[0] ?? spawned.identity.agentId;
-      const tabLabel = `Agent: ${spawned.identity.agentName} (${short})`;
-      this.agentIdByTab.set(tabLabel, spawned.identity.agentId);
-      this.ensureAgentSessionExists(spawned.identity.agentId);
-      this.addTabIfMissing(tabLabel);
-      this.setTab(tabLabel);
-      this.rightPanelVisible.set(true);
-      this.setActionFeedback('success', `已创建 Agent Tab：${spawned.identity.agentName}`);
-    } catch {
-      // 失败保持静默（事件流会记录 backend 错误/阻断）
-      this.setActionFeedback('error', '创建 Agent Tab 失败，请查看事件时间线');
-    } finally {
-      this.hideTabContextMenu();
-    }
+  protected activeAgentId(): string {
+    return this.agentIdByTab.get(this.activeTab()) ?? '';
   }
 
-  protected closeTabAndStopAgent(tab: string): void {
-    const agentId = this.agentIdByTab.get(tab);
-    this.closeEditorTab(tab);
-    if (agentId) void this.multiAgent.stopTeammate(agentId, 'close tab and stop agent');
-    this.setActionFeedback('info', '已关闭标签页并请求停止 Agent');
+  protected activeAgentLabel(): string {
+    const id = this.activeAgentId();
+    if (!id) return '';
+    return this.teammateTeamVm()?.teammates?.find((x) => x.agentId === id)?.name ?? id;
   }
 
-  protected closeTabAndKillAgent(tab: string): void {
-    const agentId = this.agentIdByTab.get(tab);
-    this.closeEditorTab(tab);
-    if (agentId) void this.multiAgent.killTeammate(agentId, 'close tab and kill agent', 'SIGKILL');
-    this.setActionFeedback('warning', '已关闭标签页并请求强制终止 Agent');
-  }
+
+
+
 
   protected onAgentChatInput(event: Event): void {
     const value = String((event.target as HTMLInputElement | null)?.value ?? '');
@@ -1061,9 +938,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       await this.withTeammateRetry(() => this.multiAgent.sendMessage(agentId, text), '发送消息');
       this.setActionFeedback('success', '消息已发送');
     } catch (e) {
-      this.appendAgentMessage(agentId, { at: Date.now(), role: 'system', text: `发送失败：${String((e as Error)?.message ?? e)}` });
-      this.setActionFeedback('error', '发送失败，请检查 Agent 状态');
+      const message = String((e as Error)?.message ?? e);
+      this.appendAgentMessage(agentId, { at: Date.now(), role: 'system', text: `发送失败：${message}` });
+      this.setActionFeedback('error', message);
     }
+  }
+
+  protected focusCurrentAgentInTabs(agentId: string): void {
+    this.syncActiveAgentToTabs(agentId);
   }
 
   protected focusActiveAgentInRightPanel(): void {
@@ -1072,6 +954,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.focusedTeammateId.set(agentId);
     this.rightPanelVisible.set(true);
     this.scrollFocusedTeammateIntoView();
+  }
+
+  protected syncActiveAgentToTabs(agentId: string): void {
+    const tab = [...this.agentIdByTab.entries()].find(([, id]) => id === agentId)?.[0];
+    if (tab) {
+      this.setTab(tab);
+    }
   }
 
   protected async stopActiveAgent(): Promise<void> {
@@ -1116,7 +1005,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected agentNextActionHint(): string {
     const id = this.activeAgentId();
-    if (!id) return '先创建 Agent Tab。';
+    if (!id) return '先创建 team。';
     const vm = this.teammateTeamVm()?.teammates?.find((x) => x.agentId === id);
     if (!vm) return '该 Agent 不在团队列表，建议重新创建。';
     if (vm.status === 'running') return 'Agent 执行中，建议等待回传或补充指令。';
@@ -1211,11 +1100,20 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private syncCoordinatorState(): void {
     const state = this.runtime.coordinator.getState();
     this.coordinatorMode.set(state.mode);
-    this.planSteps.set([...state.steps]);
+    this.planSteps.set(state.steps.map((s: CoordinationStep) => `${s.id ?? 'step'} · ${s.status}`));
     this.stepTotal.set(state.steps.length);
     this.stepDone.set(state.steps.filter((s: CoordinationStep) => s.status === 'completed').length);
     this.stepInProgress.set(state.steps.filter((s: CoordinationStep) => s.status === 'in_progress').length);
     this.stepPending.set(state.steps.filter((s: CoordinationStep) => s.status === 'pending').length);
+    this.sessionCostUsd.set(0);
+  }
+
+  private ensureDefaultTeamReady(): void {
+    const vm = this.teammateTeamVm();
+    if (vm?.teammates?.length) return;
+    if (this.teammateBackendMode() === 'auto') {
+      this.setTeammateMode('in-process');
+    }
   }
 
   /** 将历史消息与工具轨迹合并为右栏「捕获的记忆」 */
@@ -1910,6 +1808,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }, 3500);
   }
 
+  protected teammateEvents = signal<Array<{ at: number; text: string; userText: string; tier: MultiAgentTimelineTier }>>([]);
+
   protected saveWorkbenchRecoverySnapshot(): void {
     try {
       const payload = {
@@ -2115,6 +2015,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     try {
       const ok = await this.multiAgent.attachTeammate(agentId);
       this.setActionFeedback(ok ? 'success' : 'warning', ok ? '已请求附着 tmux 会话' : '当前 Agent 不支持附着');
+      if (ok) {
+        this.focusCurrentAgentInTabs(agentId);
+        this.syncAgentSessionState(agentId, 'connected');
+      }
       this.saveWorkbenchRecoverySnapshot();
     } catch {
       this.setActionFeedback('error', '附着会话失败');
@@ -2126,6 +2030,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     try {
       const ok = await this.multiAgent.detachTeammate(agentId);
       this.setActionFeedback(ok ? 'success' : 'warning', ok ? '已请求分离 tmux 会话' : '当前 Agent 不支持分离');
+      if (ok) {
+        this.focusCurrentAgentInTabs(agentId);
+        this.syncAgentSessionState(agentId, 'background');
+      }
       this.saveWorkbenchRecoverySnapshot();
     } catch {
       this.setActionFeedback('error', '分离会话失败');
@@ -2136,7 +2044,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const pane = t.paneId ? ` · pane ${t.paneId}` : '';
     const win = t.windowId ? ` · win ${t.windowId}` : '';
     const attach = t.attached === true ? ' · attached' : t.attached === false ? ' · detached' : '';
-    return `${t.backend}${pane}${win}${attach}`;
+    const role = t.role === 'leader' ? ' · leader' : '';
+    const sess = t.sessionStatus ? ` · ${this.sessionStatusLabel(t.sessionStatus)}` : '';
+    return `${t.backend}${pane}${win}${attach}${role}${sess}`;
   }
 
   protected copyTeammateSessionInfo(t: WorkbenchTeamVm['teammates'][number]): void {
@@ -2166,6 +2076,27 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return map[status] ?? status;
   }
 
+  protected sessionStatusLabel(status: string): string {
+    const map: Record<string, string> = {
+      disconnected: '未连接',
+      connected: '已连接',
+      background: '后台保活',
+      reconnecting: '重连中',
+      closed: '已关闭',
+      error: '异常',
+    };
+    return map[status] ?? status;
+  }
+
+  private syncAgentSessionState(agentId: string, sessionStatus: 'disconnected' | 'connected' | 'background' | 'reconnecting' | 'closed' | 'error'): void {
+    const vm = this.teammateTeamVm();
+    if (!vm) return;
+    const next = vm.teammates.map((t) => (t.agentId === agentId ? { ...t, sessionStatus, updatedAt: Date.now() } : t));
+    const leader = next.find((t) => t.role === 'leader') ?? vm.leader;
+    const updated = { ...vm, teammates: next, leader };
+    this.teammateTeamVm.set(updated);
+  }
+
   protected teammateRecoveryLabel(state?: string): string {
     const map: Record<string, string> = {
       live: '在线',
@@ -2175,6 +2106,27 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       blocked: '受阻',
     };
     return state ? map[state] ?? state : '未知';
+  }
+
+  protected teammateSessionStateLabel(agent: WorkbenchTeamVm['teammates'][number]): string {
+    const session = agent.sessionStatus ?? 'disconnected';
+    const recovery = agent.recoveryState ?? 'live';
+    if (session === 'error') return '会话异常';
+    if (session === 'reconnecting') return '会话重连中';
+    if (session === 'background') return '后台保活';
+    if (session === 'connected') return '已连接';
+    if (session === 'closed') return '已关闭';
+    if (recovery === 'detached') return '已分离';
+    return '未连接';
+  }
+
+  protected recoveryActionLabel(): string {
+    const vm = this.teammateTeamVm();
+    if (!vm) return '恢复/修复';
+    if (vm.health.blocking) return '修复环境';
+    if (vm.errorCount > 0) return '恢复会话';
+    if (this.recoveryAvailable()) return '恢复快照';
+    return '保存快照';
   }
 
   protected isTeammateFocused(agentId: string): boolean {

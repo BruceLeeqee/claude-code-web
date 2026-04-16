@@ -8,7 +8,7 @@ import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { MultiAgentOrchestratorService } from '../../../core/multi-agent/multi-agent.orchestrator.service';
 import type { MultiAgentEvent } from '../../../core/multi-agent/multi-agent.events';
-import type { TeammateMode, WorkbenchTeamVm, WorkbenchTeammateVm } from '../../../core/multi-agent/multi-agent.types';
+import type { TeammateMode, WorkbenchTeamVm, WorkbenchTeammateVm, WorkbenchTaskVm } from '../../../core/multi-agent/multi-agent.types';
 import { summarizeMultiAgentEvent, type MultiAgentTimelineTier } from '../../../core/multi-agent/multi-agent.timeline';
 
 @Component({
@@ -25,11 +25,19 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   private readonly sub = new Subscription();
   private readonly recoveryStorageKey = 'zyfront.collab.recovery.v1';
 
-  /** Agent 数量目标：用于一键补齐 worker */
+  /** Teammate 数量目标：用于一键补齐执行者 */
   protected agentCount = '4';
   protected readonly gitBranch = signal('');
   protected readonly dashboardSyncedAt = signal(this.formatDashboardTime(new Date()));
   protected readonly teamVm = signal<WorkbenchTeamVm | null>(null);
+  protected readonly draftTeamName = signal('collaboration-team');
+  protected readonly flowStep = signal(1);
+  protected readonly flowSteps = [
+    { id: 1, title: '建 Team' },
+    { id: 2, title: '加执行者' },
+    { id: 3, title: '分配任务' },
+    { id: 4, title: '观察回传' },
+  ] as const;
   protected readonly recentEvents = signal<Array<{ at: number; text: string; userText: string; tier: MultiAgentTimelineTier }>>([]);
   protected readonly eventReadableMode = signal<'user' | 'technical'>('user');
   protected readonly actionFeedback = signal<{
@@ -39,25 +47,13 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     impact?: string;
     suggestion?: string;
   } | null>(null);
-  protected readonly taskCards = signal<
-    Array<{
-      id: string;
-      title: string;
-      goal: string;
-      ownerAgentId: string;
-      status: 'todo' | 'doing' | 'blocked' | 'done';
-      due: string;
-      latestConclusion: string;
-      blocker: string;
-      nextStep: string;
-    }>
-  >([
+  protected readonly taskCards = signal<WorkbenchTaskVm[]>([
     {
       id: 'task-1',
       title: '统一反馈层',
       goal: '梳理 Spawn/Stop/Kill/Send 的成功失败反馈，并补充恢复建议',
       ownerAgentId: '',
-      status: 'todo',
+      status: 'unassigned',
       due: '今天 18:00',
       latestConclusion: '尚未开始',
       blocker: '',
@@ -68,13 +64,70 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
       title: '事件分级展示',
       goal: '区分用户可读事件与技术事件，并提供切换',
       ownerAgentId: '',
-      status: 'todo',
+      status: 'unassigned',
       due: '明天 12:00',
       latestConclusion: '等待分派',
       blocker: '',
       nextStep: '完成事件字段映射',
     },
   ]);
+  protected readonly skillCards = computed(() => {
+    const vm = this.teamVm();
+    const teamName = vm?.teamName?.trim() || this.draftTeamName().trim() || 'collaboration-team';
+    const agents = vm?.teammates ?? [];
+    return [
+      {
+        id: 'skill-orchestrate',
+        title: '团队编排技能',
+        badge: 'Team Init',
+        description: '负责创建 team、分配默认执行者，并把协作流推进到可执行状态。',
+        accent: 'linear-gradient(135deg, rgba(16,185,129,.35), rgba(96,165,250,.35))',
+        tone: 'success',
+        summary: `Team：${teamName} · 成员：${agents.length}`,
+        status: agents.length > 0 ? '已激活' : '待初始化',
+        hint: agents.length > 0 ? '点击可继续补齐执行者并分派任务。' : '点击“创建 Team”开始初始化。',
+      },
+      {
+        id: 'skill-plan',
+        title: '任务分解技能',
+        badge: 'Plan',
+        description: '将目标拆成可分派任务卡，并维护 owner / deadline / next step。',
+        accent: 'linear-gradient(135deg, rgba(96,165,250,.35), rgba(192,132,252,.35))',
+        tone: 'info',
+        summary: `任务卡：${this.taskSummary().total} · 未分配：${this.taskSummary().unassigned}`,
+        status: this.taskSummary().unassigned > 0 ? '待分派' : '已分派',
+        hint: '完成 Team 初始化后可继续补任务卡。',
+      },
+      {
+        id: 'skill-observe',
+        title: '观察回传技能',
+        badge: 'Observe',
+        description: '跟踪事件流、失败重试、恢复快照和多 Agent 状态变化。',
+        accent: 'linear-gradient(135deg, rgba(244,114,182,.25), rgba(245,158,11,.35))',
+        tone: 'warning',
+        summary: `在线：${this.agentStats().online} · 执行中：${this.agentStats().executing}`,
+        status: this.backendBlockingHint() ? '受阻' : '可观察',
+        hint: this.backendBlockingHint() || '协作完成后在事件流查看每次状态变化。',
+      },
+    ];
+  });
+
+  protected readonly teamSkillSummary = computed(() => {
+    const vm = this.teamVm();
+    const teamName = vm?.teamName?.trim() || this.draftTeamName().trim() || 'collaboration-team';
+    return {
+      teamName,
+      totalAgents: vm?.teammates.length ?? 0,
+      runningAgents: vm?.runningCount ?? 0,
+      stoppedAgents: vm?.stoppedCount ?? 0,
+      status: vm?.health?.blocking ? 'blocked' : vm?.teammates.length ? 'ready' : 'empty',
+      backend: vm?.effectiveBackend ?? vm?.mode ?? 'auto',
+    };
+  });
+
+  protected readonly draftTaskTitle = signal('');
+  protected readonly draftTaskGoal = signal('');
+  protected readonly draftTaskDue = signal('');
   protected readonly retryCount = signal(0);
   protected readonly actionAttemptCount = signal(0);
   protected readonly actionFailureCount = signal(0);
@@ -82,6 +135,8 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   protected readonly activeAgentTrend = signal<number[]>([]);
   protected readonly lastRecoveryAt = signal('');
   protected readonly hasRecoverySnapshot = signal(false);
+  protected readonly createTeamBusy = signal(false);
+  protected readonly createTeamState = signal<{ phase: 'idle' | 'creating' | 'success' | 'error'; text: string } | null>(null);
 
   protected readonly agentStats = computed(() => {
     const vm = this.teamVm();
@@ -101,29 +156,31 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   protected readonly backendSetupHints = computed(() => this.teamVm()?.health?.setupHints ?? []);
   protected readonly nextRecommendation = computed(() => {
     if (this.backendBlockingHint()) {
-      return '后端当前阻断，先切换到 auto/in-process 并按提示完成环境检查。';
+      return '当前模式不可用，先切换为静默模式或自动模式。';
     }
     if (this.agents().length === 0) {
-      return '先创建首个 Agent，再从任务卡选择 1 个任务并一键分派。';
+      return '先创建第一个 Teammate。';
     }
-    const unassigned = this.taskCards().find((task) => !task.ownerAgentId);
+    const unassigned = this.taskCards().find((task) => task.status === 'unassigned');
     if (unassigned) {
       return `任务「${unassigned.title}」尚未分配，建议先指定负责人。`;
     }
     const blocked = this.taskCards().find((task) => task.status === 'blocked');
     if (blocked) {
-      return `任务「${blocked.title}」处于阻塞，优先清理阻塞再推进。`;
+      return `任务「${blocked.title}」处于阻塞，优先处理。`;
     }
-    return '当前任务已在推进中，建议观察事件回传并更新任务结论。';
+    return '当前任务已在推进，继续观察回传即可。';
   });
   protected readonly taskSummary = computed(() => {
     const cards = this.taskCards();
     return {
       total: cards.length,
-      todo: cards.filter((x) => x.status === 'todo').length,
-      doing: cards.filter((x) => x.status === 'doing').length,
+      unassigned: cards.filter((x) => x.status === 'unassigned').length,
+      assigned: cards.filter((x) => x.status === 'assigned').length,
+      running: cards.filter((x) => x.status === 'running').length,
       blocked: cards.filter((x) => x.status === 'blocked').length,
       done: cards.filter((x) => x.status === 'done').length,
+      failed: cards.filter((x) => x.status === 'failed').length,
     };
   });
   protected readonly observability = computed(() => {
@@ -178,27 +235,104 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     this.dashboardSyncedAt.set(this.formatDashboardTime(new Date()));
   }
 
+  protected currentFlowStepClass(id: number): 'pending' | 'active' | 'done' {
+    const cur = this.flowStep();
+    if (id < cur) return 'done';
+    if (id === cur) return 'active';
+    return 'pending';
+  }
+
+  protected nextFlowStep(): void {
+    if (this.flowStep() < this.flowSteps.length) this.flowStep.update((v) => v + 1);
+  }
+
+  protected prevFlowStep(): void {
+    if (this.flowStep() > 1) this.flowStep.update((v) => v - 1);
+  }
+
   protected async addAgent(): Promise<void> {
     const vm = this.teamVm();
     if (vm?.health?.blocking) return;
     const target = Math.max(1, Number(this.agentCount) || 1);
     const existing = vm?.teammates.length ?? 0;
-    const toCreate = Math.max(1, target - existing);
+    if (existing >= target) {
+      this.setActionFeedback('info', `当前已达到 ${target} 个执行者，无需补齐`);
+      return;
+    }
+    const teamName = vm?.teamName?.trim() || this.draftTeamName().trim() || 'collaboration-team';
+    this.createTeamBusy.set(true);
+    try {
+      await this.initializeTeam(teamName, target);
+      this.setActionFeedback('success', `已补齐执行者到 ${target} 个`);
+      this.saveRecoverySnapshot();
+    } catch (error) {
+      console.error('[collaboration] addAgent failed', error);
+      this.setActionFeedback('error', '补齐执行者失败', {
+        reason: String((error as Error)?.message ?? error),
+        impact: '无法继续创建或补齐多 Agent 团队',
+        suggestion: '检查后端模式后重试',
+      });
+    } finally {
+      this.createTeamBusy.set(false);
+    }
+  }
 
+  protected async createTeam(): Promise<void> {
+    const name = this.draftTeamName().trim() || 'collaboration-team';
+    const target = Math.max(1, Number(this.agentCount) || 4);
+    this.draftTeamName.set(name);
+    this.flowStep.set(1);
+    this.createTeamBusy.set(true);
+    this.createTeamState.set({ phase: 'creating', text: `正在创建 Team：${name}（目标 ${target} 个成员）` });
+    this.setActionFeedback('info', `正在创建 Team：${name}（目标 ${target} 个成员）`);
+
+    try {
+      await this.initializeTeam(name, target);
+      const actual = this.teamVm()?.teammates.length ?? 0;
+      if (actual <= 0) {
+        throw new Error('Team 创建后没有返回任何成员，可能是后端创建请求未真正执行。');
+      }
+      this.seedTeamTasks(name);
+      this.flowStep.set(2);
+      this.createTeamState.set({ phase: 'success', text: `Team 已创建：${name}（${actual} 个成员）` });
+      this.setActionFeedback('success', `Team 已创建：${name}（${actual} 个成员）`);
+      this.saveRecoverySnapshot();
+    } catch (error) {
+      const message = String((error as Error)?.message ?? error);
+      console.error('[collaboration] createTeam failed', error);
+      this.createTeamState.set({ phase: 'error', text: `Team 创建失败：${message}` });
+      this.setActionFeedback('error', 'Team 创建失败', {
+        reason: message,
+        impact: '无法完成多 Agent 编排初始化',
+        suggestion: '检查后端模式是否可用，或切换为自动/静默模式后重试',
+      });
+    } finally {
+      this.createTeamBusy.set(false);
+    }
+  }
+
+  private async initializeTeam(teamName: string, targetCount: number): Promise<void> {
+    await this.multiAgent.setMode('auto');
+    const existing = this.teamVm()?.teammates.length ?? 0;
+    const toCreate = Math.max(1, targetCount - existing);
+    const startCount = existing;
     for (let i = 0; i < toCreate; i += 1) {
-      const index = (this.teamVm()?.teammates.length ?? 0) + 1;
+      const index = startCount + i + 1;
       await this.withRetry(
         () =>
           this.multiAgent.spawnTeammate({
             name: `agent-${index}`,
-            prompt: '请接手一个可独立完成的子任务并汇报关键结论。',
-            teamName: vm?.teamName || 'collaboration-team',
+            prompt:
+              i === 0
+                ? '请作为团队首个执行者，建立协作节奏并回传关键结论。'
+                : '请接手一个可独立完成的子任务并回传关键结论。',
+            teamName,
           }),
-        `创建 Agent agent-${index}`,
+        `创建 Team 成员 agent-${index}`,
       );
-      this.setActionFeedback('success', `已创建 Agent：agent-${index}`);
     }
-    this.saveRecoverySnapshot();
+    this.flowStep.set(2);
+    this.refreshDashboard();
   }
 
   protected async toggleAgent(agent: WorkbenchTeammateVm): Promise<void> {
@@ -227,15 +361,62 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     });
   }
 
+  protected openAgentTerminal(agent: WorkbenchTeammateVm): void {
+    this.jumpToWorkbench(agent);
+  }
+
+
+  protected createTaskCard(): void {
+    const title = window.prompt('任务标题：', this.draftTaskTitle());
+    if (!title?.trim()) return;
+    const goal = window.prompt('任务目标：', this.draftTaskGoal()) ?? '';
+    const due = window.prompt('截止时间：', this.draftTaskDue()) ?? '未设置';
+    this.addTaskCard(title.trim(), goal.trim(), due.trim());
+    this.setActionFeedback('success', `任务卡片已创建：${title.trim()}`);
+  }
+
+  private addTaskCard(title: string, goal: string, due: string, ownerAgentId = ''): void {
+    const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    this.taskCards.update((cards) => [
+      ...cards,
+      {
+        id,
+        title,
+        goal: goal || '请补充任务目标',
+        ownerAgentId,
+        status: ownerAgentId ? 'assigned' : 'unassigned',
+        due: due || '未设置',
+        latestConclusion: '尚未开始',
+        blocker: '',
+        nextStep: ownerAgentId ? '等待 agent 首次回传' : '请选择执行者并分配任务',
+      },
+    ]);
+    this.draftTaskTitle.set(title);
+    this.draftTaskGoal.set(goal);
+    this.draftTaskDue.set(due);
+  }
+
+  private seedTeamTasks(teamName: string): void {
+    const agents = this.teamVm()?.teammates ?? [];
+    if (this.taskCards().length > 2) return;
+    const planner = agents[0]?.agentId ?? '';
+    const executor = agents[1]?.agentId ?? planner;
+    const reviewer = agents[2]?.agentId ?? executor;
+    this.addTaskCard(`规划 ${teamName}`, '拆解目标、确认执行路径与依赖', '今天 18:00', planner);
+    this.addTaskCard('执行子任务', '落实拆解后的首个可执行动作并回传进展', '今天 20:00', executor);
+    this.addTaskCard('结果复核', '检查回传质量、风险与下一步建议', '今天 22:00', reviewer);
+  }
+
   protected statusPill(agent: WorkbenchTeammateVm): { label: string; icon: string; mod: string; spin?: boolean } {
     const map: Record<string, { label: string; icon: string; mod: string; spin?: boolean }> = {
-      starting: { label: '准备中', icon: 'loading-3-quarters', mod: 'st-prep', spin: true },
-      running: { label: '执行中', icon: 'loading-3-quarters', mod: 'st-exec', spin: true },
-      waiting: { label: '等待响应', icon: 'clock-circle', mod: 'st-wait' },
-      idle: { label: '空闲', icon: 'pause', mod: 'st-pause' },
-      stopping: { label: '停止中', icon: 'pause', mod: 'st-pause' },
+      starting: { label: '重连中', icon: 'loading-3-quarters', mod: 'st-prep', spin: true },
+      running: { label: '运行中', icon: 'loading-3-quarters', mod: 'st-exec', spin: true },
+      waiting: { label: '后台保活', icon: 'clock-circle', mod: 'st-wait' },
+      idle: { label: '已停止', icon: 'pause', mod: 'st-pause' },
+      stopping: { label: '已停止', icon: 'pause', mod: 'st-pause' },
       stopped: { label: '已停止', icon: 'check', mod: 'st-done' },
       error: { label: '异常', icon: 'close', mod: 'st-err' },
+      detached: { label: '后台保活', icon: 'clock-circle', mod: 'st-wait' },
     };
     return map[agent.status] ?? map['idle'];
   }
@@ -264,12 +445,14 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     return this.agents().find((agent) => agent.agentId === agentId)?.name ?? agentId;
   }
 
-  protected statusLabel(status: 'todo' | 'doing' | 'blocked' | 'done'): string {
-    const map: Record<'todo' | 'doing' | 'blocked' | 'done', string> = {
-      todo: '待开始',
-      doing: '进行中',
+  protected statusLabel(status: WorkbenchTaskVm['status']): string {
+    const map: Record<WorkbenchTaskVm['status'], string> = {
+      unassigned: '待分配',
+      assigned: '已分配',
+      running: '执行中',
       blocked: '阻塞',
-      done: '已完成',
+      done: '完成',
+      failed: '失败',
     };
     return map[status];
   }
@@ -281,6 +464,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
           ? {
               ...task,
               ownerAgentId: agentId,
+              status: agentId ? 'assigned' : 'unassigned',
               nextStep: agentId ? '已分派，等待首次回传' : '请选择负责人',
             }
           : task,
@@ -293,9 +477,9 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     if (!task) return;
     if (!task.ownerAgentId) {
       this.setActionFeedback('warning', `任务「${task.title}」未分配负责人`, {
-        reason: '缺少 owner agent',
+        reason: '缺少负责人',
         impact: '无法发送任务指令',
-        suggestion: '先在任务卡中选择一个 Agent 再点击一键分派',
+        suggestion: '先选择一个 Teammate 再点击分配任务',
       });
       return;
     }
@@ -309,7 +493,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
           item.id === taskId
             ? {
                 ...item,
-                status: 'doing',
+                status: 'running',
                 latestConclusion: '任务已下发，等待 agent 首次回传。',
                 blocker: '',
                 nextStep: '跟踪事件回传并更新结论',
@@ -317,7 +501,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
             : item,
         ),
       );
-      this.setActionFeedback('success', `任务「${task.title}」已分派给 ${this.ownerName(task.ownerAgentId)}`);
+      this.setActionFeedback('success', `任务「${task.title}」已分配给 ${this.ownerName(task.ownerAgentId)}`);
       this.saveRecoverySnapshot();
     } catch {
       this.taskCards.update((cards) =>
@@ -325,17 +509,17 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
           item.id === taskId
             ? {
                 ...item,
-                status: 'blocked',
+                status: 'failed',
                 blocker: '消息投递失败',
                 nextStep: '检查 agent 状态后重试分派',
               }
             : item,
         ),
       );
-      this.setActionFeedback('error', `任务「${task.title}」分派失败`, {
+      this.setActionFeedback('error', `任务「${task.title}」分配失败`, {
         reason: '消息通道异常或 Agent 已离线',
         impact: '任务进入阻塞状态',
-        suggestion: '切换到 Workbench 聚焦该 Agent，确认状态后重试',
+        suggestion: '检查 Agent 状态后重试，必要时重新分配',
       });
     }
   }
@@ -371,17 +555,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
       const parsed = JSON.parse(raw) as {
         at?: number;
         mode?: TeammateMode;
-        taskCards?: Array<{
-          id: string;
-          title: string;
-          goal: string;
-          ownerAgentId: string;
-          status: 'todo' | 'doing' | 'blocked' | 'done';
-          due: string;
-          latestConclusion: string;
-          blocker: string;
-          nextStep: string;
-        }>;
+        taskCards?: WorkbenchTaskVm[];
         eventReadableMode?: 'user' | 'technical';
       };
       if (parsed.mode) this.multiAgent.setMode(parsed.mode);

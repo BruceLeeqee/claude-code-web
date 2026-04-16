@@ -53,6 +53,7 @@ export class MultiAgentOrchestratorService {
   }
 
   async spawnTeammate(config: TeammateSpawnConfig): Promise<TeammateSpawnResult> {
+    const before = this.teammates.size;
     const snapshot = this.session.captureModeIfNeeded(this.configuredMode);
     this.eventBus.emit({
       type: 'multiagent.mode.captured',
@@ -98,6 +99,21 @@ export class MultiAgentOrchestratorService {
 
     const backend = this.resolveBackend(detection);
     const spawned = await backend.spawn(config);
+    if (!spawned?.identity?.agentId) {
+      const reason = `Backend ${backend.backendType} returned an invalid teammate spawn result`;
+      this.eventBus.emit({
+        type: 'multiagent.error',
+        sessionId: this.session.getSessionId(),
+        source: 'backend',
+        payload: {
+          scope: 'backend',
+          code: 'SPAWN_INVALID_RESULT',
+          message: reason,
+          details: { teamName: config.teamName, backend: backend.backendType },
+        },
+      });
+      throw new Error(reason);
+    }
     this.teammates.set(spawned.identity.agentId, spawned);
     this.version += 1;
 
@@ -126,7 +142,51 @@ export class MultiAgentOrchestratorService {
     });
 
     this.refreshVm();
+    const after = this.teammates.size;
+    if (after <= before) {
+      const reason = 'Team updated without increasing teammate count';
+      this.eventBus.emit({
+        type: 'multiagent.error',
+        sessionId: this.session.getSessionId(),
+        source: 'system',
+        payload: {
+          scope: 'team',
+          code: 'TEAM_NOT_CREATED',
+          message: reason,
+          details: {
+            teamName: this.teamName,
+            before,
+            after,
+            backend: spawned.backend,
+          },
+        },
+      });
+      throw new Error(reason);
+    }
     return spawned;
+  }
+
+  async createTeam(config: TeammateSpawnConfig, teammateCount = 4): Promise<WorkbenchTeamVm> {
+    const target = Math.max(1, teammateCount);
+    this.teamName = config.teamName;
+    this.leadAgentId = `leader@${this.teamName}`;
+    this.teammates.clear();
+    this.version += 1;
+    this.refreshVm();
+
+    for (let i = 0; i < target; i += 1) {
+      await this.spawnTeammate({
+        ...config,
+        name: i === 0 ? config.name : `${config.name}-${i + 1}`,
+        prompt: i === 0 ? config.prompt : '请协作补位并回传关键结论。',
+      });
+    }
+
+    const vm = this.getCurrentVm();
+    if (!vm.teammates.length) {
+      throw new Error('createTeam finished without teammates');
+    }
+    return vm;
   }
 
   async sendMessage(agentId: string, text: string): Promise<void> {
@@ -577,8 +637,12 @@ export class MultiAgentOrchestratorService {
         recoveryState: x.backend === 'tmux' ? recoveryState : 'live',
         sessionName: sessionState?.sessionName,
         sessionLastSeenAt: sessionState?.lastSeenAt,
+        role: x.identity.agentId === this.leadAgentId ? 'leader' : 'teammate',
+        sessionStatus: sessionState?.attached === undefined ? 'disconnected' : sessionState.attached ? 'connected' : 'background',
       };
     });
+
+    const leader = teammates.find((x) => x.role === 'leader');
 
     const runningCount = teammates.filter((x) => x.status === 'running').length;
     const stoppedCount = teammates.filter((x) => x.status === 'stopped').length;
@@ -590,10 +654,12 @@ export class MultiAgentOrchestratorService {
       mode: this.configuredMode,
       effectiveBackend: detection.effectiveBackend,
       health: detection.health,
+      leader,
       teammates,
       runningCount,
       stoppedCount,
       errorCount,
+      teamStatus: errorCount > 0 ? 'error' : runningCount > 0 ? 'running' : stoppedCount > 0 ? 'stopped' : 'background',
       updatedAt: Date.now(),
     };
   }

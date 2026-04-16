@@ -2,6 +2,14 @@ export type TeammateMode = 'auto' | 'in-process' | 'tmux' | 'iterm2';
 
 export type BackendType = 'in-process' | 'tmux' | 'iterm2';
 
+export type TeamRole = 'leader' | 'teammate';
+
+export type TeamLifecycleStatus = 'running' | 'stopped' | 'background' | 'reconnecting' | 'error';
+
+export type TaskLifecycleStatus = 'unassigned' | 'assigned' | 'running' | 'blocked' | 'done' | 'failed';
+
+export type SessionLifecycleStatus = 'disconnected' | 'connected' | 'background' | 'reconnecting' | 'closed' | 'error';
+
 export type TeammateRuntimeStatus =
   | 'starting'
   | 'running'
@@ -116,6 +124,8 @@ export interface WorkbenchTeammateVm {
   recoveryState?: 'live' | 'detached' | 'reconnecting' | 'restored' | 'blocked';
   sessionName?: string;
   sessionLastSeenAt?: number;
+  role?: TeamRole;
+  sessionStatus?: SessionLifecycleStatus;
 }
 
 export interface WorkbenchTeamVm {
@@ -124,9 +134,23 @@ export interface WorkbenchTeamVm {
   mode: TeammateMode;
   effectiveBackend?: BackendType;
   health: TeammateBackendHealth;
+  leader?: WorkbenchTeammateVm;
   teammates: WorkbenchTeammateVm[];
   runningCount: number;
   stoppedCount: number;
   errorCount: number;
+  teamStatus?: TeamLifecycleStatus;
   updatedAt: number;
+}
+
+export interface WorkbenchTaskVm {
+  id: string;
+  title: string;
+  goal: string;
+  ownerAgentId: string;
+  status: TaskLifecycleStatus;
+  due: string;
+  latestConclusion: string;
+  blocker: string;
+  nextStep: string;
 }

@@ -41,7 +41,9 @@ export class MultiAgentTmuxBackend implements TeammateBackend {
 
     const quotedCwd = this.quotePath(cwd);
     const bootstrap = await this.execTmux(
-      `has-session -t ${this.quoteTmuxArg(session)} || new-session -d -s ${this.quoteTmuxArg(session)} -c ${quotedCwd}`,
+      // When using "tmux ${subCommand}" we must include "tmux" in the second branch too,
+      // otherwise the "new-session" part never runs.
+      `has-session -t ${this.quoteTmuxArg(session)} 2>/dev/null || tmux new-session -d -s ${this.quoteTmuxArg(session)} -c ${quotedCwd}`,
       cwd,
     );
     if (!bootstrap.ok && bootstrap.code !== 0 && bootstrap.code !== 1) {
@@ -234,16 +236,19 @@ export class MultiAgentTmuxBackend implements TeammateBackend {
     const tmuxCmd = `tmux ${resolved.command}`;
 
     if (resolved.shellFlavor === 'windows-wsl') {
-      const script = `cd . && ${tmuxCmd} 2>/dev/null`;
+      // Some environments may have an invalid TMP/TMPDIR/TEMP or even a missing /tmp.
+      // tmux uses those for socket/temp paths, so we harden the runtime here.
+      const script = `mkdir -p /tmp 2>/dev/null || true; cd . && TMPDIR=/tmp TEMP=/tmp TMP=/tmp ${tmuxCmd} 2>/dev/null`;
       return `wsl.exe -e bash -c ${this.quoteDouble(script)}`;
     }
 
-    const script = `cd ${this.quoteDouble(resolved.cwd)} && ${tmuxCmd} 2>/dev/null`;
+    const script = `mkdir -p /tmp 2>/dev/null || true; cd ${this.quoteDouble(resolved.cwd)} && TMPDIR=/tmp TEMP=/tmp TMP=/tmp ${tmuxCmd} 2>/dev/null`;
     return `bash -c ${this.quoteDouble(script)}`;
   }
 
   private redirectStderrToNull(flavor: 'windows-wsl' | 'posix' = this.isWindows() ? 'windows-wsl' : 'posix'): string {
-    return flavor === 'windows-wsl' ? ' 2>$null' : ' 2>/dev/null';
+    // Both are executed in a bash-like shell (WSL uses bash via wsl.exe), so use POSIX redirection.
+    return flavor === 'windows-wsl' ? ' 2>/dev/null' : ' 2>/dev/null';
   }
 
   private quoteDouble(value: string): string {

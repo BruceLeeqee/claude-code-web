@@ -94,7 +94,7 @@ export interface MultiAgentTeamUpdatedPayload {
 }
 
 export interface MultiAgentErrorPayload {
-  scope: 'backend' | 'lifecycle' | 'message' | 'ui';
+  scope: 'backend' | 'lifecycle' | 'message' | 'ui' | 'team';
   code?: string;
   message: string;
   details?: Record<string, unknown>;
