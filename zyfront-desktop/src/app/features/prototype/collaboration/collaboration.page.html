@@ -9,7 +9,7 @@
           </div>
           <div class="arena-brand-text">
             <div class="arena-title">AGENT BATTLE ARENA</div>
-            <div class="arena-subtitle">OPERATIONS DATE: 2026.04.17 23:07:01 | BUILD v2.4.0</div>
+            <div class="arena-subtitle">OPERATIONS DATE: 2026.04.17 | BUILD v2.4.0</div>
           </div>
         </div>
         <div class="arena-top-nav">
@@ -22,83 +22,82 @@
 
       <!-- Main Content -->
       <div class="arena-viewport">
+        <!-- ============ Left Panel (Shared) ============ -->
+        <aside class="arena-sidebar-left">
+          <!-- Timeline Panel -->
+          <div class="pixel-panel">
+            <div class="panel-header">
+              <span class="panel-icon">☰</span>
+              <span class="panel-title">工作流时间轴</span>
+              <span class="panel-badge">等待初始化</span>
+            </div>
+            <div class="timeline">
+              <div class="timeline-item timeline-red">
+                <span class="timeline-dot"></span>
+                <div class="timeline-content">
+                  <div class="timeline-time">10:00:05</div>
+                  <div class="timeline-text">架构师 分解任务为 5 个子项</div>
+                </div>
+              </div>
+              <div class="timeline-item timeline-blue">
+                <span class="timeline-dot"></span>
+                <div class="timeline-content">
+                  <div class="timeline-time">10:00:12</div>
+                  <div class="timeline-text">分析师 启动市场趋势关联检索</div>
+                </div>
+              </div>
+              <div class="timeline-item timeline-green">
+                <span class="timeline-dot"></span>
+                <div class="timeline-content">
+                  <div class="timeline-time">10:00:18</div>
+                  <div class="timeline-text">开发者 开始生成并发控制模块代码</div>
+                </div>
+              </div>
+              <div class="timeline-item timeline-yellow">
+                <span class="timeline-dot"></span>
+                <div class="timeline-content">
+                  <div class="timeline-time">10:00:25</div>
+                  <div class="timeline-text">测试员 识别出 2 处边界逻辑风险</div>
+                </div>
+              </div>
+              <div class="timeline-item timeline-gray">
+                <span class="timeline-dot"></span>
+                <div class="timeline-content">
+                  <div class="timeline-time">10:01:00</div>
+                  <div class="timeline-text">系统自检：资源消耗 82%... 触发告警</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Shared Board Panel -->
+          <div class="pixel-panel">
+            <div class="panel-header panel-header-yellow">
+              <span class="panel-title">共享看板</span>
+            </div>
+            <div class="shared-board">
+              <div class="board-item">
+                <span class="board-label">活跃Agent</span>
+                <span class="board-value board-value-yellow">06</span>
+              </div>
+              <div class="board-item">
+                <span class="board-label">并发任务</span>
+                <span class="board-value board-value-yellow">12</span>
+              </div>
+              <div class="board-item">
+                <span class="board-label">协作强度</span>
+                <span class="board-value board-value-green">High</span>
+              </div>
+              <div class="board-item">
+                <span class="board-label">同步延迟</span>
+                <span class="board-value board-value-blue">14ms</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
         <!-- ============ ARENA VIEW ============ -->
         @if (activeTab() === 'arena') {
-          <!-- Left Panel -->
-          <aside class="arena-sidebar-left">
-            <!-- Timeline Panel -->
-            <div class="pixel-panel">
-              <div class="panel-header">
-                <span class="panel-icon">☰</span>
-                <span class="panel-title">工作流时间轴</span>
-                <span class="panel-badge">等待初始化</span>
-              </div>
-              <div class="timeline">
-                <div class="timeline-item timeline-red">
-                  <span class="timeline-dot"></span>
-                  <div class="timeline-content">
-                    <div class="timeline-time">10:00:05</div>
-                    <div class="timeline-text">架构师 分解任务为 5 个子项</div>
-                  </div>
-                </div>
-                <div class="timeline-item timeline-blue">
-                  <span class="timeline-dot"></span>
-                  <div class="timeline-content">
-                    <div class="timeline-time">10:00:12</div>
-                    <div class="timeline-text">分析师 启动市场趋势关联检索</div>
-                  </div>
-                </div>
-                <div class="timeline-item timeline-green">
-                  <span class="timeline-dot"></span>
-                  <div class="timeline-content">
-                    <div class="timeline-time">10:00:18</div>
-                    <div class="timeline-text">开发者 开始生成并发控制模块代码</div>
-                  </div>
-                </div>
-                <div class="timeline-item timeline-yellow">
-                  <span class="timeline-dot"></span>
-                  <div class="timeline-content">
-                    <div class="timeline-time">10:00:25</div>
-                    <div class="timeline-text">测试员 识别出 2 处边界逻辑风险</div>
-                  </div>
-                </div>
-                <div class="timeline-item timeline-gray">
-                  <span class="timeline-dot"></span>
-                  <div class="timeline-content">
-                    <div class="timeline-time">10:01:00</div>
-                    <div class="timeline-text">系统自检：资源消耗 82%... 触发告警</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Shared Board Panel -->
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-yellow">
-                <span class="panel-title">SHARED BOARD</span>
-                <span class="panel-badge">共享看板</span>
-              </div>
-              <div class="shared-board">
-                <div class="board-item">
-                  <span class="board-label">活跃Agent</span>
-                  <span class="board-value board-value-green">06</span>
-                </div>
-                <div class="board-item">
-                  <span class="board-label">并发任务</span>
-                  <span class="board-value board-value-yellow">12</span>
-                </div>
-                <div class="board-item">
-                  <span class="board-label">协作强度</span>
-                  <span class="board-value board-value-green">High</span>
-                </div>
-                <div class="board-item">
-                  <span class="board-label">同步延迟</span>
-                  <span class="board-value board-value-blue">14ms</span>
-                </div>
-              </div>
-            </div>
-          </aside>
-
           <!-- Center Stage -->
           <main class="arena-main">
             <div class="pixel-panel stage-panel">
@@ -242,123 +241,91 @@
 
         <!-- ============ NETWORK VIEW ============ -->
         @if (activeTab() === 'network') {
-          <!-- Left Panel -->
-          <aside class="arena-sidebar-left">
-            <div class="pixel-panel">
-              <div class="panel-header">
-                <span class="panel-icon">⊞</span>
-                <span class="panel-title">网络拓扑</span>
-              </div>
-              <div class="network-stats">
-                <div class="stat-item">
-                  <span class="stat-label">节点数</span>
-                  <span class="stat-value stat-value-green">24</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">连接数</span>
-                  <span class="stat-value stat-value-blue">56</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">数据流向</span>
-                  <span class="stat-value stat-value-yellow">12</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">延迟中位</span>
-                  <span class="stat-value stat-value-cyan">8ms</span>
-                </div>
-              </div>
-            </div>
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-blue">
-                <span class="panel-title">数据流分析</span>
-              </div>
-              <div class="flow-list">
-                <div class="flow-item">
-                  <span class="flow-source">架构师</span>
-                  <span class="flow-arrow">→</span>
-                  <span class="flow-target">开发者</span>
-                  <span class="flow-volume">42%</span>
-                </div>
-                <div class="flow-item">
-                  <span class="flow-source">分析师</span>
-                  <span class="flow-arrow">→</span>
-                  <span class="flow-target">测试员</span>
-                  <span class="flow-volume">28%</span>
-                </div>
-                <div class="flow-item">
-                  <span class="flow-source">开发者</span>
-                  <span class="flow-arrow">→</span>
-                  <span class="flow-target">测试员</span>
-                  <span class="flow-volume">30%</span>
-                </div>
-              </div>
-            </div>
-          </aside>
-
           <!-- Center Stage - Network Graph -->
           <main class="arena-main">
-            <div class="pixel-panel stage-panel">
-              <div class="network-graph-header">
-                <span class="network-title">力导向图布局</span>
-                <span class="network-badge">实时同步</span>
+            <div class="network-container">
+              <!-- Topology Graph -->
+              <div class="pixel-panel topology-panel">
+                <div class="panel-header">
+                  <span class="panel-title">协作拓扑网络</span>
+                </div>
+                <div class="topology-graph">
+                  <div class="topology-node topology-node-red" style="top: 15%; left: 50%;">
+                    <span>INVADER</span>
+                  </div>
+                  <div class="topology-edge" style="top: 20%; left: 50%; height: 15%;">
+                    <svg width="2" height="100%">
+                      <line x1="1" y1="0" x2="1" y2="100%" stroke="#444" stroke-width="2" stroke-dasharray="4,4"/>
+                    </svg>
+                  </div>
+                  <div class="topology-node topology-node-yellow" style="top: 40%; left: 50%;">
+                    <span>PACMAN</span>
+                  </div>
+                </div>
               </div>
-              <div class="stage-grid"></div>
-              <div class="network-graph-placeholder">
-                <div class="network-node network-node-alpha" style="top: 20%; left: 30%;">
-                  <span>A1</span>
+
+              <!-- Sankey Diagram -->
+              <div class="pixel-panel sankey-panel">
+                <div class="panel-header">
+                  <span class="panel-title">实时数据流</span>
+                  <span class="panel-badge sankey-badge">(Sankey)</span>
                 </div>
-                <div class="network-node network-node-beta" style="top: 30%; left: 60%;">
-                  <span>B1</span>
+                <div class="sankey-diagram">
+                  <div class="sankey-bar sankey-input">
+                    <span>INPUT</span>
+                  </div>
+                  <div class="sankey-flows">
+                    <div class="sankey-flow sankey-flow-top"></div>
+                    <div class="sankey-flow sankey-flow-bottom"></div>
+                  </div>
+                  <div class="sankey-bars-middle">
+                    <div class="sankey-bar sankey-pacman">
+                      <span>PACMAN</span>
+                    </div>
+                    <div class="sankey-bar sankey-frogger">
+                      <span>FROGGER</span>
+                    </div>
+                  </div>
+                  <div class="sankey-bar sankey-output">
+                    <span>OUTPUT</span>
+                  </div>
                 </div>
-                <div class="network-node network-node-alpha" style="top: 50%; left: 40%;">
-                  <span>A2</span>
-                </div>
-                <div class="network-node network-node-beta" style="top: 60%; left: 70%;">
-                  <span>B2</span>
-                </div>
-                <div class="network-node network-node-center" style="top: 45%; left: 45%;">
-                  <span>Lead</span>
-                </div>
-                <svg class="network-edges">
-                  <line x1="30%" y1="20%" x2="45%" y2="45%" stroke="#4488ff" stroke-width="1" stroke-dasharray="4,4"/>
-                  <line x1="60%" y1="30%" x2="45%" y2="45%" stroke="#ff66aa" stroke-width="1" stroke-dasharray="4,4"/>
-                  <line x1="40%" y1="50%" x2="45%" y2="45%" stroke="#4488ff" stroke-width="1"/>
-                  <line x1="70%" y1="60%" x2="45%" y2="45%" stroke="#ff66aa" stroke-width="1"/>
-                </svg>
               </div>
             </div>
           </main>
 
           <!-- Right Panel -->
           <aside class="arena-sidebar-right">
+            <!-- Mode Select Panel -->
             <div class="pixel-panel">
-              <div class="panel-header panel-header-green">
-                <span class="panel-title">工作流时间轴</span>
+              <div class="panel-header panel-header-pink">
+                <span class="panel-title">协作模式切换</span>
               </div>
-              <div class="timeline">
-                <div class="timeline-item timeline-green">
-                  <span class="timeline-dot"></span>
-                  <div class="timeline-content">
-                    <div class="timeline-time">10:00:00</div>
-                    <div class="timeline-text">工作流启动</div>
-                  </div>
-                </div>
-                <div class="timeline-item timeline-blue">
-                  <span class="timeline-dot"></span>
-                  <div class="timeline-content">
-                    <div class="timeline-time">10:00:05</div>
-                    <div class="timeline-text">任务分发完成</div>
-                  </div>
-                </div>
-                <div class="timeline-item timeline-yellow">
-                  <span class="timeline-dot"></span>
-                  <div class="timeline-content">
-                    <div class="timeline-time">10:00:15</div>
-                    <div class="timeline-text">数据同步中...</div>
-                  </div>
-                </div>
+              <div class="mode-list">
+                <button type="button" class="mode-item mode-active">
+                  <span class="mode-icon">▣</span>
+                  <span class="mode-text">对抗模式 (Battle)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">◎</span>
+                  <span class="mode-text">协作模式 (Coop)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">◇</span>
+                  <span class="mode-text">流水线 (Pipeline)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">✦</span>
+                  <span class="mode-text">脑暴模式 (Storm)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">⚄</span>
+                  <span class="mode-text">竞赛模式 (Contest)</span>
+                </button>
               </div>
             </div>
+
+            <!-- Agent Status Panel -->
             <div class="pixel-panel">
               <div class="panel-header panel-header-cyan">
                 <span class="panel-title">AGENT</span>
@@ -402,6 +369,31 @@
                 </div>
                 <div class="agent-bar">
                   <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
+                </div>
+              </div>
+
+              <div class="perf-section">
+                <div class="perf-header">
+                  <span class="perf-icon">⚡</span>
+                  <span>SYSTEM PERFORMANCE</span>
+                </div>
+                <div class="perf-grid">
+                  <div class="perf-item">
+                    <span class="perf-label">CPU</span>
+                    <span class="perf-value perf-value-red">82%</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">GPU</span>
+                    <span class="perf-value perf-value-green">35%</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">NET</span>
+                    <span class="perf-value perf-value-blue">1.2GB/s</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">MEM</span>
+                    <span class="perf-value perf-value-yellow">64%</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -410,86 +402,94 @@
 
         <!-- ============ COGNITIVE VIEW ============ -->
         @if (activeTab() === 'cognitive') {
-          <!-- Left Panel -->
-          <aside class="arena-sidebar-left">
-            <div class="pixel-panel">
-              <div class="panel-header">
-                <span class="panel-icon">◎</span>
-                <span class="panel-title">认知指标</span>
-              </div>
-              <div class="cognitive-metrics">
-                <div class="metric-item">
-                  <span class="metric-label">注意力</span>
-                  <div class="metric-bar">
-                    <div class="metric-fill metric-fill-green" style="width: 85%"></div>
-                  </div>
-                  <span class="metric-value">85%</span>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-label">记忆力</span>
-                  <div class="metric-bar">
-                    <div class="metric-fill metric-fill-blue" style="width: 72%"></div>
-                  </div>
-                  <span class="metric-value">72%</span>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-label">推理力</span>
-                  <div class="metric-bar">
-                    <div class="metric-fill metric-fill-purple" style="width: 91%"></div>
-                  </div>
-                  <span class="metric-value">91%</span>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-label">创造力</span>
-                  <div class="metric-bar">
-                    <div class="metric-fill metric-fill-yellow" style="width: 68%"></div>
-                  </div>
-                  <span class="metric-value">68%</span>
-                </div>
-              </div>
-            </div>
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-purple">
-                <span class="panel-title">技能云</span>
-              </div>
-              <div class="skill-cloud">
-                <span class="skill-tag skill-large">代码生成</span>
-                <span class="skill-tag">数据分析</span>
-                <span class="skill-tag skill-medium">架构设计</span>
-                <span class="skill-tag">测试</span>
-                <span class="skill-tag skill-small">文档</span>
-                <span class="skill-tag skill-medium">调试</span>
-                <span class="skill-tag">优化</span>
-                <span class="skill-tag skill-small">安全</span>
-              </div>
-            </div>
-          </aside>
-
           <!-- Center Stage - Brain Visualization -->
           <main class="arena-main">
-            <div class="pixel-panel stage-panel">
-              <div class="brain-header">
-                <span class="brain-title">AGENT BRAIN</span>
-                <span class="brain-badge">认知可视化</span>
-              </div>
-              <div class="stage-grid"></div>
-              <div class="brain-visual">
-                <div class="brain-core">
-                  <div class="brain-ring brain-ring-1"></div>
-                  <div class="brain-ring brain-ring-2"></div>
-                  <div class="brain-ring brain-ring-3"></div>
-                  <span class="brain-center">CORE</span>
+            <div class="cognitive-container">
+              <!-- Agent Cognition View -->
+              <div class="pixel-panel cognition-panel">
+                <div class="panel-header">
+                  <span class="panel-title">AGENT</span>
+                  <span class="panel-badge">认知解剖视图 — 智能涌现</span>
                 </div>
-                <div class="brain-node brain-node-top">感知层</div>
-                <div class="brain-node brain-node-right">决策层</div>
-                <div class="brain-node brain-node-bottom">执行层</div>
-                <div class="brain-node brain-node-left">记忆层</div>
+                <div class="cognition-visual">
+                  <div class="cognition-circle">
+                    <div class="cognition-human"></div>
+                    <div class="cognition-pixel cognition-pixel-top"></div>
+                    <div class="cognition-pixel cognition-pixel-right"></div>
+                    <div class="cognition-pixel cognition-pixel-bottom"></div>
+                    <div class="cognition-pixel cognition-pixel-left"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Thought Chain -->
+              <div class="pixel-panel thought-panel">
+                <div class="panel-header">
+                  <span class="panel-title">思维链进度</span>
+                  <span class="panel-badge">(CoT)</span>
+                </div>
+                <div class="thought-chain">
+                  <div class="thought-item">
+                    <div class="thought-header">
+                      <span class="thought-label">推理阶段：逻辑验证</span>
+                      <span class="thought-value">85%</span>
+                    </div>
+                    <div class="thought-progress">
+                      <div class="thought-bar thought-bar-pink" style="width: 85%"></div>
+                    </div>
+                  </div>
+                  <div class="thought-item">
+                    <div class="thought-header">
+                      <span class="thought-label">语境检索：历史关联</span>
+                      <span class="thought-value thought-value-blue">42%</span>
+                    </div>
+                    <div class="thought-progress">
+                      <div class="thought-bar thought-bar-blue" style="width: 42%"></div>
+                    </div>
+                  </div>
+                  <div class="thought-log">
+                    <div class="thought-log-header">THOUGHT LOG:</div>
+                    <div class="thought-log-content">
+                      "IF response_latency > 200ms THEN trigger<br>pipeline_v2 optimization sequence..."
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </main>
 
           <!-- Right Panel -->
           <aside class="arena-sidebar-right">
+            <!-- Mode Select Panel -->
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-pink">
+                <span class="panel-title">协作模式切换</span>
+              </div>
+              <div class="mode-list">
+                <button type="button" class="mode-item mode-active">
+                  <span class="mode-icon">▣</span>
+                  <span class="mode-text">对抗模式 (Battle)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">◎</span>
+                  <span class="mode-text">协作模式 (Coop)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">◇</span>
+                  <span class="mode-text">流水线 (Pipeline)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">✦</span>
+                  <span class="mode-text">脑暴模式 (Storm)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">⚄</span>
+                  <span class="mode-text">竞赛模式 (Contest)</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Agent Status Panel -->
             <div class="pixel-panel">
               <div class="panel-header panel-header-cyan">
                 <span class="panel-title">AGENT</span>
@@ -535,23 +535,29 @@
                   <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
                 </div>
               </div>
-            </div>
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-green">
-                <span class="panel-title">认知日志</span>
-              </div>
-              <div class="cognitive-log">
-                <div class="log-entry log-success">
-                  <span class="log-time">23:07:01</span>
-                  <span>模式识别完成</span>
+
+              <div class="perf-section">
+                <div class="perf-header">
+                  <span class="perf-icon">⚡</span>
+                  <span>SYSTEM PERFORMANCE</span>
                 </div>
-                <div class="log-entry log-info">
-                  <span class="log-time">23:07:05</span>
-                  <span>上下文更新中...</span>
-                </div>
-                <div class="log-entry log-warn">
-                  <span class="log-time">23:07:12</span>
-                  <span>注意力阈值接近</span>
+                <div class="perf-grid">
+                  <div class="perf-item">
+                    <span class="perf-label">CPU</span>
+                    <span class="perf-value perf-value-red">82%</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">GPU</span>
+                    <span class="perf-value perf-value-green">35%</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">NET</span>
+                    <span class="perf-value perf-value-blue">1.2GB/s</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">MEM</span>
+                    <span class="perf-value perf-value-yellow">64%</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -560,133 +566,318 @@
 
         <!-- ============ MONITOR VIEW ============ -->
         @if (activeTab() === 'monitor') {
-          <!-- Left Panel -->
-          <aside class="arena-sidebar-left">
-            <div class="pixel-panel">
-              <div class="panel-header">
-                <span class="panel-icon">📈</span>
-                <span class="panel-title">资源表格</span>
-              </div>
-              <div class="resource-table">
-                <div class="table-header">
-                  <span class="col-name">资源</span>
-                  <span class="col-value">使用率</span>
-                  <span class="col-status">状态</span>
-                </div>
-                <div class="table-row">
-                  <span class="col-name">CPU</span>
-                  <span class="col-value">82%</span>
-                  <span class="col-status status-warn">警告</span>
-                </div>
-                <div class="table-row">
-                  <span class="col-name">MEM</span>
-                  <span class="col-value">64%</span>
-                  <span class="col-status status-ok">正常</span>
-                </div>
-                <div class="table-row">
-                  <span class="col-name">GPU</span>
-                  <span class="col-value">35%</span>
-                  <span class="col-status status-ok">正常</span>
-                </div>
-                <div class="table-row">
-                  <span class="col-name">Token/s</span>
-                  <span class="col-value">1.2K</span>
-                  <span class="col-status status-ok">正常</span>
-                </div>
-                <div class="table-row">
-                  <span class="col-name">延迟</span>
-                  <span class="col-value">14ms</span>
-                  <span class="col-status status-ok">正常</span>
-                </div>
-              </div>
-            </div>
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-blue">
-                <span class="panel-title">趋势图</span>
-              </div>
-              <div class="trend-placeholder">
-                <div class="trend-bar trend-bar-high" style="height: 80%"></div>
-                <div class="trend-bar trend-bar-mid" style="height: 55%"></div>
-                <div class="trend-bar trend-bar-low" style="height: 35%"></div>
-                <div class="trend-bar trend-bar-high" style="height: 75%"></div>
-                <div class="trend-bar trend-bar-mid" style="height: 60%"></div>
-                <div class="trend-bar trend-bar-low" style="height: 40%"></div>
-                <div class="trend-bar trend-bar-high" style="height: 90%"></div>
-              </div>
-            </div>
-          </aside>
-
           <!-- Center Stage - Monitor Console -->
           <main class="arena-main">
-            <div class="pixel-panel stage-panel">
-              <div class="monitor-header">
-                <span class="monitor-title">SYSTEM CONSOLE</span>
-                <span class="monitor-badge">实时监控</span>
+            <div class="monitor-main-content">
+              <!-- System Load -->
+              <div class="pixel-panel load-panel">
+                <div class="panel-header">
+                  <span class="panel-icon">□</span>
+                  <span class="panel-title">系统整体负载</span>
+                </div>
+                <div class="system-load">
+                  <div class="load-item">
+                    <div class="load-header">
+                      <span class="load-label">CPU</span>
+                      <span class="load-value load-value-red">82%</span>
+                    </div>
+                    <div class="load-bar">
+                      <div class="load-bar-fill load-bar-red" style="width: 82%"></div>
+                    </div>
+                  </div>
+                  <div class="load-item">
+                    <div class="load-header">
+                      <span class="load-label">内存</span>
+                      <span class="load-value load-value-yellow">68%</span>
+                    </div>
+                    <div class="load-bar">
+                      <div class="load-bar-fill load-bar-yellow" style="width: 68%"></div>
+                    </div>
+                  </div>
+                  <div class="load-item">
+                    <div class="load-header">
+                      <span class="load-label">网络</span>
+                      <span class="load-value load-value-blue">45%</span>
+                    </div>
+                    <div class="load-bar">
+                      <div class="load-bar-fill load-bar-blue" style="width: 45%"></div>
+                    </div>
+                  </div>
+                  <div class="load-item">
+                    <div class="load-header">
+                      <span class="load-label">GPU (渲染)</span>
+                      <span class="load-value load-value-green">35%</span>
+                    </div>
+                    <div class="load-bar">
+                      <div class="load-bar-fill load-bar-green" style="width: 35%"></div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div class="stage-grid"></div>
-              <div class="console-output">
-                <div class="console-line console-success">[23:07:01] System initialized successfully</div>
-                <div class="console-line console-info">[23:07:02] Agent pool: 6 agents online</div>
-                <div class="console-line console-warn">[23:07:05] CPU usage approaching threshold (82%)</div>
-                <div class="console-line console-info">[23:07:08] Task queue: 12 pending tasks</div>
-                <div class="console-line console-success">[23:07:12] Memory optimization complete</div>
-                <div class="console-line console-error">[23:07:15] Alert: High latency detected (14ms)</div>
-                <div class="console-line console-info">[23:07:18] Auto-scaling triggered...</div>
-                <div class="console-line cursor-blink">_</div>
+
+              <!-- Agent Resource Table -->
+              <div class="pixel-panel table-panel">
+                <div class="panel-header">
+                  <span class="panel-title">AGENT</span>
+                  <span class="panel-badge">资源使用（实时）</span>
+                  <div class="table-actions">
+                    <button class="table-btn table-btn-blue">新建Agent</button>
+                    <button class="table-btn table-btn-green">扩容建议</button>
+                    <button class="table-btn table-btn-red">资源告警设置</button>
+                  </div>
+                </div>
+                <table class="resource-table">
+                  <thead>
+                    <tr>
+                      <th>AGENT 角色</th>
+                      <th>技能/插件</th>
+                      <th>CPU</th>
+                      <th>内存</th>
+                      <th>TOKEN</th>
+                      <th>状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><span class="role-dot role-red"></span> <span class="role-name role-red">架构师</span></td>
+                      <td><span class="skill-badge skill-badge-red">2技能</span> <span class="check-mark">✓</span></td>
+                      <td>15%</td>
+                      <td>256MB</td>
+                      <td>2.3k</td>
+                      <td><span class="status-running">RUNNING</span></td>
+                      <td>
+                        <button class="op-btn">+</button>
+                        <button class="op-btn">-</button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><span class="role-dot role-blue"></span> <span class="role-name role-blue">分析师</span></td>
+                      <td><span class="skill-badge skill-badge-blue">3技能</span> <span class="x-mark">✕</span></td>
+                      <td>12%</td>
+                      <td>198MB</td>
+                      <td>1.8k</td>
+                      <td><span class="status-idle">IDLE</span></td>
+                      <td>
+                        <button class="op-btn">+</button>
+                        <button class="op-btn">-</button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><span class="role-dot role-green"></span> <span class="role-name role-green">开发者</span></td>
+                      <td><span class="skill-badge skill-badge-green">4技能</span> <span class="check-mark">✓</span></td>
+                      <td>28%</td>
+                      <td>312MB</td>
+                      <td>3.1k</td>
+                      <td><span class="status-busy">BUSY</span></td>
+                      <td>
+                        <button class="op-btn">+</button>
+                        <button class="op-btn">-</button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><span class="role-dot role-yellow"></span> <span class="role-name role-yellow">测试员</span></td>
+                      <td><span class="skill-badge skill-badge-yellow">2技能</span> <span class="check-mark">✓</span></td>
+                      <td>18%</td>
+                      <td>224MB</td>
+                      <td>2.0k</td>
+                      <td><span class="status-idle">IDLE</span></td>
+                      <td>
+                        <button class="op-btn">+</button>
+                        <button class="op-btn">-</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Token Trend & Config -->
+              <div class="monitor-bottom-row">
+                <div class="pixel-panel token-panel">
+                  <div class="panel-header">
+                    <span class="panel-title">Token</span>
+                    <span class="panel-badge">消耗趋势</span>
+                  </div>
+                  <div class="token-chart">
+                    <div class="token-placeholder"></div>
+                  </div>
+                </div>
+
+                <div class="pixel-panel config-panel">
+                  <div class="panel-header">
+                    <span class="panel-title">配置控制台</span>
+                  </div>
+                  <div class="config-content">
+                    <div class="config-item">
+                      <span class="config-label">优先级策略</span>
+                    </div>
+                    <div class="config-select">
+                      <span>响应优先 (Latency Focus)</span>
+                      <span class="select-arrow">▾</span>
+                    </div>
+                    <div class="config-buttons">
+                      <button class="config-btn config-btn-blue">保存配置模板</button>
+                      <button class="config-btn config-btn-purple">加载配置模板</button>
+                    </div>
+                    <div class="config-cost">
+                      <div class="cost-label">成本预估 (今日)</div>
+                      <div class="cost-value">¥89.30</div>
+                      <div class="cost-rate">¥12.5/h</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Skills & Plugins -->
+              <div class="pixel-panel skills-panel">
+                <div class="panel-header">
+                  <span class="panel-title">技能与插件配置中心</span>
+                  <span class="panel-badge">(SKILLS & PLUGINS)</span>
+                  <div class="skills-actions">
+                    <span class="toggle-label">全局插件开关:</span>
+                    <span class="toggle-switch toggle-on">
+                      <span class="toggle-knob"></span>
+                      ON
+                    </span>
+                    <button class="sync-btn">同步至本地 (LOCAL STORAGE)</button>
+                  </div>
+                </div>
+                <div class="skills-grid">
+                  <div class="skills-section">
+                    <div class="section-header">
+                      <span class="section-title">通用技能库</span>
+                      <span class="section-badge">(REPO)</span>
+                    </div>
+                  </div>
+                  <div class="skills-section">
+                    <div class="section-header">
+                      <span class="section-title">自定义技能</span>
+                      <button class="add-btn">+ 新增</button>
+                    </div>
+                  </div>
+                  <div class="skills-section">
+                    <div class="section-header">
+                      <span class="section-title">插件市场</span>
+                      <span class="section-badge">(PLUGINS)</span>
+                    </div>
+                  </div>
+                  <div class="skills-section">
+                    <div class="section-header">
+                      <span class="section-title">AGENT</span>
+                      <span class="section-badge">专属技能组合</span>
+                      <span class="section-badge">(CUSTOM)</span>
+                      <div class="agent-select">
+                        <span>架构师 (ARCHITECT)</span>
+                        <span class="select-arrow">▾</span>
+                      </div>
+                    </div>
+                    <div class="plugin-status">插件应用状态</div>
+                  </div>
+                </div>
               </div>
             </div>
           </main>
 
           <!-- Right Panel -->
           <aside class="arena-sidebar-right">
+            <!-- Mode Select Panel -->
             <div class="pixel-panel">
-              <div class="panel-header panel-header-red">
-                <span class="panel-title">告警中心</span>
+              <div class="panel-header panel-header-pink">
+                <span class="panel-title">协作模式切换</span>
               </div>
-              <div class="alert-list">
-                <div class="alert-item alert-warn">
-                  <span class="alert-icon">⚠</span>
-                  <div class="alert-content">
-                    <span class="alert-title">CPU 使用率过高</span>
-                    <span class="alert-time">10:01:00</span>
-                  </div>
-                </div>
-                <div class="alert-item alert-error">
-                  <span class="alert-icon">✖</span>
-                  <div class="alert-content">
-                    <span class="alert-title">延迟超过阈值</span>
-                    <span class="alert-time">10:00:45</span>
-                  </div>
-                </div>
-                <div class="alert-item alert-info">
-                  <span class="alert-icon">ℹ</span>
-                  <div class="alert-content">
-                    <span class="alert-title">系统自检完成</span>
-                    <span class="alert-time">10:00:30</span>
-                  </div>
-                </div>
+              <div class="mode-list">
+                <button type="button" class="mode-item mode-active">
+                  <span class="mode-icon">▣</span>
+                  <span class="mode-text">对抗模式 (Battle)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">◎</span>
+                  <span class="mode-text">协作模式 (Coop)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">◇</span>
+                  <span class="mode-text">流水线 (Pipeline)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">✦</span>
+                  <span class="mode-text">脑暴模式 (Storm)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">⚄</span>
+                  <span class="mode-text">竞赛模式 (Contest)</span>
+                </button>
               </div>
             </div>
+
+            <!-- Agent Status Panel -->
             <div class="pixel-panel">
               <div class="panel-header panel-header-cyan">
-                <span class="panel-title">配置</span>
+                <span class="panel-title">AGENT</span>
+                <span class="panel-subtitle">实时负载</span>
               </div>
-              <div class="config-list">
-                <div class="config-item">
-                  <span class="config-label">最大并发</span>
-                  <span class="config-value">32</span>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-red"></div>
+                  <span class="agent-name">架构师</span>
+                  <span class="agent-value agent-value-red">15%</span>
                 </div>
-                <div class="config-item">
-                  <span class="config-label">超时时间</span>
-                  <span class="config-value">30s</span>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-red" style="width: 15%"></div>
                 </div>
-                <div class="config-item">
-                  <span class="config-label">重试次数</span>
-                  <span class="config-value">3</span>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-blue"></div>
+                  <span class="agent-name">分析师</span>
+                  <span class="agent-value agent-value-yellow">12%</span>
                 </div>
-                <div class="config-item">
-                  <span class="config-label">日志级别</span>
-                  <span class="config-value">INFO</span>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-blue" style="width: 12%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-green"></div>
+                  <span class="agent-name">开发者</span>
+                  <span class="agent-value agent-value-red">28%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-green" style="width: 28%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-yellow"></div>
+                  <span class="agent-name">测试员</span>
+                  <span class="agent-value agent-value-blue">18%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
+                </div>
+              </div>
+
+              <div class="perf-section">
+                <div class="perf-header">
+                  <span class="perf-icon">⚡</span>
+                  <span>SYSTEM PERFORMANCE</span>
+                </div>
+                <div class="perf-grid">
+                  <div class="perf-item">
+                    <span class="perf-label">CPU</span>
+                    <span class="perf-value perf-value-red">82%</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">GPU</span>
+                    <span class="perf-value perf-value-green">35%</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">NET</span>
+                    <span class="perf-value perf-value-blue">1.2GB/s</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">MEM</span>
+                    <span class="perf-value perf-value-yellow">64%</span>
+                  </div>
                 </div>
               </div>
             </div>
