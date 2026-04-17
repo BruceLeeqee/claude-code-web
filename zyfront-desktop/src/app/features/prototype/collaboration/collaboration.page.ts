@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, OnDestroy, signal } from '@angular/core';
-import { DatePipe, NgClass, NgFor, NgIf } from '@angular/common';
+import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzSelectModule } from 'ng-zorro-antd/select';
@@ -14,7 +14,7 @@ import { summarizeMultiAgentEvent, type MultiAgentTimelineTier } from '../../../
 @Component({
   selector: 'app-collaboration-page',
   standalone: true,
-  imports: [NgClass, NgFor, NgIf, DatePipe, FormsModule, NzButtonModule, NzSelectModule, NzIconModule],
+  imports: [CommonModule, FormsModule, NzButtonModule, NzSelectModule, NzIconModule],
   templateUrl: './collaboration.page.html',
   styleUrls: ['../prototype-page.scss', './collaboration.page.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -32,14 +32,115 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   protected readonly teamVm = signal<WorkbenchTeamVm | null>(null);
   protected readonly draftTeamName = signal('collaboration-team');
   protected readonly flowStep = signal(1);
+  protected readonly activeTab = signal<'arena' | 'network' | 'cognitive' | 'monitor'>('arena');
   protected readonly flowSteps = [
-    { id: 1, title: '建 Team' },
-    { id: 2, title: '加执行者' },
-    { id: 3, title: '分配任务' },
-    { id: 4, title: '观察回传' },
+    { id: 1, title: '竞技舞台' },
+    { id: 2, title: '协作网络' },
+    { id: 3, title: '认知实验室' },
+    { id: 4, title: '系统监控' },
   ] as const;
+  protected readonly workflowStages = [
+    { id: 'stage-arena', title: '竞技舞台', hint: 'Agent 交锋与回合展示' },
+    { id: 'stage-network', title: '协作网络', hint: '关系图与数据流展示' },
+    { id: 'stage-cognitive', title: '认知实验室', hint: '思维链与技能可视化' },
+    { id: 'stage-monitor', title: '系统监控', hint: '资源与成本监控' },
+  ] as const;
+  protected readonly selectedStageId = signal<number>(1);
+  protected readonly selectedTaskId = signal<string>('');
+  protected readonly currentWizardStep = computed(() => {
+    if (this.backendBlockingHint()) return 4;
+    if (this.selectedTaskCard()) return 3;
+    if (this.agents().length > 0) return this.flowStep() >= 2 ? 2 : 1;
+    return 1;
+  });
+  protected readonly tabs = [
+    { id: 'arena', label: '竞技舞台' },
+    { id: 'network', label: '协作网络' },
+    { id: 'cognitive', label: '认知实验室' },
+    { id: 'monitor', label: '系统监控' },
+  ] as const;
+  protected readonly tabByStage = computed(() => {
+    if (this.currentWizardStep() === 1) return 'arena';
+    if (this.currentWizardStep() === 2) return 'network';
+    if (this.currentWizardStep() === 3) return 'cognitive';
+    return 'monitor';
+  });
+  protected readonly workflowNodes = computed(() => {
+    const agents = this.agents();
+    const tasks = this.taskCards();
+    return [
+      {
+        id: 'prepare',
+        type: 'control',
+        title: '创建 Team',
+        status: this.teamVm()?.teammates?.length ? 'done' : 'active',
+        summary: this.teamSkillSummary().teamName,
+        owner: '系统',
+      },
+      {
+        id: 'orchestrate',
+        type: 'task',
+        title: '任务编排',
+        status: tasks.some((task) => task.status === 'running') ? 'active' : tasks.some((task) => task.status === 'assigned') ? 'done' : 'pending',
+        summary: `${tasks.length} 个任务 · ${this.taskSummary().unassigned} 待分配`,
+        owner: tasks.find((task) => task.ownerAgentId)?.ownerAgentId ? this.ownerName(tasks.find((task) => task.ownerAgentId)?.ownerAgentId ?? '') : '未分配',
+      },
+      {
+        id: 'execute',
+        type: 'agent',
+        title: 'Agent 执行',
+        status: agents.some((agent) => agent.status === 'running') ? 'active' : agents.length ? 'done' : 'pending',
+        summary: `${this.agentStats().online} 在线 · ${this.agentStats().executing} 执行中`,
+        owner: agents[0]?.name ?? '等待创建',
+      },
+      {
+        id: 'aggregate',
+        type: 'recovery',
+        title: '事件汇总',
+        status: this.backendBlockingHint() ? 'blocked' : this.recentEvents().length ? 'done' : 'pending',
+        summary: this.backendBlockingHint() || `${this.filteredRecentEvents().length} 条最近事件`,
+        owner: '回收与恢复',
+      },
+    ] as const;
+  });
+  protected readonly selectedWorkflowNode = computed(() => {
+    const selectedStage = this.selectedStageId();
+    const nodes = this.workflowNodes();
+    return nodes[Math.min(nodes.length - 1, Math.max(0, selectedStage - 1))];
+  });
+  protected readonly activeTabId = computed(() => this.activeTab());
+  protected readonly networkAgents = computed(() => [
+    { id: 'ag1', name: '架构师', x: 22, y: 18, color: '#AA44FF' },
+    { id: 'ag2', name: '分析师', x: 62, y: 15, color: '#EEDDFF' },
+    { id: 'ag3', name: '开发者', x: 38, y: 52, color: '#7722CC' },
+    { id: 'ag4', name: '测试员', x: 76, y: 46, color: '#EEDDFF' },
+    { id: 'ag5', name: '产品', x: 52, y: 78, color: '#AA44FF' },
+  ]);
+  protected readonly pixelParticles = computed(() => [
+    { id: 'p1', x: 12, y: 16, size: 4, delay: '0s', phase: 'rise' },
+    { id: 'p2', x: 76, y: 9, size: 3, delay: '0.6s', phase: 'glow' },
+    { id: 'p3', x: 18, y: 70, size: 5, delay: '1.2s', phase: 'burst' },
+    { id: 'p4', x: 88, y: 63, size: 4, delay: '0.2s', phase: 'rise' },
+    { id: 'p5', x: 48, y: 24, size: 3, delay: '1.8s', phase: 'glow' },
+    { id: 'p6', x: 58, y: 84, size: 5, delay: '1s', phase: 'burst' },
+    { id: 'p7', x: 32, y: 42, size: 4, delay: '1.4s', phase: 'rise' },
+    { id: 'p8', x: 68, y: 52, size: 3, delay: '0.4s', phase: 'glow' },
+  ]);
+  protected readonly cognitiveSignals = computed(() => [
+    { label: '思维链', value: '82%' },
+    { label: '知识检索', value: '74%' },
+    { label: '角色一致性', value: '91%' },
+    { label: '冲突检测', value: '28%' },
+  ]);
+  protected readonly systemMetrics = computed(() => [
+    { label: 'CPU', value: `${this.mockCpu}%` },
+    { label: 'GPU', value: '35%' },
+    { label: 'NET', value: '1.2GB/s' },
+    { label: 'MEM', value: '64%' },
+  ]);
   protected readonly recentEvents = signal<Array<{ at: number; text: string; userText: string; tier: MultiAgentTimelineTier }>>([]);
   protected readonly eventReadableMode = signal<'user' | 'technical'>('user');
+  protected readonly eventTierFilter = signal<'all' | MultiAgentTimelineTier>('all');
   protected readonly actionFeedback = signal<{
     tier: MultiAgentTimelineTier;
     text: string;
@@ -128,6 +229,21 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   protected readonly draftTaskTitle = signal('');
   protected readonly draftTaskGoal = signal('');
   protected readonly draftTaskDue = signal('');
+  protected readonly agentDrafts = signal(
+    Array.from({ length: 8 }, (_, index) => ({
+      slot: index + 1,
+      name: `agent-${index + 1}`,
+      role: index === 0 ? 'Leader' : index === 1 ? 'Planner' : index === 2 ? 'Reviewer' : 'Executor',
+      prompt:
+        index === 0
+          ? '请作为团队首个执行者，建立协作节奏并回传关键结论。'
+          : index === 1
+            ? '请负责拆解任务、推进依赖，并同步关键里程碑。'
+            : index === 2
+              ? '请负责复核执行结果、发现风险，并补充改进建议。'
+              : '请接手一个可独立完成的子任务并回传关键结论。',
+    })),
+  );
   protected readonly retryCount = signal(0);
   protected readonly actionAttemptCount = signal(0);
   protected readonly actionFailureCount = signal(0);
@@ -137,6 +253,8 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   protected readonly hasRecoverySnapshot = signal(false);
   protected readonly createTeamBusy = signal(false);
   protected readonly createTeamState = signal<{ phase: 'idle' | 'creating' | 'success' | 'error'; text: string } | null>(null);
+  protected readonly newAgentModalOpen = signal(false);
+  protected readonly skillModalOpen = signal(false);
 
   protected readonly agentStats = computed(() => {
     const vm = this.teamVm();
@@ -148,12 +266,30 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   });
 
   protected readonly agents = computed(() => this.teamVm()?.teammates ?? []);
+  protected readonly targetAgentCount = computed(() => Math.max(1, Number(this.agentCount) || 4));
+  protected readonly visibleAgentDrafts = computed(() => this.agentDrafts().slice(0, this.targetAgentCount()));
+  protected readonly agentBoardCards = computed(() => {
+    const currentAgents = this.agents();
+    return this.visibleAgentDrafts().map((draft, index) => ({
+      slot: draft.slot,
+      draft,
+      agent: currentAgents[index] ?? null,
+      isPending: index >= currentAgents.length,
+    }));
+  });
   protected readonly backendBlockingHint = computed(() => {
     const health = this.teamVm()?.health;
     if (!health?.blocking) return '';
     return health.fallbackReason ?? '';
   });
   protected readonly backendSetupHints = computed(() => this.teamVm()?.health?.setupHints ?? []);
+  protected tabClass(tabId: 'arena' | 'network' | 'cognitive' | 'monitor'): 'pending' | 'active' | 'done' {
+    const order = this.tabs.findIndex((tab) => tab.id === tabId);
+    const activeOrder = this.tabs.findIndex((tab) => tab.id === this.activeTab());
+    if (order < activeOrder) return 'done';
+    if (order === activeOrder) return 'active';
+    return 'pending';
+  }
   protected readonly nextRecommendation = computed(() => {
     if (this.backendBlockingHint()) {
       return '当前模式不可用，先切换为静默模式或自动模式。';
@@ -200,6 +336,12 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     };
   });
 
+  protected readonly filteredRecentEvents = computed(() => {
+    const events = this.recentEvents();
+    const tier = this.eventTierFilter();
+    return tier === 'all' ? events : events.filter((item) => item.tier === tier);
+  });
+
   constructor() {
     this.sub.add(
       this.multiAgent.workbenchTeamVm$.subscribe((vm) => {
@@ -242,6 +384,50 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     return 'pending';
   }
 
+  protected selectStage(stageId: number): void {
+    this.selectedStageId.set(stageId);
+    this.flowStep.set(stageId);
+    const tabMap: Record<number, 'arena' | 'network' | 'cognitive' | 'monitor'> = {
+      1: 'arena',
+      2: 'network',
+      3: 'cognitive',
+      4: 'monitor',
+    };
+    this.activeTab.set(tabMap[stageId] ?? 'arena');
+  }
+
+  protected selectTask(taskId: string): void {
+    this.selectedTaskId.set(taskId);
+    this.selectedStageId.set(3);
+    this.activeTab.set('cognitive');
+    this.flowStep.set(3);
+  }
+
+  protected selectedTaskCard(): WorkbenchTaskVm | null {
+    return this.taskCards().find((task) => task.id === this.selectedTaskId()) ?? null;
+  }
+
+  protected selectedTaskLabel(): string {
+    return this.selectedTaskCard()?.title ?? '尚未选择任务';
+  }
+
+  protected workflowStageClass(id: number): 'pending' | 'active' | 'done' {
+    if (id < this.flowStep()) return 'done';
+    if (id === this.flowStep()) return 'active';
+    return 'pending';
+  }
+
+  protected stageNodeClass(stageIndex: number): 'pending' | 'active' | 'done' {
+    const mapStep = stageIndex + 1;
+    if (mapStep < this.flowStep()) return 'done';
+    if (mapStep === this.flowStep()) return 'active';
+    return 'pending';
+  }
+
+  protected eventTierClass(tier: MultiAgentTimelineTier): 'info' | 'success' | 'warning' | 'error' {
+    return tier;
+  }
+
   protected nextFlowStep(): void {
     if (this.flowStep() < this.flowSteps.length) this.flowStep.update((v) => v + 1);
   }
@@ -249,6 +435,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   protected prevFlowStep(): void {
     if (this.flowStep() > 1) this.flowStep.update((v) => v - 1);
   }
+
 
   protected async addAgent(): Promise<void> {
     const vm = this.teamVm();
@@ -263,6 +450,10 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     this.createTeamBusy.set(true);
     try {
       await this.initializeTeam(teamName, target);
+      if ((this.teamVm()?.teammates.length ?? 0) >= target) {
+        this.flowStep.set(2);
+        this.activeTab.set('network');
+      }
       this.setActionFeedback('success', `已补齐执行者到 ${target} 个`);
       this.saveRecoverySnapshot();
     } catch (error) {
@@ -282,6 +473,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     const target = Math.max(1, Number(this.agentCount) || 4);
     this.draftTeamName.set(name);
     this.flowStep.set(1);
+    this.activeTab.set('arena');
     this.createTeamBusy.set(true);
     this.createTeamState.set({ phase: 'creating', text: `正在创建 Team：${name}（目标 ${target} 个成员）` });
     this.setActionFeedback('info', `正在创建 Team：${name}（目标 ${target} 个成员）`);
@@ -294,6 +486,9 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
       }
       this.seedTeamTasks(name);
       this.flowStep.set(2);
+      this.activeTab.set('network');
+      this.selectedStageId.set(2);
+      this.selectedTaskId.set('');
       this.createTeamState.set({ phase: 'success', text: `Team 已创建：${name}（${actual} 个成员）` });
       this.setActionFeedback('success', `Team 已创建：${name}（${actual} 个成员）`);
       this.saveRecoverySnapshot();
@@ -317,22 +512,32 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     const toCreate = Math.max(1, targetCount - existing);
     const startCount = existing;
     for (let i = 0; i < toCreate; i += 1) {
-      const index = startCount + i + 1;
+      const slotIndex = startCount + i;
+      const draft = this.agentDrafts()[slotIndex] ?? {
+        slot: slotIndex + 1,
+        name: `agent-${slotIndex + 1}`,
+        role: 'Executor',
+        prompt: '请接手一个可独立完成的子任务并回传关键结论。',
+      };
+      const index = slotIndex + 1;
       await this.withRetry(
         () =>
           this.multiAgent.spawnTeammate({
-            name: `agent-${index}`,
-            prompt:
-              i === 0
-                ? '请作为团队首个执行者，建立协作节奏并回传关键结论。'
-                : '请接手一个可独立完成的子任务并回传关键结论。',
+            name: draft.name.trim() || `agent-${index}`,
+            prompt: draft.prompt.trim() || '请接手一个可独立完成的子任务并回传关键结论。',
             teamName,
           }),
-        `创建 Team 成员 agent-${index}`,
+        `创建 Team 成员 ${draft.name.trim() || `agent-${index}`}`,
       );
     }
     this.flowStep.set(2);
     this.refreshDashboard();
+  }
+
+  protected updateAgentDraft(slot: number, field: 'name' | 'role' | 'prompt', value: string): void {
+    this.agentDrafts.update((drafts) =>
+      drafts.map((draft) => (draft.slot === slot ? { ...draft, [field]: value } : draft)),
+    );
   }
 
   protected async toggleAgent(agent: WorkbenchTeammateVm): Promise<void> {
@@ -365,6 +570,25 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     this.jumpToWorkbench(agent);
   }
 
+  protected openNewAgentModal(): void {
+    this.newAgentModalOpen.set(true);
+  }
+
+  protected closeNewAgentModal(): void {
+    this.newAgentModalOpen.set(false);
+  }
+
+  protected openSkillModal(): void {
+    this.skillModalOpen.set(true);
+  }
+
+  protected closeSkillModal(): void {
+    this.skillModalOpen.set(false);
+  }
+
+  protected switchArenaView(view: 'arena' | 'network' | 'cognitive' | 'monitor'): void {
+    this.activeTab.set(view);
+  }
 
   protected createTaskCard(): void {
     const title = window.prompt('任务标题：', this.draftTaskTitle());
@@ -372,6 +596,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     const goal = window.prompt('任务目标：', this.draftTaskGoal()) ?? '';
     const due = window.prompt('截止时间：', this.draftTaskDue()) ?? '未设置';
     this.addTaskCard(title.trim(), goal.trim(), due.trim());
+    this.flowStep.set(3);
     this.setActionFeedback('success', `任务卡片已创建：${title.trim()}`);
   }
 
@@ -391,6 +616,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
         nextStep: ownerAgentId ? '等待 agent 首次回传' : '请选择执行者并分配任务',
       },
     ]);
+    this.selectedTaskId.set(id);
     this.draftTaskTitle.set(title);
     this.draftTaskGoal.set(goal);
     this.draftTaskDue.set(due);
@@ -436,6 +662,10 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     this.eventReadableMode.set(mode);
   }
 
+  protected setEventTierFilter(tier: 'all' | MultiAgentTimelineTier): void {
+    this.eventTierFilter.set(tier);
+  }
+
   protected renderEventText(item: { text: string; userText: string }): string {
     return this.eventReadableMode() === 'user' ? item.userText : item.text;
   }
@@ -443,6 +673,21 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   protected ownerName(agentId: string): string {
     if (!agentId) return '未分配';
     return this.agents().find((agent) => agent.agentId === agentId)?.name ?? agentId;
+  }
+
+  protected stageSummary(stageId: number): string {
+    switch (stageId) {
+      case 1:
+        return 'Team 初始化与模式确认';
+      case 2:
+        return '执行者补齐与角色映射';
+      case 3:
+        return '任务创建、分派与执行';
+      case 4:
+        return '事件回收、汇总与恢复';
+      default:
+        return '协作推进中';
+    }
   }
 
   protected statusLabel(status: WorkbenchTaskVm['status']): string {
@@ -470,6 +715,11 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
           : task,
       ),
     );
+    if (agentId) {
+      this.flowStep.set(3);
+      this.activeTab.set('cognitive');
+      this.selectedTaskId.set(taskId);
+    }
   }
 
   protected async dispatchTask(taskId: string): Promise<void> {
@@ -502,6 +752,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
         ),
       );
       this.setActionFeedback('success', `任务「${task.title}」已分配给 ${this.ownerName(task.ownerAgentId)}`);
+      this.flowStep.set(4);
       this.saveRecoverySnapshot();
     } catch {
       this.taskCards.update((cards) =>
@@ -595,7 +846,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
   private async withRetry<T>(action: () => Promise<T>, actionName: string): Promise<T> {
     const maxAttempts = 2;
     let lastError: unknown;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    for (let attemptIndex = 1; attemptIndex <= maxAttempts; attemptIndex += 1) {
       this.actionAttemptCount.update((v) => v + 1);
       const start = Date.now();
       try {
@@ -606,7 +857,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
         lastError = error;
         this.actionFailureCount.update((v) => v + 1);
         this.actionLatencyMs.update((list) => [...list.slice(-29), Date.now() - start]);
-        if (attempt < maxAttempts) {
+        if (attemptIndex < maxAttempts) {
           this.retryCount.update((v) => v + 1);
           this.setActionFeedback('warning', `${actionName} 失败，正在自动重试`, {
             reason: String((error as Error)?.message ?? 'unknown'),
@@ -617,7 +868,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
         }
       }
     }
-    throw lastError;
+    throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'unknown error'));
   }
 
   private formatDashboardTime(d: Date): string {
@@ -629,7 +880,7 @@ export class CollaborationPrototypePageComponent implements OnDestroy {
     const cwd = '.';
     const firstLine = (out: string) => (out ?? '').trim().split(/\r?\n/)[0]?.trim() ?? '';
     try {
-      const z = window.zytrader;
+      const z = (window as typeof window & { zytrader?: { terminal?: { exec?: (cmd: string, dir: string) => Promise<{ stdout?: string }> } } }).zytrader;
       if (!z?.terminal?.exec) {
         this.gitBranch.set('');
         return;
