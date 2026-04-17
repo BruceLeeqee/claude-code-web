@@ -1,399 +1,723 @@
 <section class="proto-page collaboration-proto arena-page">
   <div class="arena-shell">
-    <header class="arena-header">
-      <div class="arena-branding">
-        <div class="arena-logo">AG</div>
-        <div class="arena-brand-text">
-          <div class="arena-title">AGENT BATTLE ARENA</div>
-          <div class="arena-subtitle">OPERATIONS DATE: {{ dashboardSyncedAt() }} | BUILD v1.0</div>
+    <div class="arena-content">
+      <!-- Header -->
+      <header class="arena-header">
+        <div class="arena-branding">
+          <div class="arena-logo">
+            <div class="pixel-icon"></div>
+          </div>
+          <div class="arena-brand-text">
+            <div class="arena-title">AGENT BATTLE ARENA</div>
+            <div class="arena-subtitle">OPERATIONS DATE: 2026.04.17 23:07:01 | BUILD v2.4.0</div>
+          </div>
         </div>
-      </div>
+        <div class="arena-top-nav">
+          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'arena'" (click)="switchTab('arena')">竞技舞台</button>
+          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'network'" (click)="switchTab('network')">协作网络</button>
+          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'cognitive'" (click)="switchTab('cognitive')">认知实验室</button>
+          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'monitor'" (click)="switchTab('monitor')">系统监控</button>
+        </div>
+      </header>
 
-      <div class="arena-top-nav">
-        @for (tab of tabs; track tab.id) {
-          <button type="button" class="arena-nav-btn" [class.is-active]="activeTabId() === tab.id" (click)="switchArenaView(tab.id)">
-            {{ tab.label }}
-          </button>
+      <!-- Main Content -->
+      <div class="arena-viewport">
+        <!-- ============ ARENA VIEW ============ -->
+        @if (activeTab() === 'arena') {
+          <!-- Left Panel -->
+          <aside class="arena-sidebar-left">
+            <!-- Timeline Panel -->
+            <div class="pixel-panel">
+              <div class="panel-header">
+                <span class="panel-icon">☰</span>
+                <span class="panel-title">工作流时间轴</span>
+                <span class="panel-badge">等待初始化</span>
+              </div>
+              <div class="timeline">
+                <div class="timeline-item timeline-red">
+                  <span class="timeline-dot"></span>
+                  <div class="timeline-content">
+                    <div class="timeline-time">10:00:05</div>
+                    <div class="timeline-text">架构师 分解任务为 5 个子项</div>
+                  </div>
+                </div>
+                <div class="timeline-item timeline-blue">
+                  <span class="timeline-dot"></span>
+                  <div class="timeline-content">
+                    <div class="timeline-time">10:00:12</div>
+                    <div class="timeline-text">分析师 启动市场趋势关联检索</div>
+                  </div>
+                </div>
+                <div class="timeline-item timeline-green">
+                  <span class="timeline-dot"></span>
+                  <div class="timeline-content">
+                    <div class="timeline-time">10:00:18</div>
+                    <div class="timeline-text">开发者 开始生成并发控制模块代码</div>
+                  </div>
+                </div>
+                <div class="timeline-item timeline-yellow">
+                  <span class="timeline-dot"></span>
+                  <div class="timeline-content">
+                    <div class="timeline-time">10:00:25</div>
+                    <div class="timeline-text">测试员 识别出 2 处边界逻辑风险</div>
+                  </div>
+                </div>
+                <div class="timeline-item timeline-gray">
+                  <span class="timeline-dot"></span>
+                  <div class="timeline-content">
+                    <div class="timeline-time">10:01:00</div>
+                    <div class="timeline-text">系统自检：资源消耗 82%... 触发告警</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Shared Board Panel -->
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-yellow">
+                <span class="panel-title">SHARED BOARD</span>
+                <span class="panel-badge">共享看板</span>
+              </div>
+              <div class="shared-board">
+                <div class="board-item">
+                  <span class="board-label">活跃Agent</span>
+                  <span class="board-value board-value-green">06</span>
+                </div>
+                <div class="board-item">
+                  <span class="board-label">并发任务</span>
+                  <span class="board-value board-value-yellow">12</span>
+                </div>
+                <div class="board-item">
+                  <span class="board-label">协作强度</span>
+                  <span class="board-value board-value-green">High</span>
+                </div>
+                <div class="board-item">
+                  <span class="board-label">同步延迟</span>
+                  <span class="board-value board-value-blue">14ms</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <!-- Center Stage -->
+          <main class="arena-main">
+            <div class="pixel-panel stage-panel">
+              <!-- Scoreboard -->
+              <div class="stage-scoreboard">
+                <div class="team-score">
+                  <span class="team-name team-alpha">TEAM ALPHA</span>
+                  <span class="team-value">42,850</span>
+                </div>
+                <div class="vs-mark">VS</div>
+                <div class="team-score">
+                  <span class="team-name team-beta">TEAM BETA</span>
+                  <span class="team-value">38,120</span>
+                </div>
+              </div>
+
+              <!-- Grid Background -->
+              <div class="stage-grid"></div>
+
+              <!-- PACMAN Character -->
+              <div class="pacman-character">
+                <div class="pacman-body"></div>
+              </div>
+
+              <!-- Status Card -->
+              <div class="status-card">
+                <div class="status-title">PACMAN (Lead) THINKING...</div>
+                <div class="status-progress">
+                  <div class="progress-bar" style="width: 60%"></div>
+                </div>
+                <div class="status-desc">Analyzing code vulnerability #829...</div>
+              </div>
+            </div>
+          </main>
+
+          <!-- Right Panel -->
+          <aside class="arena-sidebar-right">
+            <!-- Mode Select Panel -->
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-pink">
+                <span class="panel-title">协作模式切换</span>
+              </div>
+              <div class="mode-list">
+                <button type="button" class="mode-item mode-active">
+                  <span class="mode-icon">▣</span>
+                  <span class="mode-text">对抗模式 (Battle)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">◎</span>
+                  <span class="mode-text">协作模式 (Coop)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">◇</span>
+                  <span class="mode-text">流水线 (Pipeline)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">✦</span>
+                  <span class="mode-text">脑暴模式 (Storm)</span>
+                </button>
+                <button type="button" class="mode-item">
+                  <span class="mode-icon">⚄</span>
+                  <span class="mode-text">竞赛模式 (Contest)</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Agent Status Panel -->
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-cyan">
+                <span class="panel-title">AGENT</span>
+                <span class="panel-subtitle">实时负载</span>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-red"></div>
+                  <span class="agent-name">架构师</span>
+                  <span class="agent-value agent-value-red">15%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-red" style="width: 15%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-blue"></div>
+                  <span class="agent-name">分析师</span>
+                  <span class="agent-value agent-value-yellow">12%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-blue" style="width: 12%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-green"></div>
+                  <span class="agent-name">开发者</span>
+                  <span class="agent-value agent-value-red">28%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-green" style="width: 28%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-yellow"></div>
+                  <span class="agent-name">测试员</span>
+                  <span class="agent-value agent-value-blue">18%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
+                </div>
+              </div>
+
+              <div class="perf-section">
+                <div class="perf-header">
+                  <span class="perf-icon">⚡</span>
+                  <span>SYSTEM PERFORMANCE</span>
+                </div>
+                <div class="perf-grid">
+                  <div class="perf-item">
+                    <span class="perf-label">CPU</span>
+                    <span class="perf-value perf-value-red">82%</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">GPU</span>
+                    <span class="perf-value perf-value-green">35%</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">NET</span>
+                    <span class="perf-value perf-value-blue">1.2GB/s</span>
+                  </div>
+                  <div class="perf-item">
+                    <span class="perf-label">MEM</span>
+                    <span class="perf-value perf-value-yellow">64%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </aside>
         }
-      </div>
-    </header>
 
-    <div class="arena-viewport">
-      @if (activeTabId() === 'arena') {
-        <aside class="arena-sidebar arena-sidebar--left">
-          <section class="panel panel--log">
-            <div class="panel-head">
-              <span class="panel-kicker">WORKFLOW TIMELINE</span>
-              <span class="panel-meta">{{ teamSkillSummary().status === 'empty' ? '等待初始化' : teamSkillSummary().teamName }}</span>
-            </div>
-            <div class="log-stack">
-              <div class="log-item log-item--success">
-                <span class="log-time">10:00:05</span>
-                <span class="log-text">架构师 分解任务为 5 个子项</span>
+        <!-- ============ NETWORK VIEW ============ -->
+        @if (activeTab() === 'network') {
+          <!-- Left Panel -->
+          <aside class="arena-sidebar-left">
+            <div class="pixel-panel">
+              <div class="panel-header">
+                <span class="panel-icon">⊞</span>
+                <span class="panel-title">网络拓扑</span>
               </div>
-              <div class="log-item log-item--info">
-                <span class="log-time">10:00:12</span>
-                <span class="log-text">分析师 启动市场趋势关联检索</span>
-              </div>
-              <div class="log-item log-item--warning">
-                <span class="log-time">10:00:18</span>
-                <span class="log-text">开发者 开始生成并发控制模块代码</span>
-              </div>
-              <div class="log-item log-item--accent">
-                <span class="log-time">10:00:25</span>
-                <span class="log-text">测试员 识别出 2 处边界逻辑风险</span>
-              </div>
-              <div class="log-item log-item--muted">
-                <span class="log-time">10:01:00</span>
-                <span class="log-text">系统自检: 资源消耗 {{ mockCpu }}%... 触发告警</span>
-              </div>
-            </div>
-          </section>
-
-          <section class="panel panel--summary">
-            <div class="panel-head">
-              <span class="panel-kicker">SHARED BOARD</span>
-              <span class="panel-meta">共享看板</span>
-            </div>
-            <div class="summary-grid">
-              <div class="summary-cell"><span>活跃Agent</span><strong>06</strong></div>
-              <div class="summary-cell"><span>并发任务</span><strong>12</strong></div>
-              <div class="summary-cell"><span>协作强度</span><strong>High</strong></div>
-              <div class="summary-cell"><span>同步延迟</span><strong>14ms</strong></div>
-            </div>
-          </section>
-        </aside>
-
-        <main class="arena-main">
-          <section class="arena-stage panel panel--stage">
-            <div class="stage-scoreboard">
-              <div class="team-score">
-                <span>TEAM ALPHA</span>
-                <strong>42,850</strong>
-              </div>
-              <div class="vs-mark">VS</div>
-              <div class="team-score team-score--alt">
-                <span>TEAM BETA</span>
-                <strong>38,120</strong>
-              </div>
-            </div>
-
-            <div class="stage-grid-overlay"></div>
-            <div class="stage-arc-line stage-arc-line--left"></div>
-            <div class="stage-arc-line stage-arc-line--right"></div>
-
-            <div class="pixel-particle-field" aria-hidden="true">
-              @for (particle of pixelParticles(); track particle.id) {
-                <span
-                  class="pixel-particle"
-                  [class.pixel-particle--rise]="particle.phase === 'rise'"
-                  [class.pixel-particle--glow]="particle.phase === 'glow'"
-                  [class.pixel-particle--burst]="particle.phase === 'burst'"
-                  [ngStyle]="{ left: particle.x + '%', top: particle.y + '%', '--particle-size': particle.size + 'px', '--particle-delay': particle.delay }"
-                ></span>
-              }
-            </div>
-
-            <div class="arena-nodes">
-              @for (node of networkAgents(); track node.id) {
-                <button type="button" class="arena-node" [ngStyle]="{ left: node.x + '%', top: node.y + '%', color: node.color }"><span>{{ node.id.toUpperCase() }}</span></button>
-              }
-            </div>
-
-            <div class="arena-status-card">
-              <div class="arena-status-title">PACMAN (Lead) THINKING...</div>
-              <div class="arena-status-desc">Analyzing code maintainability risks...</div>
-            </div>
-          </section>
-        </main>
-
-        <aside class="arena-sidebar arena-sidebar--right">
-          <section class="panel panel--modes">
-            <div class="panel-head panel-head--stacked">
-              <span class="panel-kicker">MODE SELECT</span>
-              <span class="panel-meta">BATTLE / COOP / PIPE / STORM / CONTEST</span>
-            </div>
-            <div class="mode-list">
-              <button type="button" class="mode-item is-active"><span class="mode-icon">◼</span><span>CONTEST MODE</span></button>
-              <button type="button" class="mode-item"><span class="mode-icon">◎</span><span>COOP MODE</span></button>
-              <button type="button" class="mode-item"><span class="mode-icon">◈</span><span>PIPE MODE</span></button>
-              <button type="button" class="mode-item"><span class="mode-icon">✦</span><span>STORM MODE</span></button>
-              <button type="button" class="mode-item"><span class="mode-icon">✣</span><span>BATTLE MODE</span></button>
-            </div>
-          </section>
-
-          <section class="panel panel--agents">
-            <div class="panel-head panel-head--stacked">
-              <span class="panel-kicker">AGENT STATUS</span>
-              <span class="panel-meta">LIVE MEMBERS</span>
-            </div>
-            <div class="agent-bars">
-              <div class="agent-row">
-                <div class="agent-avatar agent-avatar--cyan">A1</div>
-                <div class="agent-body">
-                  <div class="agent-topline"><span>AG1 / PACMAN</span><em>82</em></div>
-                  <div class="agent-meter"><b style="width: 82%"></b></div>
-                  <div class="agent-state">THINKING / READY</div>
+              <div class="network-stats">
+                <div class="stat-item">
+                  <span class="stat-label">节点数</span>
+                  <span class="stat-value stat-value-green">24</span>
                 </div>
-              </div>
-              <div class="agent-row">
-                <div class="agent-avatar agent-avatar--magenta">A2</div>
-                <div class="agent-body">
-                  <div class="agent-topline"><span>AG2 / INVADER</span><em>56</em></div>
-                  <div class="agent-meter"><b style="width: 56%"></b></div>
-                  <div class="agent-state">ATTACKING / LIVE</div>
+                <div class="stat-item">
+                  <span class="stat-label">连接数</span>
+                  <span class="stat-value stat-value-blue">56</span>
                 </div>
-              </div>
-              <div class="agent-row">
-                <div class="agent-avatar agent-avatar--green">A3</div>
-                <div class="agent-body">
-                  <div class="agent-topline"><span>AG3 / FROGGER</span><em>74</em></div>
-                  <div class="agent-meter"><b style="width: 74%"></b></div>
-                  <div class="agent-state">WAITING / STANDBY</div>
+                <div class="stat-item">
+                  <span class="stat-label">数据流向</span>
+                  <span class="stat-value stat-value-yellow">12</span>
                 </div>
-              </div>
-              <div class="agent-row">
-                <div class="agent-avatar agent-avatar--yellow">A4</div>
-                <div class="agent-body">
-                  <div class="agent-topline"><span>AG4 / DONKEY</span><em>31</em></div>
-                  <div class="agent-meter"><b style="width: 31%"></b></div>
-                  <div class="agent-state">BLOCKED / LOW ENERGY</div>
+                <div class="stat-item">
+                  <span class="stat-label">延迟中位</span>
+                  <span class="stat-value stat-value-cyan">8ms</span>
                 </div>
               </div>
             </div>
-          </section>
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-blue">
+                <span class="panel-title">数据流分析</span>
+              </div>
+              <div class="flow-list">
+                <div class="flow-item">
+                  <span class="flow-source">架构师</span>
+                  <span class="flow-arrow">→</span>
+                  <span class="flow-target">开发者</span>
+                  <span class="flow-volume">42%</span>
+                </div>
+                <div class="flow-item">
+                  <span class="flow-source">分析师</span>
+                  <span class="flow-arrow">→</span>
+                  <span class="flow-target">测试员</span>
+                  <span class="flow-volume">28%</span>
+                </div>
+                <div class="flow-item">
+                  <span class="flow-source">开发者</span>
+                  <span class="flow-arrow">→</span>
+                  <span class="flow-target">测试员</span>
+                  <span class="flow-volume">30%</span>
+                </div>
+              </div>
+            </div>
+          </aside>
 
-          <section class="panel panel--perf">
-            <div class="panel-head panel-head--stacked">
-              <span class="panel-kicker">SYSTEM PERFORMANCE</span>
-              <span class="panel-meta">MONITOR DATA</span>
-            </div>
-            <div class="perf-grid">
-              @for (metric of systemMetrics(); track metric.label) {
-                <div><span>{{ metric.label }}</span><strong>{{ metric.value }}</strong></div>
-              }
-            </div>
-          </section>
-        </aside>
-      } @else if (activeTabId() === 'network') {
-        <section class="panel full-stage panel--network">
-          <div class="network-layout">
-            <div class="network-board">
-              <div class="panel-head panel-head--stacked">
-                <span class="panel-kicker">协作网络图</span>
-                <span class="panel-meta">VISJS / FORCE GRAPH</span>
+          <!-- Center Stage - Network Graph -->
+          <main class="arena-main">
+            <div class="pixel-panel stage-panel">
+              <div class="network-graph-header">
+                <span class="network-title">力导向图布局</span>
+                <span class="network-badge">实时同步</span>
               </div>
-              <div class="network-graph">
-                @for (node of networkAgents(); track node.id) {
-                  <div class="network-node" [ngStyle]="{ left: node.x + '%', top: node.y + '%', borderColor: node.color, color: node.color }">{{ node.id.toUpperCase() }}</div>
-                }
+              <div class="stage-grid"></div>
+              <div class="network-graph-placeholder">
+                <div class="network-node network-node-alpha" style="top: 20%; left: 30%;">
+                  <span>A1</span>
+                </div>
+                <div class="network-node network-node-beta" style="top: 30%; left: 60%;">
+                  <span>B1</span>
+                </div>
+                <div class="network-node network-node-alpha" style="top: 50%; left: 40%;">
+                  <span>A2</span>
+                </div>
+                <div class="network-node network-node-beta" style="top: 60%; left: 70%;">
+                  <span>B2</span>
+                </div>
+                <div class="network-node network-node-center" style="top: 45%; left: 45%;">
+                  <span>Lead</span>
+                </div>
+                <svg class="network-edges">
+                  <line x1="30%" y1="20%" x2="45%" y2="45%" stroke="#4488ff" stroke-width="1" stroke-dasharray="4,4"/>
+                  <line x1="60%" y1="30%" x2="45%" y2="45%" stroke="#ff66aa" stroke-width="1" stroke-dasharray="4,4"/>
+                  <line x1="40%" y1="50%" x2="45%" y2="45%" stroke="#4488ff" stroke-width="1"/>
+                  <line x1="70%" y1="60%" x2="45%" y2="45%" stroke="#ff66aa" stroke-width="1"/>
+                </svg>
               </div>
             </div>
-            <div class="network-side">
-              <div class="panel panel--summary network-card">
-                <div class="panel-head"><span class="panel-kicker">Sankey</span><span class="panel-meta">数据流向</span></div>
-                <div class="sankey-stack">
-                  <div class="sankey-row"><span>输入</span><i><b style="width: 88%"></b></i></div>
-                  <div class="sankey-row"><span>处理</span><i><b style="width: 72%"></b></i></div>
-                  <div class="sankey-row"><span>输出</span><i><b style="width: 64%"></b></i></div>
-                  <div class="sankey-row"><span>回传</span><i><b style="width: 54%"></b></i></div>
+          </main>
+
+          <!-- Right Panel -->
+          <aside class="arena-sidebar-right">
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-green">
+                <span class="panel-title">工作流时间轴</span>
+              </div>
+              <div class="timeline">
+                <div class="timeline-item timeline-green">
+                  <span class="timeline-dot"></span>
+                  <div class="timeline-content">
+                    <div class="timeline-time">10:00:00</div>
+                    <div class="timeline-text">工作流启动</div>
+                  </div>
+                </div>
+                <div class="timeline-item timeline-blue">
+                  <span class="timeline-dot"></span>
+                  <div class="timeline-content">
+                    <div class="timeline-time">10:00:05</div>
+                    <div class="timeline-text">任务分发完成</div>
+                  </div>
+                </div>
+                <div class="timeline-item timeline-yellow">
+                  <span class="timeline-dot"></span>
+                  <div class="timeline-content">
+                    <div class="timeline-time">10:00:15</div>
+                    <div class="timeline-text">数据同步中...</div>
+                  </div>
                 </div>
               </div>
-              <div class="panel panel--summary network-card">
-                <div class="panel-head"><span class="panel-kicker">工作流</span><span class="panel-meta">时间轴</span></div>
-                <div class="network-timeline">
-                  <div>10:00:05  架构师 任务分解</div>
-                  <div>10:00:12  分析师 关联检索</div>
-                  <div>10:00:18  开发者 生成代码</div>
-                  <div>10:00:25  测试员 风险告警</div>
+            </div>
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-cyan">
+                <span class="panel-title">AGENT</span>
+                <span class="panel-subtitle">实时负载</span>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-red"></div>
+                  <span class="agent-name">架构师</span>
+                  <span class="agent-value agent-value-red">15%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-red" style="width: 15%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-blue"></div>
+                  <span class="agent-name">分析师</span>
+                  <span class="agent-value agent-value-yellow">12%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-blue" style="width: 12%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-green"></div>
+                  <span class="agent-name">开发者</span>
+                  <span class="agent-value agent-value-red">28%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-green" style="width: 28%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-yellow"></div>
+                  <span class="agent-name">测试员</span>
+                  <span class="agent-value agent-value-blue">18%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
                 </div>
               </div>
             </div>
-          </div>
-        </section>
-      } @else if (activeTabId() === 'cognitive') {
-        <section class="panel full-stage panel--cognitive">
-          <div class="cognitive-layout">
-            <div class="panel panel--summary cognitive-card">
-              <div class="panel-head"><span class="panel-kicker">认知实验室</span><span class="panel-meta">思维链剖析</span></div>
-              <div class="cognitive-diagram">
-                <div class="cog-core">AGENT BRAIN</div>
-                <div class="cog-ring cog-ring--1"></div>
-                <div class="cog-ring cog-ring--2"></div>
-                <div class="cog-ring cog-ring--3"></div>
+          </aside>
+        }
+
+        <!-- ============ COGNITIVE VIEW ============ -->
+        @if (activeTab() === 'cognitive') {
+          <!-- Left Panel -->
+          <aside class="arena-sidebar-left">
+            <div class="pixel-panel">
+              <div class="panel-header">
+                <span class="panel-icon">◎</span>
+                <span class="panel-title">认知指标</span>
+              </div>
+              <div class="cognitive-metrics">
+                <div class="metric-item">
+                  <span class="metric-label">注意力</span>
+                  <div class="metric-bar">
+                    <div class="metric-fill metric-fill-green" style="width: 85%"></div>
+                  </div>
+                  <span class="metric-value">85%</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">记忆力</span>
+                  <div class="metric-bar">
+                    <div class="metric-fill metric-fill-blue" style="width: 72%"></div>
+                  </div>
+                  <span class="metric-value">72%</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">推理力</span>
+                  <div class="metric-bar">
+                    <div class="metric-fill metric-fill-purple" style="width: 91%"></div>
+                  </div>
+                  <span class="metric-value">91%</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">创造力</span>
+                  <div class="metric-bar">
+                    <div class="metric-fill metric-fill-yellow" style="width: 68%"></div>
+                  </div>
+                  <span class="metric-value">68%</span>
+                </div>
               </div>
             </div>
-            <div class="panel panel--summary cognitive-card">
-              <div class="panel-head"><span class="panel-kicker">认知指标</span><span class="panel-meta">LAYER STATS</span></div>
-              <div class="summary-grid summary-grid--single">
-                @for (signal of cognitiveSignals(); track signal.label) {
-                  <div class="summary-cell"><span>{{ signal.label }}</span><strong>{{ signal.value }}</strong></div>
-                }
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-purple">
+                <span class="panel-title">技能云</span>
               </div>
-            </div>
-            <div class="panel panel--summary cognitive-card">
-              <div class="panel-head"><span class="panel-kicker">技能 / 插件</span><span class="panel-meta">CUSTOM STACK</span></div>
               <div class="skill-cloud">
-                <button type="button" class="skill-chip skill-chip--green" (click)="openSkillModal()">+ 新增技能</button>
-                <button type="button" class="skill-chip">思维链增强</button>
-                <button type="button" class="skill-chip">上下文压缩</button>
-                <button type="button" class="skill-chip">风险识别</button>
-                <button type="button" class="skill-chip">代码审阅</button>
-                <button type="button" class="skill-chip">回放解读</button>
+                <span class="skill-tag skill-large">代码生成</span>
+                <span class="skill-tag">数据分析</span>
+                <span class="skill-tag skill-medium">架构设计</span>
+                <span class="skill-tag">测试</span>
+                <span class="skill-tag skill-small">文档</span>
+                <span class="skill-tag skill-medium">调试</span>
+                <span class="skill-tag">优化</span>
+                <span class="skill-tag skill-small">安全</span>
               </div>
             </div>
-          </div>
-        </section>
-      } @else {
-        <section class="panel full-stage panel--monitor">
-          <div class="monitor-layout">
-            <div class="monitor-main">
-              <div class="panel-head panel-head--stacked">
-                <span class="panel-kicker">系统监控</span>
-                <span class="panel-meta">RESOURCE / COST / THROUGHPUT</span>
+          </aside>
+
+          <!-- Center Stage - Brain Visualization -->
+          <main class="arena-main">
+            <div class="pixel-panel stage-panel">
+              <div class="brain-header">
+                <span class="brain-title">AGENT BRAIN</span>
+                <span class="brain-badge">认知可视化</span>
+              </div>
+              <div class="stage-grid"></div>
+              <div class="brain-visual">
+                <div class="brain-core">
+                  <div class="brain-ring brain-ring-1"></div>
+                  <div class="brain-ring brain-ring-2"></div>
+                  <div class="brain-ring brain-ring-3"></div>
+                  <span class="brain-center">CORE</span>
+                </div>
+                <div class="brain-node brain-node-top">感知层</div>
+                <div class="brain-node brain-node-right">决策层</div>
+                <div class="brain-node brain-node-bottom">执行层</div>
+                <div class="brain-node brain-node-left">记忆层</div>
+              </div>
+            </div>
+          </main>
+
+          <!-- Right Panel -->
+          <aside class="arena-sidebar-right">
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-cyan">
+                <span class="panel-title">AGENT</span>
+                <span class="panel-subtitle">实时负载</span>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-red"></div>
+                  <span class="agent-name">架构师</span>
+                  <span class="agent-value agent-value-red">15%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-red" style="width: 15%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-blue"></div>
+                  <span class="agent-name">分析师</span>
+                  <span class="agent-value agent-value-yellow">12%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-blue" style="width: 12%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-green"></div>
+                  <span class="agent-name">开发者</span>
+                  <span class="agent-value agent-value-red">28%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-green" style="width: 28%"></div>
+                </div>
+              </div>
+              <div class="agent-list">
+                <div class="agent-item">
+                  <div class="agent-dot agent-dot-yellow"></div>
+                  <span class="agent-name">测试员</span>
+                  <span class="agent-value agent-value-blue">18%</span>
+                </div>
+                <div class="agent-bar">
+                  <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
+                </div>
+              </div>
+            </div>
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-green">
+                <span class="panel-title">认知日志</span>
+              </div>
+              <div class="cognitive-log">
+                <div class="log-entry log-success">
+                  <span class="log-time">23:07:01</span>
+                  <span>模式识别完成</span>
+                </div>
+                <div class="log-entry log-info">
+                  <span class="log-time">23:07:05</span>
+                  <span>上下文更新中...</span>
+                </div>
+                <div class="log-entry log-warn">
+                  <span class="log-time">23:07:12</span>
+                  <span>注意力阈值接近</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+        }
+
+        <!-- ============ MONITOR VIEW ============ -->
+        @if (activeTab() === 'monitor') {
+          <!-- Left Panel -->
+          <aside class="arena-sidebar-left">
+            <div class="pixel-panel">
+              <div class="panel-header">
+                <span class="panel-icon">📈</span>
+                <span class="panel-title">资源表格</span>
               </div>
               <div class="resource-table">
-                <div class="resource-header"><span>Agent</span><span>CPU</span><span>MEM</span><span>Token</span><span>Latency</span></div>
-                <div class="resource-row"><span>架构师</span><span>15%</span><span>512MB</span><span>10k</span><span>1.5s</span></div>
-                <div class="resource-row"><span>分析师</span><span>12%</span><span>420MB</span><span>8k</span><span>1.2s</span></div>
-                <div class="resource-row"><span>开发者</span><span>28%</span><span>1024MB</span><span>18k</span><span>2.1s</span></div>
-                <div class="resource-row"><span>测试员</span><span>18%</span><span>640MB</span><span>6k</span><span>1.8s</span></div>
-              </div>
-              <div class="monitor-chart-row">
-                <div class="panel panel--summary monitor-chart"><div class="panel-head"><span class="panel-kicker">Token Trend</span><span class="panel-meta">24h</span></div><div class="chart-placeholder"></div></div>
-                <div class="panel panel--summary monitor-chart"><div class="panel-head"><span class="panel-kicker">Cost Trend</span><span class="panel-meta">24h</span></div><div class="chart-placeholder chart-placeholder--alt"></div></div>
-              </div>
-            </div>
-            <div class="monitor-side">
-              <div class="panel panel--summary network-card">
-                <div class="panel-head"><span class="panel-kicker">控制台</span><span class="panel-meta">CONFIG</span></div>
-                <div class="console-stack">
-                  <div>运行模式：CONTEST</div>
-                  <div>节流阈值：AUTO</div>
-                  <div>告警：启用</div>
-                  <div>导出：READY</div>
+                <div class="table-header">
+                  <span class="col-name">资源</span>
+                  <span class="col-value">使用率</span>
+                  <span class="col-status">状态</span>
+                </div>
+                <div class="table-row">
+                  <span class="col-name">CPU</span>
+                  <span class="col-value">82%</span>
+                  <span class="col-status status-warn">警告</span>
+                </div>
+                <div class="table-row">
+                  <span class="col-name">MEM</span>
+                  <span class="col-value">64%</span>
+                  <span class="col-status status-ok">正常</span>
+                </div>
+                <div class="table-row">
+                  <span class="col-name">GPU</span>
+                  <span class="col-value">35%</span>
+                  <span class="col-status status-ok">正常</span>
+                </div>
+                <div class="table-row">
+                  <span class="col-name">Token/s</span>
+                  <span class="col-value">1.2K</span>
+                  <span class="col-status status-ok">正常</span>
+                </div>
+                <div class="table-row">
+                  <span class="col-name">延迟</span>
+                  <span class="col-value">14ms</span>
+                  <span class="col-status status-ok">正常</span>
                 </div>
               </div>
-              <button type="button" class="skill-chip skill-chip--green" (click)="openNewAgentModal()">+ 新建 Agent</button>
             </div>
-          </div>
-        </section>
-      }
-    </div>
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-blue">
+                <span class="panel-title">趋势图</span>
+              </div>
+              <div class="trend-placeholder">
+                <div class="trend-bar trend-bar-high" style="height: 80%"></div>
+                <div class="trend-bar trend-bar-mid" style="height: 55%"></div>
+                <div class="trend-bar trend-bar-low" style="height: 35%"></div>
+                <div class="trend-bar trend-bar-high" style="height: 75%"></div>
+                <div class="trend-bar trend-bar-mid" style="height: 60%"></div>
+                <div class="trend-bar trend-bar-low" style="height: 40%"></div>
+                <div class="trend-bar trend-bar-high" style="height: 90%"></div>
+              </div>
+            </div>
+          </aside>
 
-    <footer class="arena-footer panel">
-      <div class="arena-footer-row">
-        <div class="footer-left-group">
-          <div class="joystick-base">
-            <div class="joystick-stick animate-float"></div>
-          </div>
-          <div class="footer-control-stack">
-            <div class="footer-control-label">视角切换</div>
-            <div class="footer-control-buttons">
-              <button type="button" class="mini-control-btn">👁</button>
-              <button type="button" class="mini-control-btn">◎</button>
+          <!-- Center Stage - Monitor Console -->
+          <main class="arena-main">
+            <div class="pixel-panel stage-panel">
+              <div class="monitor-header">
+                <span class="monitor-title">SYSTEM CONSOLE</span>
+                <span class="monitor-badge">实时监控</span>
+              </div>
+              <div class="stage-grid"></div>
+              <div class="console-output">
+                <div class="console-line console-success">[23:07:01] System initialized successfully</div>
+                <div class="console-line console-info">[23:07:02] Agent pool: 6 agents online</div>
+                <div class="console-line console-warn">[23:07:05] CPU usage approaching threshold (82%)</div>
+                <div class="console-line console-info">[23:07:08] Task queue: 12 pending tasks</div>
+                <div class="console-line console-success">[23:07:12] Memory optimization complete</div>
+                <div class="console-line console-error">[23:07:15] Alert: High latency detected (14ms)</div>
+                <div class="console-line console-info">[23:07:18] Auto-scaling triggered...</div>
+                <div class="console-line cursor-blink">_</div>
+              </div>
             </div>
-          </div>
-        </div>
-        <div class="footer-center-group">
-          <div class="playback-controls">
-            <button type="button" class="play-btn">⏮</button>
-            <button type="button" class="play-btn play-btn--primary">▶</button>
-            <button type="button" class="play-btn">⏭</button>
-          </div>
-          <div class="speed-controls">
-            <button type="button" class="speed-pill speed-pill--active">1X</button>
-            <button type="button" class="speed-pill">2X</button>
-            <button type="button" class="speed-pill">4X</button>
-            <button type="button" class="speed-pill speed-pill--max">8X MAX</button>
-          </div>
-        </div>
-        <div class="footer-right-group">
-          <div class="keyboard-hints">
-            <span>[P] 暂停</span>
-            <span>[R] 重置</span>
-            <span>[M] 模式</span>
-            <span>[TAB] 视图</span>
-          </div>
-          <div class="footer-online">SYSTEM: ONLINE / 60FPS</div>
-        </div>
+          </main>
+
+          <!-- Right Panel -->
+          <aside class="arena-sidebar-right">
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-red">
+                <span class="panel-title">告警中心</span>
+              </div>
+              <div class="alert-list">
+                <div class="alert-item alert-warn">
+                  <span class="alert-icon">⚠</span>
+                  <div class="alert-content">
+                    <span class="alert-title">CPU 使用率过高</span>
+                    <span class="alert-time">10:01:00</span>
+                  </div>
+                </div>
+                <div class="alert-item alert-error">
+                  <span class="alert-icon">✖</span>
+                  <div class="alert-content">
+                    <span class="alert-title">延迟超过阈值</span>
+                    <span class="alert-time">10:00:45</span>
+                  </div>
+                </div>
+                <div class="alert-item alert-info">
+                  <span class="alert-icon">ℹ</span>
+                  <div class="alert-content">
+                    <span class="alert-title">系统自检完成</span>
+                    <span class="alert-time">10:00:30</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-cyan">
+                <span class="panel-title">配置</span>
+              </div>
+              <div class="config-list">
+                <div class="config-item">
+                  <span class="config-label">最大并发</span>
+                  <span class="config-value">32</span>
+                </div>
+                <div class="config-item">
+                  <span class="config-label">超时时间</span>
+                  <span class="config-value">30s</span>
+                </div>
+                <div class="config-item">
+                  <span class="config-label">重试次数</span>
+                  <span class="config-value">3</span>
+                </div>
+                <div class="config-item">
+                  <span class="config-label">日志级别</span>
+                  <span class="config-value">INFO</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+        }
       </div>
-    </footer>
+
+      <!-- Footer -->
+      <footer class="arena-footer">
+        <div class="footer-content">
+          <div class="footer-left">
+            <span class="footer-status">SYSTEM: ONLINE / 60FPS</span>
+          </div>
+          <div class="footer-center">
+            <button class="footer-btn">⏮</button>
+            <button class="footer-btn footer-btn-play">▶</button>
+            <button class="footer-btn">⏭</button>
+            <span class="footer-divider">|</span>
+            <button class="footer-btn">1X</button>
+            <button class="footer-btn">2X</button>
+            <button class="footer-btn">4X</button>
+            <button class="footer-btn footer-btn-max">8X MAX</button>
+          </div>
+          <div class="footer-right">
+            <span class="footer-hint">[P] 暂停</span>
+            <span class="footer-hint">[R] 重置</span>
+            <span class="footer-hint">[M] 模式</span>
+            <span class="footer-hint">[TAB] 视图</span>
+          </div>
+        </div>
+      </footer>
+    </div>
   </div>
 </section>
-
-<div class="modal-overlay" [class.is-open]="newAgentModalOpen()" (click)="closeNewAgentModal()"></div>
-<div class="agent-modal" [class.is-open]="newAgentModalOpen()">
-  <div class="modal-frame">
-    <div class="modal-head">
-      <h3>CREATE NEW AGENT UNIT</h3>
-      <button type="button" class="modal-close" (click)="closeNewAgentModal()">×</button>
-    </div>
-    <div class="modal-form-grid">
-      <label>
-        <span>Agent 名称</span>
-        <input type="text" value="AGENT-007" />
-      </label>
-      <label>
-        <span>角色类型</span>
-        <select>
-          <option>架构师 (Architect)</option>
-          <option>分析师 (Analyst)</option>
-          <option>开发者 (Developer)</option>
-          <option>测试员 (Tester)</option>
-        </select>
-      </label>
-      <label class="full">
-        <span>任务描述</span>
-        <textarea rows="2"></textarea>
-      </label>
-      <label>
-        <span>资源限额 (CPU %)</span>
-        <input type="number" value="20" />
-      </label>
-      <label>
-        <span>内存限制 (MB)</span>
-        <input type="number" value="512" />
-      </label>
-    </div>
-    <div class="skin-grid">
-      <button type="button" class="skin-pill skin-pill--yellow">PACMAN</button>
-      <button type="button" class="skin-pill skin-pill--red">INVADER</button>
-      <button type="button" class="skin-pill skin-pill--green">FROGGER</button>
-      <button type="button" class="skin-pill skin-pill--orange">DONKEY</button>
-      <button type="button" class="skin-pill skin-pill--cyan">TETRIS</button>
-      <button type="button" class="skin-pill skin-pill--pink">GHOST</button>
-    </div>
-    <div class="modal-actions">
-      <button type="button" class="modal-btn modal-btn--ghost" (click)="closeNewAgentModal()">CANCEL</button>
-      <button type="button" class="modal-btn modal-btn--primary">DEPLOY UNIT</button>
-    </div>
-  </div>
-</div>
-
-<div class="skill-modal-backdrop" [class.is-open]="skillModalOpen()" (click)="closeSkillModal()"></div>
-<div class="skill-modal" [class.is-open]="skillModalOpen()">
-  <div class="skill-modal-frame">
-    <div class="modal-head modal-head--skill">
-      <h3>创建自定义技能</h3>
-      <button type="button" class="modal-close" (click)="closeSkillModal()">×</button>
-    </div>
-    <div class="skill-modal-body">
-      <label>
-        <span>技能名称</span>
-        <input type="text" placeholder="输入技能名称..." />
-      </label>
-      <label>
-        <span>技能描述</span>
-        <textarea rows="4" placeholder="描述技能用途..."></textarea>
-      </label>
-      <div class="skin-grid skin-grid--skill">
-        <button type="button" class="skin-pill">★</button>
-        <button type="button" class="skin-pill">✦</button>
-        <button type="button" class="skin-pill">◼</button>
-        <button type="button" class="skin-pill">◈</button>
-      </div>
-      <button type="button" class="modal-btn modal-btn--primary modal-btn--full">SAVE SKILL</button>
-    </div>
-  </div>
-</div>
