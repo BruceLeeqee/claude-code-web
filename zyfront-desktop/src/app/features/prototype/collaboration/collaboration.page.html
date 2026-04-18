@@ -13,10 +13,9 @@
           </div>
         </div>
         <div class="arena-top-nav">
-          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'arena'" (click)="switchTab('arena')">竞技舞台</button>
-          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'network'" (click)="switchTab('network')">协作网络</button>
-          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'cognitive'" (click)="switchTab('cognitive')">认知实验室</button>
-          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'monitor'" (click)="switchTab('monitor')">系统监控</button>
+          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'arena'" (click)="switchTab('arena')">智能体看板</button>
+          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'cognitive'" (click)="switchTab('cognitive')">任务编排</button>
+          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'monitor'" (click)="switchTab('monitor')">智能体管理</button>
         </div>
       </header>
 
@@ -32,24 +31,24 @@
           <!-- Shared Board Panel -->
           <div class="pixel-panel">
             <div class="panel-header panel-header-yellow">
-              <span class="panel-title">共享看板</span>
+              <span class="panel-title">协作摘要</span>
             </div>
             <div class="shared-board">
               <div class="board-item">
-                <span class="board-label">活跃Agent</span>
-                <span class="board-value board-value-yellow">06</span>
+                <span class="board-label">运行中智能体</span>
+                <span class="board-value board-value-yellow">{{ summaryValue('runningAgents') }}</span>
               </div>
               <div class="board-item">
-                <span class="board-label">并发任务</span>
-                <span class="board-value board-value-yellow">12</span>
+                <span class="board-label">当前任务</span>
+                <span class="board-value board-value-yellow">{{ summaryValue('currentTasks') }}</span>
               </div>
               <div class="board-item">
                 <span class="board-label">协作强度</span>
-                <span class="board-value board-value-green">High</span>
+                <span class="board-value board-value-green">{{ summaryValue('collaborationLevel') }}</span>
               </div>
               <div class="board-item">
                 <span class="board-label">同步延迟</span>
-                <span class="board-value board-value-blue">14ms</span>
+                <span class="board-value board-value-blue">{{ summaryValue('syncLatency') }}</span>
               </div>
             </div>
           </div>
@@ -67,11 +66,39 @@
             <!-- Debate Panel -->
             <app-debate-panel></app-debate-panel>
 
+            <div class="pixel-panel">
+              <div class="panel-header panel-header-purple">
+                <span class="panel-title">对抗状态</span>
+                <span class="panel-subtitle">{{ currentModeSummary() }}</span>
+              </div>
+              <div class="shared-board">
+                <div class="board-item">
+                  <span class="board-label">当前回合</span>
+                  <span class="board-value board-value-yellow">R{{ battleStageData.round }}</span>
+                </div>
+                <div class="board-item">
+                  <span class="board-label">当前轮次</span>
+                  <span class="board-value board-value-green">{{ battleStageData.currentTurn }}</span>
+                </div>
+                <div class="board-item">
+                  <span class="board-label">对抗状态</span>
+                  <span class="board-value board-value-blue">{{ battleStageData.status }}</span>
+                </div>
+                <div class="board-item">
+                  <span class="board-label">胜负判定</span>
+                  <span class="board-value board-value-yellow">待收敛</span>
+                </div>
+              </div>
+            </div>
+
             <!-- Agent Status Panel -->
             <div class="pixel-panel">
               <div class="panel-header panel-header-cyan">
                 <span class="panel-title">AGENT</span>
-                <span class="panel-subtitle">实时负载</span>
+                <span class="panel-subtitle">{{ modeLabel() }}</span>
+              </div>
+              <div class="panel-actions" style="margin-bottom: 8px;">
+                <button class="btn btn-primary" style="width: 100%;" (click)="openAgentDashboardModal()">查看智能体看板</button>
               </div>
               <div class="agent-list" *ngFor="let agent of agents">
                 <app-agent-node [agent]="agent"></app-agent-node>
@@ -80,84 +107,49 @@
               <div class="perf-section">
                 <div class="perf-header">
                   <span class="perf-icon">⚡</span>
-                  <span>SYSTEM PERFORMANCE</span>
+                  <span>系统状态 · {{ modeStatus() }}</span>
                 </div>
                 <div class="perf-grid">
                   <div class="perf-item">
                     <span class="perf-label">CPU</span>
-                    <span class="perf-value perf-value-red">82%</span>
+                    <span class="perf-value perf-value-red">{{ monitorValue('cpu') }}%</span>
                   </div>
                   <div class="perf-item">
                     <span class="perf-label">GPU</span>
-                    <span class="perf-value perf-value-green">35%</span>
+                    <span class="perf-value perf-value-green">{{ monitorValue('gpu') }}%</span>
                   </div>
                   <div class="perf-item">
                     <span class="perf-label">NET</span>
-                    <span class="perf-value perf-value-blue">1.2GB/s</span>
+                    <span class="perf-value perf-value-blue">{{ monitorValue('network') }}%</span>
                   </div>
                   <div class="perf-item">
                     <span class="perf-label">MEM</span>
-                    <span class="perf-value perf-value-yellow">64%</span>
+                    <span class="perf-value perf-value-yellow">{{ monitorValue('memory') }}%</span>
                   </div>
                 </div>
               </div>
-            </div>
-          </aside>
-        </ng-container>
 
-        <!-- ============ NETWORK VIEW ============ -->
-        <ng-container *ngIf="activeTab() === 'network'">
-          <!-- Center Stage - Network Graph -->
-          <main class="arena-main">
-            <div class="network-container">
-              <!-- Topology Graph -->
-              <div class="pixel-panel topology-panel">
-                <app-network-graph></app-network-graph>
-              </div>
-
-              <!-- Sankey Diagram -->
-              <div class="pixel-panel sankey-panel">
-                <app-sankey-diagram></app-sankey-diagram>
-              </div>
-            </div>
-          </main>
-
-          <!-- Right Panel -->
-          <aside class="arena-sidebar-right">
-            <!-- Mode Selector -->
-            <app-mode-selector></app-mode-selector>
-
-            <!-- Agent Status Panel -->
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-cyan">
-                <span class="panel-title">AGENT</span>
-                <span class="panel-subtitle">实时负载</span>
-              </div>
-              <div class="agent-list" *ngFor="let agent of agents">
-                <app-agent-node [agent]="agent"></app-agent-node>
-              </div>
-
-              <div class="perf-section">
-                <div class="perf-header">
-                  <span class="perf-icon">⚡</span>
-                  <span>SYSTEM PERFORMANCE</span>
+              <div class="pixel-panel">
+                <div class="panel-header panel-header-purple">
+                  <span class="panel-title">运行概览</span>
+                  <span class="panel-subtitle">{{ currentModeSummary() }}</span>
                 </div>
-                <div class="perf-grid">
-                  <div class="perf-item">
-                    <span class="perf-label">CPU</span>
-                    <span class="perf-value perf-value-red">82%</span>
+                <div class="shared-board">
+                  <div class="board-item">
+                    <span class="board-label">团队数量</span>
+                    <span class="board-value board-value-green">{{ runtimeValue('teamCount') }}</span>
                   </div>
-                  <div class="perf-item">
-                    <span class="perf-label">GPU</span>
-                    <span class="perf-value perf-value-green">35%</span>
+                  <div class="board-item">
+                    <span class="board-label">智能体数量</span>
+                    <span class="board-value board-value-yellow">{{ runtimeValue('agentCount') }}</span>
                   </div>
-                  <div class="perf-item">
-                    <span class="perf-label">NET</span>
-                    <span class="perf-value perf-value-blue">1.2GB/s</span>
+                  <div class="board-item">
+                    <span class="board-label">活跃会话</span>
+                    <span class="board-value board-value-blue">{{ runtimeValue('activeSessions') }}</span>
                   </div>
-                  <div class="perf-item">
-                    <span class="perf-label">MEM</span>
-                    <span class="perf-value perf-value-yellow">64%</span>
+                  <div class="board-item">
+                    <span class="board-label">异常会话</span>
+                    <span class="board-value board-value-blue">{{ runtimeValue('failedSessions') }}</span>
                   </div>
                 </div>
               </div>
@@ -171,10 +163,13 @@
           <main class="arena-main">
             <div class="cognitive-container">
               <!-- Agent Cognition View -->
-              <div class="pixel-panel cognition-panel">
-                <div class="panel-header">
-                  <span class="panel-title">AGENT</span>
-                  <span class="panel-badge">认知解剖视图 — 智能涌现</span>
+              <div class="pixel-panel">
+                <div class="panel-header panel-header-purple">
+                  <span class="panel-title">编排入口</span>
+                  <span class="panel-badge">{{ currentModeSummary() }}</span>
+                </div>
+                <div class="panel-actions" style="margin-bottom: 12px;">
+                  <button class="btn btn-primary" style="width: 100%;" (click)="openTaskOrchestrationModal()">开始任务编排</button>
                 </div>
                 <div class="cognition-visual">
                   <div class="cognition-circle">
@@ -185,11 +180,54 @@
                     <div class="cognition-pixel cognition-pixel-left"></div>
                   </div>
                 </div>
+                <div class="shared-board">
+                  <div class="board-item">
+                    <span class="board-label">编排方式</span>
+                    <span class="board-value board-value-yellow">{{ orchestrationValue('planMode') }}</span>
+                  </div>
+                  <div class="board-item">
+                    <span class="board-label">已分配Agent</span>
+                    <span class="board-value board-value-green">{{ orchestrationValue('assignedAgents') }}</span>
+                  </div>
+                  <div class="board-item">
+                    <span class="board-label">连接关系</span>
+                    <span class="board-value board-value-blue">{{ orchestrationValue('activeEdges') }}</span>
+                  </div>
+                  <div class="board-item">
+                    <span class="board-label">收敛状态</span>
+                    <span class="board-value board-value-yellow">{{ orchestrationValue('convergence') }}</span>
+                  </div>
+                </div>
               </div>
 
               <!-- Shared Workspace -->
               <div class="pixel-panel thought-panel">
                 <app-shared-workspace></app-shared-workspace>
+              </div>
+
+              <div class="pixel-panel">
+                <div class="panel-header panel-header-green">
+                  <span class="panel-title">编排结果</span>
+                  <span class="panel-subtitle">拓扑 / 流向</span>
+                </div>
+                <div class="shared-board">
+                  <div class="board-item">
+                    <span class="board-label">拓扑状态</span>
+                    <span class="board-value board-value-green">已收敛</span>
+                  </div>
+                  <div class="board-item">
+                    <span class="board-label">任务流向</span>
+                    <span class="board-value board-value-yellow">顺序可见</span>
+                  </div>
+                  <div class="board-item">
+                    <span class="board-label">依赖关系</span>
+                    <span class="board-value board-value-blue">可追踪</span>
+                  </div>
+                  <div class="board-item">
+                    <span class="board-label">结果状态</span>
+                    <span class="board-value board-value-blue">待执行</span>
+                  </div>
+                </div>
               </div>
             </div>
           </main>
@@ -212,30 +250,32 @@
               <div class="perf-section">
                 <div class="perf-header">
                   <span class="perf-icon">⚡</span>
-                  <span>SYSTEM PERFORMANCE</span>
+                  <span>结构快照</span>
                 </div>
                 <div class="perf-grid">
                   <div class="perf-item">
                     <span class="perf-label">CPU</span>
-                    <span class="perf-value perf-value-red">82%</span>
+                    <span class="perf-value perf-value-red">{{ monitorValue('cpu') }}%</span>
                   </div>
                   <div class="perf-item">
                     <span class="perf-label">GPU</span>
-                    <span class="perf-value perf-value-green">35%</span>
+                    <span class="perf-value perf-value-green">{{ monitorValue('gpu') }}%</span>
                   </div>
                   <div class="perf-item">
                     <span class="perf-label">NET</span>
-                    <span class="perf-value perf-value-blue">1.2GB/s</span>
+                    <span class="perf-value perf-value-blue">{{ monitorValue('network') }}%</span>
                   </div>
                   <div class="perf-item">
                     <span class="perf-label">MEM</span>
-                    <span class="perf-value perf-value-yellow">64%</span>
+                    <span class="perf-value perf-value-yellow">{{ monitorValue('memory') }}%</span>
                   </div>
                 </div>
               </div>
             </div>
           </aside>
         </ng-container>
+
+
 
         <!-- ============ MONITOR VIEW ============ -->
         <ng-container *ngIf="activeTab() === 'monitor'">
@@ -244,45 +284,46 @@
             <div class="monitor-main-content">
               <!-- System Load -->
               <div class="pixel-panel load-panel">
-                <div class="panel-header">
+                <div class="panel-header panel-header-red">
                   <span class="panel-icon">□</span>
                   <span class="panel-title">系统整体负载</span>
+                  <span class="panel-subtitle">{{ currentModeSummary() }}</span>
                 </div>
                 <div class="system-load">
                   <div class="load-item">
                     <div class="load-header">
                       <span class="load-label">CPU</span>
-                      <span class="load-value load-value-red">82%</span>
+                      <span class="load-value load-value-red">{{ monitorValue('cpu') }}%</span>
                     </div>
                     <div class="load-bar">
-                      <div class="load-bar-fill load-bar-red" style="width: 82%"></div>
+                      <div class="load-bar-fill load-bar-red" [style.width.%]="monitorValue('cpu')"></div>
                     </div>
                   </div>
                   <div class="load-item">
                     <div class="load-header">
                       <span class="load-label">内存</span>
-                      <span class="load-value load-value-yellow">68%</span>
+                      <span class="load-value load-value-yellow">{{ monitorValue('memory') }}%</span>
                     </div>
                     <div class="load-bar">
-                      <div class="load-bar-fill load-bar-yellow" style="width: 68%"></div>
+                      <div class="load-bar-fill load-bar-yellow" [style.width.%]="monitorValue('memory')"></div>
                     </div>
                   </div>
                   <div class="load-item">
                     <div class="load-header">
                       <span class="load-label">网络</span>
-                      <span class="load-value load-value-blue">45%</span>
+                      <span class="load-value load-value-blue">{{ monitorValue('network') }}%</span>
                     </div>
                     <div class="load-bar">
-                      <div class="load-bar-fill load-bar-blue" style="width: 45%"></div>
+                      <div class="load-bar-fill load-bar-blue" [style.width.%]="monitorValue('network')"></div>
                     </div>
                   </div>
                   <div class="load-item">
                     <div class="load-header">
                       <span class="load-label">GPU (渲染)</span>
-                      <span class="load-value load-value-green">35%</span>
+                      <span class="load-value load-value-green">{{ monitorValue('gpu') }}%</span>
                     </div>
                     <div class="load-bar">
-                      <div class="load-bar-fill load-bar-green" style="width: 35%"></div>
+                      <div class="load-bar-fill load-bar-green" [style.width.%]="monitorValue('gpu')"></div>
                     </div>
                   </div>
                 </div>
@@ -290,13 +331,14 @@
 
               <!-- Agent Resource Table -->
               <div class="pixel-panel table-panel">
-                <div class="panel-header">
+                <div class="panel-header panel-header-cyan">
                   <span class="panel-title">AGENT</span>
                   <span class="panel-badge">资源使用（实时）</span>
                   <div class="table-actions">
-                    <button class="table-btn table-btn-blue">新建Agent</button>
-                    <button class="table-btn table-btn-green">扩容建议</button>
-                    <button class="table-btn table-btn-red">资源告警设置</button>
+                    <button class="table-btn table-btn-blue" (click)="openAgentBuildModal()">新建Agent</button>
+                    <button class="table-btn table-btn-green" (click)="openTeamBuildModal()">新建团队</button>
+                    <button class="table-btn table-btn-green" (click)="suggestScale()">扩容建议</button>
+                    <button class="table-btn table-btn-red" (click)="openAlertSettings()">资源告警设置</button>
                   </div>
                 </div>
                 <table class="resource-table">
@@ -312,53 +354,20 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr>
-                      <td><span class="role-dot role-red"></span> <span class="role-name role-red">架构师</span></td>
-                      <td><span class="skill-badge skill-badge-red">2技能</span> <span class="check-mark">✓</span></td>
-                      <td>15%</td>
-                      <td>256MB</td>
-                      <td>2.3k</td>
-                      <td><span class="status-running">RUNNING</span></td>
+                    <tr *ngFor="let agent of agents">
+                      <td><span class="role-dot" [class.role-red]="agent.role === 'architect'" [class.role-blue]="agent.role === 'analyst'" [class.role-green]="agent.role === 'developer'" [class.role-yellow]="agent.role === 'tester'" [class.role-cyan]="agent.role === 'devops'" [class.role-pink]="agent.role === 'product'"></span> <span class="role-name" [class.role-red]="agent.role === 'architect'" [class.role-blue]="agent.role === 'analyst'" [class.role-green]="agent.role === 'developer'" [class.role-yellow]="agent.role === 'tester'" [class.role-cyan]="agent.role === 'devops'" [class.role-pink]="agent.role === 'product'">{{ getRoleName(agent.role) }}</span></td>
+                      <td><span class="skill-badge" [class.skill-badge-red]="agent.role === 'architect'" [class.skill-badge-blue]="agent.role === 'analyst'" [class.skill-badge-green]="agent.role === 'developer'" [class.skill-badge-yellow]="agent.role === 'tester'" [class.skill-badge-cyan]="agent.role === 'devops'" [class.skill-badge-pink]="agent.role === 'product'">{{ agent.skills.length }}技能</span> <span class="check-mark" *ngIf="agent.skills.length > 0">✓</span><span class="x-mark" *ngIf="agent.skills.length === 0">✕</span></td>
+                      <td>{{ agent.load }}%</td>
+                      <td>{{ getAgentMemory(agent) }}MB</td>
+                      <td>{{ getAgentToken(agent) }}k</td>
+                      <td><span [class.status-running]="agent.status === 'running'" [class.status-idle]="agent.status === 'idle'" [class.status-busy]="agent.status === 'busy'" [class.status-error]="agent.status === 'error'">{{ agent.status | uppercase }}</span></td>
                       <td>
-                        <button class="op-btn">+</button>
-                        <button class="op-btn">-</button>
+                        <button class="op-btn" (click)="adjustAgentLoad(agent.id, 2)">+</button>
+                        <button class="op-btn" (click)="adjustAgentLoad(agent.id, -2)">-</button>
                       </td>
                     </tr>
-                    <tr>
-                      <td><span class="role-dot role-blue"></span> <span class="role-name role-blue">分析师</span></td>
-                      <td><span class="skill-badge skill-badge-blue">3技能</span> <span class="x-mark">✕</span></td>
-                      <td>12%</td>
-                      <td>198MB</td>
-                      <td>1.8k</td>
-                      <td><span class="status-idle">IDLE</span></td>
-                      <td>
-                        <button class="op-btn">+</button>
-                        <button class="op-btn">-</button>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td><span class="role-dot role-green"></span> <span class="role-name role-green">开发者</span></td>
-                      <td><span class="skill-badge skill-badge-green">4技能</span> <span class="check-mark">✓</span></td>
-                      <td>28%</td>
-                      <td>312MB</td>
-                      <td>3.1k</td>
-                      <td><span class="status-busy">BUSY</span></td>
-                      <td>
-                        <button class="op-btn">+</button>
-                        <button class="op-btn">-</button>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td><span class="role-dot role-yellow"></span> <span class="role-name role-yellow">测试员</span></td>
-                      <td><span class="skill-badge skill-badge-yellow">2技能</span> <span class="check-mark">✓</span></td>
-                      <td>18%</td>
-                      <td>224MB</td>
-                      <td>2.0k</td>
-                      <td><span class="status-idle">IDLE</span></td>
-                      <td>
-                        <button class="op-btn">+</button>
-                        <button class="op-btn">-</button>
-                      </td>
+                    <tr *ngIf="agents.length === 0">
+                      <td colspan="7" style="text-align: center; padding: 20px; color: #666;">暂无智能体，请点击"新建Agent"创建</td>
                     </tr>
                   </tbody>
                 </table>
@@ -367,7 +376,7 @@
               <!-- Token Trend & Config -->
               <div class="monitor-bottom-row">
                 <div class="pixel-panel token-panel">
-                  <div class="panel-header">
+                  <div class="panel-header panel-header-yellow">
                     <span class="panel-title">Token</span>
                     <span class="panel-badge">消耗趋势</span>
                   </div>
@@ -377,8 +386,9 @@
                 </div>
 
                 <div class="pixel-panel config-panel">
-                  <div class="panel-header">
-                    <span class="panel-title">配置控制台</span>
+                  <div class="panel-header panel-header-purple">
+                    <span class="panel-title">恢复入口</span>
+                    <span class="panel-badge">重连 / 重试 / 回退</span>
                   </div>
                   <div class="config-content">
                     <div class="config-item">
@@ -389,13 +399,13 @@
                       <span class="select-arrow">▾</span>
                     </div>
                     <div class="config-buttons">
-                      <button class="config-btn config-btn-blue">保存配置模板</button>
-                      <button class="config-btn config-btn-purple">加载配置模板</button>
+                      <button class="config-btn config-btn-blue" (click)="reconnectSessions()">重连会话</button>
+                      <button class="config-btn config-btn-purple" (click)="redistribute()">重新分配</button>
                     </div>
                     <div class="config-cost">
-                      <div class="cost-label">成本预估 (今日)</div>
-                      <div class="cost-value">¥89.30</div>
-                      <div class="cost-rate">¥12.5/h</div>
+                      <div class="cost-label">恢复状态</div>
+                      <div class="cost-value">可恢复</div>
+                      <div class="cost-rate">最近同步 14ms</div>
                     </div>
                   </div>
                 </div>
@@ -412,7 +422,7 @@
                       <span class="toggle-knob"></span>
                       ON
                     </span>
-                    <button class="sync-btn">同步至本地 (LOCAL STORAGE)</button>
+                    <button class="sync-btn" (click)="syncLocal()">同步至本地 (LOCAL STORAGE)</button>
                   </div>
                 </div>
                 <div class="skills-grid">
@@ -425,7 +435,7 @@
                   <div class="skills-section">
                     <div class="section-header">
                       <span class="section-title">自定义技能</span>
-                      <button class="add-btn">+ 新增</button>
+                      <button class="add-btn" (click)="openAgentBuildModal()">+ 新增</button>
                     </div>
                   </div>
                   <div class="skills-section">
@@ -499,12 +509,12 @@
       <footer class="arena-footer">
         <div class="footer-content">
           <div class="footer-left">
-            <span class="footer-status">SYSTEM: {{ isPlaying ? 'PLAYING' : 'PAUSED' }} / {{ 60 * speed }}FPS</span>
+            <span class="footer-status">SYSTEM: {{ isPlaying() ? 'PLAYING' : 'PAUSED' }} / {{ 60 * speed }}FPS</span>
           </div>
           <div class="footer-center">
-            <button class="footer-btn">⏮</button>
-            <button class="footer-btn footer-btn-play" (click)="togglePlay()">{{ isPlaying ? '⏸' : '▶' }}</button>
-            <button class="footer-btn">⏭</button>
+            <button class="footer-btn" (click)="resetGame()">⏮</button>
+            <button class="footer-btn footer-btn-play" (click)="togglePlay()">{{ isPlaying() ? '⏸' : '▶' }}</button>
+            <button class="footer-btn" (click)="suggestScale()">⏭</button>
             <span class="footer-divider">|</span>
             <button *ngFor="let s of speeds" class="footer-btn" [class.footer-btn-max]="s === 8" [class.footer-btn-active]="speed === s" (click)="setSpeed(s)">{{ s }}X{{ s === 8 ? ' MAX' : '' }}</button>
           </div>
@@ -516,6 +526,247 @@
           </div>
         </div>
       </footer>
+
+
+    </div>
+  </div>
+
+  <div class="modal-overlay" *ngIf="showAgentBuildModal()" (click)="closeAgentBuildModal()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2>构建智能体</h2>
+        <button class="modal-close" (click)="closeAgentBuildModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>智能体名称</label>
+          <input type="text" [(ngModel)]="agentBuildForm.name" placeholder="输入智能体名称" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>角色类型</label>
+          <select [(ngModel)]="agentBuildForm.role" class="form-select">
+            <option value="architect">架构师</option>
+            <option value="analyst">分析师</option>
+            <option value="developer">开发者</option>
+            <option value="tester">测试员</option>
+            <option value="devops">运维</option>
+            <option value="product">产品</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>描述</label>
+          <textarea [(ngModel)]="agentBuildForm.description" placeholder="输入智能体描述" class="form-textarea" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label>技能选择</label>
+          <div class="skill-tags">
+            <button type="button" class="skill-tag" *ngFor="let skill of ['System Design', 'Code Review', 'Testing', 'Deployment', 'Analysis', 'Documentation']"
+              [class.skill-tag-selected]="agentBuildForm.skills.includes(skill)"
+              (click)="addSkillToForm(skill)">
+              {{ skill }}
+            </button>
+          </div>
+          <div class="selected-skills" *ngIf="agentBuildForm.skills.length > 0">
+            <span class="selected-skill-tag" *ngFor="let skill of agentBuildForm.skills">
+              {{ skill }}
+              <button type="button" class="remove-skill" (click)="removeSkillFromForm(skill)">×</button>
+            </span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>协作模式</label>
+          <select [(ngModel)]="agentBuildForm.mode" class="form-select">
+            <option value="coop">协作模式</option>
+            <option value="pipeline">流水线模式</option>
+            <option value="storm">脑暴模式</option>
+            <option value="contest">竞赛模式</option>
+            <option value="battle">对抗模式</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeAgentBuildModal()">取消</button>
+        <button class="btn btn-primary" (click)="submitAgentBuild()">创建智能体</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" *ngIf="showTeamBuildModal()" (click)="closeTeamBuildModal()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2>构建智能体团队</h2>
+        <button class="modal-close" (click)="closeTeamBuildModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>团队名称</label>
+          <input type="text" [(ngModel)]="teamBuildForm.name" placeholder="输入团队名称" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>描述</label>
+          <textarea [(ngModel)]="teamBuildForm.description" placeholder="输入团队描述" class="form-textarea" rows="2"></textarea>
+        </div>
+        <div class="form-group">
+          <label>选择智能体成员</label>
+          <div class="agent-selection">
+            <div class="agent-select-item" *ngFor="let agent of agents"
+              [class.agent-select-item-selected]="isAgentInTeam(agent.id)"
+              (click)="toggleAgentInTeam(agent.id)">
+              <span class="agent-select-name">{{ agent.name }}</span>
+              <span class="agent-select-role">{{ agent.role }}</span>
+              <span class="agent-select-status" [class]="agent.status">{{ agent.status }}</span>
+            </div>
+          </div>
+          <div class="selected-agents" *ngIf="teamBuildForm.agentIds.length > 0">
+            <span class="selected-agent-tag" *ngFor="let agentId of teamBuildForm.agentIds">
+              {{ agents.find(a => a.id === agentId)?.name }}
+              <button type="button" class="remove-agent" (click)="toggleAgentInTeam(agentId)">×</button>
+            </span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>协作模式</label>
+          <select [(ngModel)]="teamBuildForm.mode" class="form-select">
+            <option value="coop">协作模式</option>
+            <option value="pipeline">流水线模式</option>
+            <option value="storm">脑暴模式</option>
+            <option value="contest">竞赛模式</option>
+            <option value="battle">对抗模式</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeTeamBuildModal()">取消</button>
+        <button class="btn btn-primary" (click)="submitTeamBuild()">创建团队</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" *ngIf="showTaskOrchestrationModal()" (click)="closeTaskOrchestrationModal()">
+    <div class="modal-content modal-large" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2>任务编排</h2>
+        <button class="modal-close" (click)="closeTaskOrchestrationModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="task-form">
+          <div class="form-group">
+            <label>任务标题</label>
+            <input type="text" [(ngModel)]="newTaskTitle" placeholder="输入任务标题" class="form-input" />
+          </div>
+          <div class="form-group">
+            <label>任务描述</label>
+            <textarea [(ngModel)]="newTaskDescription" placeholder="输入任务描述" class="form-textarea" rows="2"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>优先级</label>
+              <select [(ngModel)]="newTaskPriority" class="form-select">
+                <option value="high">高</option>
+                <option value="medium">中</option>
+                <option value="low">低</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>分配给</label>
+              <select [(ngModel)]="newTaskAssignedAgent" class="form-select">
+                <option value="">未分配</option>
+                <option *ngFor="let agent of agents" [value]="agent.id">{{ agent.name }} ({{ agent.role }})</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn btn-primary" (click)="addTask()">添加任务</button>
+        </div>
+
+        <div class="task-list" *ngIf="taskOrchestrationList.length > 0">
+          <h3>任务列表</h3>
+          <div class="task-item" *ngFor="let task of taskOrchestrationList">
+            <div class="task-info">
+              <div class="task-title">{{ task.title }}</div>
+              <div class="task-desc">{{ task.description }}</div>
+              <div class="task-meta">
+                <span class="task-priority" [class]="getPriorityClass(task.priority)">{{ task.priority }}</span>
+                <span class="task-status" [class]="getTaskStatusClass(task.status)">{{ task.status }}</span>
+                <span class="task-agent">分配给: {{ task.assignedAgentId }}</span>
+              </div>
+            </div>
+            <div class="task-actions">
+              <button class="btn btn-small btn-success" *ngIf="task.status === 'pending'" (click)="startTask(task.id)">启动</button>
+              <button class="btn btn-small btn-info" *ngIf="task.status === 'running'" (click)="completeTask(task.id)">完成</button>
+              <button class="btn btn-small btn-danger" (click)="removeTask(task.id)">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeTaskOrchestrationModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" *ngIf="showAgentDashboardModal()" (click)="closeAgentDashboardModal()">
+    <div class="modal-content modal-large" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2>智能体看板</h2>
+        <button class="modal-close" (click)="closeAgentDashboardModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="dashboard-stats">
+          <div class="stat-card">
+            <div class="stat-value">{{ agentDashboardData().totalAgents }}</div>
+            <div class="stat-label">总智能体数</div>
+          </div>
+          <div class="stat-card stat-running">
+            <div class="stat-value">{{ agentDashboardData().runningAgents }}</div>
+            <div class="stat-label">运行中</div>
+          </div>
+          <div class="stat-card stat-idle">
+            <div class="stat-value">{{ agentDashboardData().idleAgents }}</div>
+            <div class="stat-label">空闲</div>
+          </div>
+          <div class="stat-card stat-error">
+            <div class="stat-value">{{ agentDashboardData().errorAgents }}</div>
+            <div class="stat-label">异常</div>
+          </div>
+        </div>
+
+        <div class="dashboard-teams" *ngIf="agentDashboardData().teams.length > 0">
+          <h3>团队信息</h3>
+          <div class="team-card" *ngFor="let team of agentDashboardData().teams">
+            <div class="team-header">
+              <span class="team-name">{{ team.name }}</span>
+              <span class="team-score">得分: {{ team.score }}</span>
+            </div>
+            <div class="team-agents">
+              <div class="team-agent" *ngFor="let agent of team.agents">
+                <span class="agent-role">{{ agent.role }}</span>
+                <span class="agent-name">{{ agent.name }}</span>
+                <span class="agent-status" [class]="agent.status">{{ agent.status }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dashboard-agents">
+          <h3>智能体列表</h3>
+          <div class="agent-card" *ngFor="let agent of agentDashboardData().agents">
+            <div class="agent-card-header">
+              <span class="agent-card-name">{{ agent.name }}</span>
+              <span class="agent-card-role">{{ agent.role }}</span>
+            </div>
+            <div class="agent-card-body">
+              <div class="agent-card-status" [class]="agent.status">{{ agent.status }}</div>
+              <div class="agent-card-load">负载: {{ agent.load }}%</div>
+              <div class="agent-card-skills" *ngIf="agent.skills.length > 0">
+                <span class="agent-skill" *ngFor="let skill of agent.skills">{{ skill }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeAgentDashboardModal()">关闭</button>
+      </div>
     </div>
   </div>
 </section>

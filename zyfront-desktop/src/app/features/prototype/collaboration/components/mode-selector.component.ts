@@ -13,22 +13,33 @@ import { ModeManagerService, CollaborationMode } from '../services/mode-manager.
         <span class="mode-selector-subtitle">COLLABORATION MODES</span>
       </div>
       <div class="mode-list">
-        <button 
-          *ngFor="let mode of modes"
-          type="button" 
-          class="mode-item" 
-          [class.mode-active]="currentMode === mode.id"
-          [style.border-color]="mode.color"
-          [style.box-shadow]="currentMode === mode.id ? '0 0 12px ' + mode.color : 'none'"
-          (click)="switchMode(mode.id)"
-        >
-          <span class="mode-icon">{{ mode.icon }}</span>
-          <span class="mode-text">{{ mode.name }}</span>
-        </button>
+        @for (mode of modes; track mode.id) {
+          <button 
+            type="button" 
+            class="mode-item" 
+            [class.mode-active]="currentMode === mode.id"
+            [style.border-color]="mode.color"
+            [style.box-shadow]="currentMode === mode.id ? '0 0 12px ' + mode.color : 'none'"
+            (click)="switchMode(mode.id)"
+          >
+            <span class="mode-icon">{{ mode.icon }}</span>
+            <span class="mode-text">{{ mode.name }}</span>
+          </button>
+        }
       </div>
       <div class="mode-description">
         <div class="description-title">{{ currentModeConfig.name }}</div>
         <div class="description-text">{{ currentModeConfig.description }}</div>
+      </div>
+      <div class="mode-status">
+        <div class="mode-status-item">
+          <span class="status-label">当前状态</span>
+          <span class="status-value">{{ isActive ? '运行中' : '已停止' }}</span>
+        </div>
+        <div class="mode-status-item">
+          <span class="status-label">显示策略</span>
+          <span class="status-value">现有布局增强</span>
+        </div>
       </div>
       <div class="mode-controls">
         <button 
@@ -133,6 +144,32 @@ import { ModeManagerService, CollaborationMode } from '../services/mode-manager.
         font-size: 12px;
         line-height: 1.4;
       }
+
+      .mode-status {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid #333;
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .mode-status-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+        color: #aaa;
+      }
+
+      .status-label {
+        color: #888;
+      }
+
+      .status-value {
+        color: #ff00ff;
+        text-align: right;
+      }
       
       .mode-controls {
         display: flex;
@@ -171,7 +208,7 @@ import { ModeManagerService, CollaborationMode } from '../services/mode-manager.
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class ModeSelectorComponent implements OnInit {
-  modes: any[] = [];
+  modes: Array<{ id: CollaborationMode; name: string; description: string; icon: string; color: string }> = [];
   currentMode: CollaborationMode = 'battle';
   currentModeConfig = {
     id: 'battle' as CollaborationMode,

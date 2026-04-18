@@ -1,5 +1,5 @@
 import { Injectable, OnDestroy } from '@angular/core';
-import { Subject, Observable, Subscription } from 'rxjs';
+import { Subject, Observable } from 'rxjs';
 
 interface WebSocketMessage {
   type: string;
@@ -11,18 +11,28 @@ export class MultiAgentWebSocketService implements OnDestroy {
   private socket: WebSocket | null = null;
   private messageSubject = new Subject<WebSocketMessage>();
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectTimeout = 5000;
+  private maxReconnectAttempts = 3;
+  private reconnectTimeout = 10000;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private isConnected = false;
+  private isConnecting = false;
 
   messages$: Observable<WebSocketMessage> = this.messageSubject.asObservable();
 
   connect(url: string = 'ws://localhost:8080'): void {
+    if (this.isConnecting || this.isConnected) {
+      return;
+    }
+
+    this.isConnecting = true;
+
     try {
       this.socket = new WebSocket(url);
 
       this.socket.onopen = () => {
-        console.log('WebSocket connected');
+        console.log('WebSocket connected to', url);
+        this.isConnected = true;
+        this.isConnecting = false;
         this.reconnectAttempts = 0;
       };
 
@@ -36,15 +46,18 @@ export class MultiAgentWebSocketService implements OnDestroy {
       };
 
       this.socket.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        console.warn('WebSocket error (will retry):', url);
       };
 
-      this.socket.onclose = () => {
-        console.log('WebSocket disconnected');
+      this.socket.onclose = (event) => {
+        console.log('WebSocket disconnected:', event.code, event.reason);
+        this.isConnected = false;
+        this.isConnecting = false;
         this.handleReconnect(url);
       };
     } catch (error) {
-      console.error('Error connecting to WebSocket:', error);
+      console.warn('Error creating WebSocket connection:', error);
+      this.isConnecting = false;
       this.handleReconnect(url);
     }
   }
@@ -53,7 +66,7 @@ export class MultiAgentWebSocketService implements OnDestroy {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(message));
     } else {
-      console.error('WebSocket not connected');
+      console.warn('WebSocket not connected, message queued:', message.type);
     }
   }
 
@@ -66,17 +79,23 @@ export class MultiAgentWebSocketService implements OnDestroy {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.isConnected = false;
+    this.isConnecting = false;
+  }
+
+  getConnectionStatus(): boolean {
+    return this.isConnected;
   }
 
   private handleReconnect(url: string): void {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
-      console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      console.log(`WebSocket reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${this.reconnectTimeout}ms`);
       this.reconnectTimer = setTimeout(() => {
         this.connect(url);
       }, this.reconnectTimeout);
     } else {
-      console.error('Max reconnect attempts reached');
+      console.warn('WebSocket max reconnect attempts reached. Please check if backend server is running.');
     }
   }
 

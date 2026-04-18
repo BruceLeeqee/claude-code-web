@@ -188,18 +188,22 @@ export class NetworkGraphComponent implements OnInit, OnDestroy {
       { id: 'agent-3', label: '开发者', group: 'alpha', shape: 'circle', color: '#44ff88', size: 20 },
       { id: 'agent-4', label: '测试员', group: 'beta', shape: 'circle', color: '#ffdd00', size: 20 },
       { id: 'agent-5', label: '运维', group: 'beta', shape: 'circle', color: '#888888', size: 20 },
-      { id: 'agent-6', label: '产品', group: 'beta', shape: 'circle', color: '#ff66aa', size: 20 }
+      { id: 'agent-6', label: '产品', group: 'beta', shape: 'circle', color: '#ff66aa', size: 20 },
+      { id: 'task-1', label: '任务1', group: 'task', shape: 'diamond', color: '#ff00ff', size: 15 },
+      { id: 'task-2', label: '任务2', group: 'task', shape: 'diamond', color: '#00ffff', size: 15 },
     ];
   }
 
   private getDefaultEdges(): NetworkEdge[] {
     return [
-      { id: 'edge-1', from: 'agent-1', to: 'agent-2', label: '任务分解', color: '#ff4444', width: 2, dashed: false },
-      { id: 'edge-2', from: 'agent-2', to: 'agent-3', label: '需求分析', color: '#4488ff', width: 2, dashed: false },
-      { id: 'edge-3', from: 'agent-3', to: 'agent-4', label: '代码实现', color: '#44ff88', width: 2, dashed: false },
-      { id: 'edge-4', from: 'agent-4', to: 'agent-5', label: '测试报告', color: '#ffdd00', width: 2, dashed: false },
-      { id: 'edge-5', from: 'agent-5', to: 'agent-6', label: '部署反馈', color: '#888888', width: 2, dashed: false },
-      { id: 'edge-6', from: 'agent-6', to: 'agent-1', label: '需求变更', color: '#ff66aa', width: 2, dashed: true }
+      { id: 'edge-1', from: 'agent-1', to: 'agent-2', label: '协作', color: '#ff4444', width: 2, dashed: false },
+      { id: 'edge-2', from: 'agent-2', to: 'agent-3', label: '协作', color: '#4488ff', width: 2, dashed: false },
+      { id: 'edge-3', from: 'agent-3', to: 'agent-4', label: '依赖', color: '#44ff88', width: 2, dashed: false },
+      { id: 'edge-4', from: 'agent-4', to: 'agent-5', label: '通信', color: '#ffdd00', width: 2, dashed: false },
+      { id: 'edge-5', from: 'agent-5', to: 'agent-6', label: '回传', color: '#888888', width: 2, dashed: false },
+      { id: 'edge-6', from: 'agent-6', to: 'agent-1', label: '反馈', color: '#ff66aa', width: 2, dashed: true },
+      { id: 'edge-7', from: 'task-1', to: 'agent-2', label: '指派', color: '#ff00ff', width: 1, dashed: true },
+      { id: 'edge-8', from: 'task-2', to: 'agent-4', label: '指派', color: '#00ffff', width: 1, dashed: true },
     ];
   }
 
