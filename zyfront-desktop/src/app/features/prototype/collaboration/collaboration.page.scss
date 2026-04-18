@@ -821,6 +821,14 @@
   text-shadow: 0 0 6px rgba(255, 221, 0, 0.8);
 }
 
+.footer-btn-active {
+  border-color: #00ff00;
+  background: rgba(0, 255, 0, 0.2);
+  color: #00ff00;
+  text-shadow: 0 0 8px rgba(0, 255, 0, 0.8);
+  box-shadow: 0 0 8px rgba(0, 255, 0, 0.4);
+}
+
 .footer-divider {
   color: #444;
   margin: 0 6px;

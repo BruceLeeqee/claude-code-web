@@ -26,48 +26,7 @@
         <aside class="arena-sidebar-left">
           <!-- Timeline Panel -->
           <div class="pixel-panel">
-            <div class="panel-header">
-              <span class="panel-icon">☰</span>
-              <span class="panel-title">工作流时间轴</span>
-              <span class="panel-badge">等待初始化</span>
-            </div>
-            <div class="timeline">
-              <div class="timeline-item timeline-red">
-                <span class="timeline-dot"></span>
-                <div class="timeline-content">
-                  <div class="timeline-time">10:00:05</div>
-                  <div class="timeline-text">架构师 分解任务为 5 个子项</div>
-                </div>
-              </div>
-              <div class="timeline-item timeline-blue">
-                <span class="timeline-dot"></span>
-                <div class="timeline-content">
-                  <div class="timeline-time">10:00:12</div>
-                  <div class="timeline-text">分析师 启动市场趋势关联检索</div>
-                </div>
-              </div>
-              <div class="timeline-item timeline-green">
-                <span class="timeline-dot"></span>
-                <div class="timeline-content">
-                  <div class="timeline-time">10:00:18</div>
-                  <div class="timeline-text">开发者 开始生成并发控制模块代码</div>
-                </div>
-              </div>
-              <div class="timeline-item timeline-yellow">
-                <span class="timeline-dot"></span>
-                <div class="timeline-content">
-                  <div class="timeline-time">10:00:25</div>
-                  <div class="timeline-text">测试员 识别出 2 处边界逻辑风险</div>
-                </div>
-              </div>
-              <div class="timeline-item timeline-gray">
-                <span class="timeline-dot"></span>
-                <div class="timeline-content">
-                  <div class="timeline-time">10:01:00</div>
-                  <div class="timeline-text">系统自检：资源消耗 82%... 触发告警</div>
-                </div>
-              </div>
-            </div>
+            <app-timeline></app-timeline>
           </div>
 
           <!-- Shared Board Panel -->
@@ -97,72 +56,16 @@
         </aside>
 
         <!-- ============ ARENA VIEW ============ -->
-        @if (activeTab() === 'arena') {
+        <ng-container *ngIf="activeTab() === 'arena'">
           <!-- Center Stage -->
           <main class="arena-main">
-            <div class="pixel-panel stage-panel">
-              <!-- Scoreboard -->
-              <div class="stage-scoreboard">
-                <div class="team-score">
-                  <span class="team-name team-alpha">TEAM ALPHA</span>
-                  <span class="team-value">42,850</span>
-                </div>
-                <div class="vs-mark">VS</div>
-                <div class="team-score">
-                  <span class="team-name team-beta">TEAM BETA</span>
-                  <span class="team-value">38,120</span>
-                </div>
-              </div>
-
-              <!-- Grid Background -->
-              <div class="stage-grid"></div>
-
-              <!-- PACMAN Character -->
-              <div class="pacman-character">
-                <div class="pacman-body"></div>
-              </div>
-
-              <!-- Status Card -->
-              <div class="status-card">
-                <div class="status-title">PACMAN (Lead) THINKING...</div>
-                <div class="status-progress">
-                  <div class="progress-bar" style="width: 60%"></div>
-                </div>
-                <div class="status-desc">Analyzing code vulnerability #829...</div>
-              </div>
-            </div>
+            <app-battle-stage [stage]="battleStageData"></app-battle-stage>
           </main>
 
           <!-- Right Panel -->
           <aside class="arena-sidebar-right">
-            <!-- Mode Select Panel -->
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-pink">
-                <span class="panel-title">协作模式切换</span>
-              </div>
-              <div class="mode-list">
-                <button type="button" class="mode-item mode-active">
-                  <span class="mode-icon">▣</span>
-                  <span class="mode-text">对抗模式 (Battle)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">◎</span>
-                  <span class="mode-text">协作模式 (Coop)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">◇</span>
-                  <span class="mode-text">流水线 (Pipeline)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">✦</span>
-                  <span class="mode-text">脑暴模式 (Storm)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">⚄</span>
-                  <span class="mode-text">竞赛模式 (Contest)</span>
-                </button>
-              </div>
-            </div>
+            <!-- Debate Panel -->
+            <app-debate-panel></app-debate-panel>
 
             <!-- Agent Status Panel -->
             <div class="pixel-panel">
@@ -170,45 +73,8 @@
                 <span class="panel-title">AGENT</span>
                 <span class="panel-subtitle">实时负载</span>
               </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-red"></div>
-                  <span class="agent-name">架构师</span>
-                  <span class="agent-value agent-value-red">15%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-red" style="width: 15%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-blue"></div>
-                  <span class="agent-name">分析师</span>
-                  <span class="agent-value agent-value-yellow">12%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-blue" style="width: 12%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-green"></div>
-                  <span class="agent-name">开发者</span>
-                  <span class="agent-value agent-value-red">28%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-green" style="width: 28%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-yellow"></div>
-                  <span class="agent-name">测试员</span>
-                  <span class="agent-value agent-value-blue">18%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
-                </div>
+              <div class="agent-list" *ngFor="let agent of agents">
+                <app-agent-node [agent]="agent"></app-agent-node>
               </div>
 
               <div class="perf-section">
@@ -237,93 +103,29 @@
               </div>
             </div>
           </aside>
-        }
+        </ng-container>
 
         <!-- ============ NETWORK VIEW ============ -->
-        @if (activeTab() === 'network') {
+        <ng-container *ngIf="activeTab() === 'network'">
           <!-- Center Stage - Network Graph -->
           <main class="arena-main">
             <div class="network-container">
               <!-- Topology Graph -->
               <div class="pixel-panel topology-panel">
-                <div class="panel-header">
-                  <span class="panel-title">协作拓扑网络</span>
-                </div>
-                <div class="topology-graph">
-                  <div class="topology-node topology-node-red" style="top: 15%; left: 50%;">
-                    <span>INVADER</span>
-                  </div>
-                  <div class="topology-edge" style="top: 20%; left: 50%; height: 15%;">
-                    <svg width="2" height="100%">
-                      <line x1="1" y1="0" x2="1" y2="100%" stroke="#444" stroke-width="2" stroke-dasharray="4,4"/>
-                    </svg>
-                  </div>
-                  <div class="topology-node topology-node-yellow" style="top: 40%; left: 50%;">
-                    <span>PACMAN</span>
-                  </div>
-                </div>
+                <app-network-graph></app-network-graph>
               </div>
 
               <!-- Sankey Diagram -->
               <div class="pixel-panel sankey-panel">
-                <div class="panel-header">
-                  <span class="panel-title">实时数据流</span>
-                  <span class="panel-badge sankey-badge">(Sankey)</span>
-                </div>
-                <div class="sankey-diagram">
-                  <div class="sankey-bar sankey-input">
-                    <span>INPUT</span>
-                  </div>
-                  <div class="sankey-flows">
-                    <div class="sankey-flow sankey-flow-top"></div>
-                    <div class="sankey-flow sankey-flow-bottom"></div>
-                  </div>
-                  <div class="sankey-bars-middle">
-                    <div class="sankey-bar sankey-pacman">
-                      <span>PACMAN</span>
-                    </div>
-                    <div class="sankey-bar sankey-frogger">
-                      <span>FROGGER</span>
-                    </div>
-                  </div>
-                  <div class="sankey-bar sankey-output">
-                    <span>OUTPUT</span>
-                  </div>
-                </div>
+                <app-sankey-diagram></app-sankey-diagram>
               </div>
             </div>
           </main>
 
           <!-- Right Panel -->
           <aside class="arena-sidebar-right">
-            <!-- Mode Select Panel -->
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-pink">
-                <span class="panel-title">协作模式切换</span>
-              </div>
-              <div class="mode-list">
-                <button type="button" class="mode-item mode-active">
-                  <span class="mode-icon">▣</span>
-                  <span class="mode-text">对抗模式 (Battle)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">◎</span>
-                  <span class="mode-text">协作模式 (Coop)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">◇</span>
-                  <span class="mode-text">流水线 (Pipeline)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">✦</span>
-                  <span class="mode-text">脑暴模式 (Storm)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">⚄</span>
-                  <span class="mode-text">竞赛模式 (Contest)</span>
-                </button>
-              </div>
-            </div>
+            <!-- Mode Selector -->
+            <app-mode-selector></app-mode-selector>
 
             <!-- Agent Status Panel -->
             <div class="pixel-panel">
@@ -331,45 +133,8 @@
                 <span class="panel-title">AGENT</span>
                 <span class="panel-subtitle">实时负载</span>
               </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-red"></div>
-                  <span class="agent-name">架构师</span>
-                  <span class="agent-value agent-value-red">15%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-red" style="width: 15%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-blue"></div>
-                  <span class="agent-name">分析师</span>
-                  <span class="agent-value agent-value-yellow">12%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-blue" style="width: 12%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-green"></div>
-                  <span class="agent-name">开发者</span>
-                  <span class="agent-value agent-value-red">28%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-green" style="width: 28%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-yellow"></div>
-                  <span class="agent-name">测试员</span>
-                  <span class="agent-value agent-value-blue">18%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
-                </div>
+              <div class="agent-list" *ngFor="let agent of agents">
+                <app-agent-node [agent]="agent"></app-agent-node>
               </div>
 
               <div class="perf-section">
@@ -398,10 +163,10 @@
               </div>
             </div>
           </aside>
-        }
+        </ng-container>
 
         <!-- ============ COGNITIVE VIEW ============ -->
-        @if (activeTab() === 'cognitive') {
+        <ng-container *ngIf="activeTab() === 'cognitive'">
           <!-- Center Stage - Brain Visualization -->
           <main class="arena-main">
             <div class="cognitive-container">
@@ -422,72 +187,17 @@
                 </div>
               </div>
 
-              <!-- Thought Chain -->
+              <!-- Shared Workspace -->
               <div class="pixel-panel thought-panel">
-                <div class="panel-header">
-                  <span class="panel-title">思维链进度</span>
-                  <span class="panel-badge">(CoT)</span>
-                </div>
-                <div class="thought-chain">
-                  <div class="thought-item">
-                    <div class="thought-header">
-                      <span class="thought-label">推理阶段：逻辑验证</span>
-                      <span class="thought-value">85%</span>
-                    </div>
-                    <div class="thought-progress">
-                      <div class="thought-bar thought-bar-pink" style="width: 85%"></div>
-                    </div>
-                  </div>
-                  <div class="thought-item">
-                    <div class="thought-header">
-                      <span class="thought-label">语境检索：历史关联</span>
-                      <span class="thought-value thought-value-blue">42%</span>
-                    </div>
-                    <div class="thought-progress">
-                      <div class="thought-bar thought-bar-blue" style="width: 42%"></div>
-                    </div>
-                  </div>
-                  <div class="thought-log">
-                    <div class="thought-log-header">THOUGHT LOG:</div>
-                    <div class="thought-log-content">
-                      "IF response_latency > 200ms THEN trigger<br>pipeline_v2 optimization sequence..."
-                    </div>
-                  </div>
-                </div>
+                <app-shared-workspace></app-shared-workspace>
               </div>
             </div>
           </main>
 
           <!-- Right Panel -->
           <aside class="arena-sidebar-right">
-            <!-- Mode Select Panel -->
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-pink">
-                <span class="panel-title">协作模式切换</span>
-              </div>
-              <div class="mode-list">
-                <button type="button" class="mode-item mode-active">
-                  <span class="mode-icon">▣</span>
-                  <span class="mode-text">对抗模式 (Battle)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">◎</span>
-                  <span class="mode-text">协作模式 (Coop)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">◇</span>
-                  <span class="mode-text">流水线 (Pipeline)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">✦</span>
-                  <span class="mode-text">脑暴模式 (Storm)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">⚄</span>
-                  <span class="mode-text">竞赛模式 (Contest)</span>
-                </button>
-              </div>
-            </div>
+            <!-- Mode Selector -->
+            <app-mode-selector></app-mode-selector>
 
             <!-- Agent Status Panel -->
             <div class="pixel-panel">
@@ -495,45 +205,8 @@
                 <span class="panel-title">AGENT</span>
                 <span class="panel-subtitle">实时负载</span>
               </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-red"></div>
-                  <span class="agent-name">架构师</span>
-                  <span class="agent-value agent-value-red">15%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-red" style="width: 15%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-blue"></div>
-                  <span class="agent-name">分析师</span>
-                  <span class="agent-value agent-value-yellow">12%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-blue" style="width: 12%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-green"></div>
-                  <span class="agent-name">开发者</span>
-                  <span class="agent-value agent-value-red">28%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-green" style="width: 28%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-yellow"></div>
-                  <span class="agent-name">测试员</span>
-                  <span class="agent-value agent-value-blue">18%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
-                </div>
+              <div class="agent-list" *ngFor="let agent of agents">
+                <app-agent-node [agent]="agent"></app-agent-node>
               </div>
 
               <div class="perf-section">
@@ -562,10 +235,10 @@
               </div>
             </div>
           </aside>
-        }
+        </ng-container>
 
         <!-- ============ MONITOR VIEW ============ -->
-        @if (activeTab() === 'monitor') {
+        <ng-container *ngIf="activeTab() === 'monitor'">
           <!-- Center Stage - Monitor Console -->
           <main class="arena-main">
             <div class="monitor-main-content">
@@ -780,34 +453,8 @@
 
           <!-- Right Panel -->
           <aside class="arena-sidebar-right">
-            <!-- Mode Select Panel -->
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-pink">
-                <span class="panel-title">协作模式切换</span>
-              </div>
-              <div class="mode-list">
-                <button type="button" class="mode-item mode-active">
-                  <span class="mode-icon">▣</span>
-                  <span class="mode-text">对抗模式 (Battle)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">◎</span>
-                  <span class="mode-text">协作模式 (Coop)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">◇</span>
-                  <span class="mode-text">流水线 (Pipeline)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">✦</span>
-                  <span class="mode-text">脑暴模式 (Storm)</span>
-                </button>
-                <button type="button" class="mode-item">
-                  <span class="mode-icon">⚄</span>
-                  <span class="mode-text">竞赛模式 (Contest)</span>
-                </button>
-              </div>
-            </div>
+            <!-- Mode Selector -->
+            <app-mode-selector></app-mode-selector>
 
             <!-- Agent Status Panel -->
             <div class="pixel-panel">
@@ -815,45 +462,8 @@
                 <span class="panel-title">AGENT</span>
                 <span class="panel-subtitle">实时负载</span>
               </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-red"></div>
-                  <span class="agent-name">架构师</span>
-                  <span class="agent-value agent-value-red">15%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-red" style="width: 15%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-blue"></div>
-                  <span class="agent-name">分析师</span>
-                  <span class="agent-value agent-value-yellow">12%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-blue" style="width: 12%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-green"></div>
-                  <span class="agent-name">开发者</span>
-                  <span class="agent-value agent-value-red">28%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-green" style="width: 28%"></div>
-                </div>
-              </div>
-              <div class="agent-list">
-                <div class="agent-item">
-                  <div class="agent-dot agent-dot-yellow"></div>
-                  <span class="agent-name">测试员</span>
-                  <span class="agent-value agent-value-blue">18%</span>
-                </div>
-                <div class="agent-bar">
-                  <div class="agent-bar-fill agent-bar-yellow" style="width: 18%"></div>
-                </div>
+              <div class="agent-list" *ngFor="let agent of agents">
+                <app-agent-node [agent]="agent"></app-agent-node>
               </div>
 
               <div class="perf-section">
@@ -882,24 +492,21 @@
               </div>
             </div>
           </aside>
-        }
+        </ng-container>
       </div>
 
       <!-- Footer -->
       <footer class="arena-footer">
         <div class="footer-content">
           <div class="footer-left">
-            <span class="footer-status">SYSTEM: ONLINE / 60FPS</span>
+            <span class="footer-status">SYSTEM: {{ isPlaying ? 'PLAYING' : 'PAUSED' }} / {{ 60 * speed }}FPS</span>
           </div>
           <div class="footer-center">
             <button class="footer-btn">⏮</button>
-            <button class="footer-btn footer-btn-play">▶</button>
+            <button class="footer-btn footer-btn-play" (click)="togglePlay()">{{ isPlaying ? '⏸' : '▶' }}</button>
             <button class="footer-btn">⏭</button>
             <span class="footer-divider">|</span>
-            <button class="footer-btn">1X</button>
-            <button class="footer-btn">2X</button>
-            <button class="footer-btn">4X</button>
-            <button class="footer-btn footer-btn-max">8X MAX</button>
+            <button *ngFor="let s of speeds" class="footer-btn" [class.footer-btn-max]="s === 8" [class.footer-btn-active]="speed === s" (click)="setSpeed(s)">{{ s }}X{{ s === 8 ? ' MAX' : '' }}</button>
           </div>
           <div class="footer-right">
             <span class="footer-hint">[P] 暂停</span>

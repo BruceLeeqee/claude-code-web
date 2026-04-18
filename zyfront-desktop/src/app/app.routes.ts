@@ -7,7 +7,7 @@ export const routes: Routes = [
   {
     path: '',
     pathMatch: 'full',
-    redirectTo: 'workbench',
+    redirectTo: 'prototype/collaboration',
   },
   {
     path: 'workbench',
