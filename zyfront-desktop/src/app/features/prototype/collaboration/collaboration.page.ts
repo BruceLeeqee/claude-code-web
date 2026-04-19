@@ -6,10 +6,22 @@ import { BattleStageComponent } from './components/battle-stage.component';
 import { DebatePanelComponent } from './components/debate-panel.component';
 import { ModeSelectorComponent } from './components/mode-selector.component';
 import { TimelineComponent } from './components/timeline.component';
-import { SharedWorkspaceComponent } from './components/shared-workspace.component';
+import { OrchestrationCanvasComponent } from './components/orchestration-canvas.component';
 import { MultiAgentOrchestratorService } from '../../../core/multi-agent/multi-agent.orchestrator.service';
 import { CollaborationStateService, CollaborationAgentVm, CollaborationTeamVm } from './services/collaboration-state.service';
 import { ModeManagerService } from './services/mode-manager.service';
+import { DebateModeService } from './services/debate-mode.service';
+import { DebateAgentService } from './services/debate-agent.service';
+import { RedBlueModeService } from './services/red-blue-mode.service';
+import { SprintModeService } from './services/sprint-mode.service';
+import { TurnBasedModeService } from './services/turn-based-mode.service';
+import { ReviewModeService } from './services/review-mode.service';
+import { AutoOrchestrationService } from './services/auto-orchestration.service';
+import { OrchestrationTemplatesService } from './services/orchestration-templates.service';
+import { SnapshotService } from './services/snapshot.service';
+import { ErrorRecoveryService } from './services/error-recovery.service';
+import { DEBATE_ORCHESTRATION_MOCKS } from './services/debate-orchestration.mock';
+import { DebateTopicBridgeService } from './services/debate-topic-bridge.service';
 
 type ViewType = 'arena' | 'network' | 'cognitive' | 'monitor';
 
@@ -32,7 +44,7 @@ interface TaskOrchestrationItem {
   id: string;
   title: string;
   description: string;
-  assignedAgentId: string;
+  assignedAgentId: string | null;
   status: 'pending' | 'running' | 'completed' | 'failed';
   priority: 'high' | 'medium' | 'low';
   dependencies: string[];
@@ -41,7 +53,7 @@ interface TaskOrchestrationItem {
 @Component({
   selector: 'app-collaboration-page',
   standalone: true,
-  imports: [CommonModule, FormsModule, AgentNodeComponent, BattleStageComponent, DebatePanelComponent, ModeSelectorComponent, TimelineComponent, SharedWorkspaceComponent],
+  imports: [CommonModule, FormsModule, AgentNodeComponent, BattleStageComponent, DebatePanelComponent, ModeSelectorComponent, TimelineComponent, OrchestrationCanvasComponent],
   templateUrl: './collaboration.page.html',
   styleUrls: ['../prototype-page.scss', './collaboration.page.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -119,7 +131,18 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
   constructor(
     private orchestrator: MultiAgentOrchestratorService,
     private modeManager: ModeManagerService,
-    private stateService: CollaborationStateService,
+    protected stateService: CollaborationStateService,
+    private debateModeService: DebateModeService,
+    private debateAgentService: DebateAgentService,
+    private redBlueModeService: RedBlueModeService,
+    private sprintModeService: SprintModeService,
+    private turnBasedModeService: TurnBasedModeService,
+    private reviewModeService: ReviewModeService,
+    protected snapshotService: SnapshotService,
+    protected errorRecoveryService: ErrorRecoveryService,
+    private autoOrchestrationService: AutoOrchestrationService,
+    protected orchestrationTemplatesService: OrchestrationTemplatesService,
+    private debateTopicBridge: DebateTopicBridgeService,
   ) {}
 
   protected currentModeBadge(): string {
@@ -128,6 +151,23 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
 
   protected currentModeTone(): string {
     return this.modePalette().tone;
+  }
+
+  private readonly boundKeyDownHandler = this.handleKeyDown.bind(this);
+
+  protected get manualOrchestrationSteps(): string[] {
+    return ['1. 创建Agent', '2. 组建Team', '3. 添加Task', '4. Start', '5. 打开Dashboard'];
+  }
+
+  protected get debateFlowStage(): string {
+    const agentCount = this.stateService.agents().length;
+    const teamCount = this.stateService.battleStage().teams.length;
+    const taskCount = this.taskOrchestrationList.length;
+    if (taskCount > 0 && this.stateService.battleStage().status === 'playing') return 'dashboard';
+    if (taskCount > 0) return 'start';
+    if (teamCount > 0) return 'task';
+    if (agentCount > 0) return 'team';
+    return 'agent';
   }
 
   protected get battleStageData() {
@@ -157,49 +197,22 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
     this.showAgentBuildModal.set(false);
   }
 
-  protected async submitAgentBuild(): Promise<void> {
+  protected submitAgentBuild(): void {
     if (!this.agentBuildForm.name) {
       return;
     }
-    
-    try {
-      await this.orchestrator.spawnTeammate({
-        name: this.agentBuildForm.name,
-        prompt: this.agentBuildForm.description || '请执行分配的任务。',
-        teamName: this.stateService.battleStage().teams[0]?.name ?? 'TEAM ALPHA',
-        mode: 'auto',
-        planModeRequired: true,
-        description: `角色: ${this.agentBuildForm.role}, 技能: ${this.agentBuildForm.skills.join(', ')}`,
-      });
 
-      const newAgentId = `agent-${Date.now()}`;
-      const newAgent: CollaborationAgentVm = {
-        id: newAgentId,
-        name: this.agentBuildForm.name,
-        role: this.agentBuildForm.role,
-        status: 'idle',
-        load: 0,
-        skills: this.agentBuildForm.skills,
-      };
-      
-      this.stateService.addAgent(newAgent);
-      this.syncFromOrchestrator();
-      
-      this.showAgentBuildModal.set(false);
-    } catch (error) {
-      console.error('创建智能体失败:', error);
-      const newAgentId = `agent-${Date.now()}`;
-      const newAgent: CollaborationAgentVm = {
-        id: newAgentId,
-        name: this.agentBuildForm.name,
-        role: this.agentBuildForm.role,
-        status: 'error',
-        load: 0,
-        skills: this.agentBuildForm.skills,
-      };
-      this.stateService.addAgent(newAgent);
-      this.showAgentBuildModal.set(false);
-    }
+    const newAgent: CollaborationAgentVm = {
+      id: `agent-${Date.now()}`,
+      name: this.agentBuildForm.name,
+      role: this.agentBuildForm.role,
+      status: 'idle',
+      load: 0,
+      skills: this.agentBuildForm.skills,
+    };
+
+    this.stateService.addAgent(newAgent);
+    this.showAgentBuildModal.set(false);
   }
 
   protected addSkillToForm(skill: string): void {
@@ -239,36 +252,34 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
     return this.teamBuildForm.agentIds.includes(agentId);
   }
 
-  protected async submitTeamBuild(): Promise<void> {
+  protected submitTeamBuild(): void {
     if (!this.teamBuildForm.name || this.teamBuildForm.agentIds.length === 0) {
       return;
     }
-    
-    try {
-      const newTeamId = `team-${Date.now()}`;
-      const selectedAgents = this.stateService.agents().filter(a => this.teamBuildForm.agentIds.includes(a.id));
-      
-      const newTeam: CollaborationTeamVm = {
-        id: newTeamId,
-        name: this.teamBuildForm.name.toUpperCase(),
-        score: 0,
-        agents: selectedAgents.map(a => ({
-          id: a.id,
-          name: a.name,
-          role: a.role,
-          status: a.status,
-          position: { x: Math.random() * 80 + 10, y: Math.random() * 80 + 10 },
-        })),
-      };
-      
-      this.stateService.addTeam(newTeam);
-      this.syncFromOrchestrator();
-      
-      this.showTeamBuildModal.set(false);
-    } catch (error) {
-      console.error('创建团队失败:', error);
-      this.showTeamBuildModal.set(false);
-    }
+
+    const selectedAgents = this.stateService.agents().filter(agent => this.teamBuildForm.agentIds.includes(agent.id));
+    const teamName = this.teamBuildForm.name.toUpperCase();
+    const seedX = [18, 32, 68, 82];
+    const seedY = [24, 48, 64, 36];
+
+    const newTeam: CollaborationTeamVm = {
+      id: `team-${Date.now()}`,
+      name: teamName,
+      score: 0,
+      agents: selectedAgents.map((agent, index) => ({
+        id: agent.id,
+        name: agent.name,
+        role: agent.role,
+        status: agent.status,
+        position: {
+          x: seedX[index % seedX.length],
+          y: seedY[index % seedY.length],
+        },
+      })),
+    };
+
+    this.stateService.addTeam(newTeam);
+    this.showTeamBuildModal.set(false);
   }
 
   protected openTaskOrchestrationModal(): void {
@@ -287,19 +298,18 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
     if (!this.newTaskTitle) {
       return;
     }
-    
+
     const newTask: TaskOrchestrationItem = {
       id: `task-${Date.now()}`,
       title: this.newTaskTitle,
       description: this.newTaskDescription,
-      assignedAgentId: this.newTaskAssignedAgent || 'unassigned',
+      assignedAgentId: this.newTaskAssignedAgent || null,
       status: 'pending',
       priority: this.newTaskPriority,
       dependencies: [],
     };
-    
+
     this.taskOrchestrationList.push(newTask);
-    
     this.stateService.addTask({
       id: newTask.id,
       title: newTask.title,
@@ -309,12 +319,11 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
       priority: newTask.priority,
       dependencies: newTask.dependencies,
     });
-    
+
     this.newTaskTitle = '';
     this.newTaskDescription = '';
     this.newTaskPriority = 'medium';
     this.newTaskAssignedAgent = '';
-    this.syncFromOrchestrator();
   }
 
   protected removeTask(taskId: string): void {
@@ -323,51 +332,70 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
   }
 
   protected startTask(taskId: string): void {
-    const task = this.taskOrchestrationList.find(t => t.id === taskId);
-    if (task && task.status === 'pending') {
-      task.status = 'running';
-      this.stateService.updateTaskStatus(taskId, 'running');
-      
-      if (task.assignedAgentId && task.assignedAgentId !== 'unassigned') {
-        this.stateService.updateAgentStatus(task.assignedAgentId, 'running');
-      }
-      this.syncFromOrchestrator();
+    const task = this.taskOrchestrationList.find(item => item.id === taskId);
+    if (!task || task.status !== 'pending') {
+      return;
     }
+
+    const canStart = task.dependencies.every(depId => {
+      const dependency = this.taskOrchestrationList.find(item => item.id === depId);
+      return dependency?.status === 'completed';
+    });
+    if (!canStart) {
+      return;
+    }
+
+    task.status = 'running';
+    this.stateService.updateTaskStatus(taskId, 'running');
+
+    const assignedAgentId = task.assignedAgentId;
+    if (assignedAgentId) {
+      this.stateService.updateAgentStatus(assignedAgentId, 'running');
+    }
+    this.refreshDashboardFromState();
   }
 
   protected completeTask(taskId: string): void {
-    const task = this.taskOrchestrationList.find(t => t.id === taskId);
-    if (task && task.status === 'running') {
-      task.status = 'completed';
-      this.stateService.updateTaskStatus(taskId, 'completed', new Date().toISOString());
-      
-      if (task.assignedAgentId && task.assignedAgentId !== 'unassigned') {
-        this.stateService.updateAgentStatus(task.assignedAgentId, 'idle');
-      }
-      this.syncFromOrchestrator();
+    const task = this.taskOrchestrationList.find(item => item.id === taskId);
+    if (!task || task.status !== 'running') {
+      return;
     }
+
+    task.status = 'completed';
+    this.stateService.updateTaskStatus(taskId, 'completed', new Date().toISOString());
+
+    const assignedAgentId = task.assignedAgentId;
+    if (assignedAgentId) {
+      this.stateService.updateAgentStatus(assignedAgentId, 'idle');
+    }
+    this.refreshDashboardFromState();
   }
 
   protected failTask(taskId: string, error?: string): void {
-    const task = this.taskOrchestrationList.find(t => t.id === taskId);
-    if (task && task.status === 'running') {
-      task.status = 'failed';
-      this.stateService.updateTaskStatus(taskId, 'failed');
-      
-      if (task.assignedAgentId && task.assignedAgentId !== 'unassigned') {
-        this.stateService.updateAgentStatus(task.assignedAgentId, 'error');
-      }
-      this.syncFromOrchestrator();
+    const task = this.taskOrchestrationList.find(item => item.id === taskId);
+    if (!task || task.status !== 'running') {
+      return;
     }
+
+    task.status = 'failed';
+    this.stateService.updateTaskStatus(taskId, 'failed');
+
+    const assignedAgentId = task.assignedAgentId;
+    if (assignedAgentId) {
+      this.stateService.updateAgentStatus(assignedAgentId, 'error');
+    }
+    this.refreshDashboardFromState();
   }
 
   protected retryTask(taskId: string): void {
-    const task = this.taskOrchestrationList.find(t => t.id === taskId);
-    if (task && task.status === 'failed') {
-      task.status = 'pending';
-      this.stateService.updateTaskStatus(taskId, 'pending');
-      this.syncFromOrchestrator();
+    const task = this.taskOrchestrationList.find(item => item.id === taskId);
+    if (!task || task.status !== 'failed') {
+      return;
     }
+
+    task.status = 'pending';
+    this.stateService.updateTaskStatus(taskId, 'pending');
+    this.refreshDashboardFromState();
   }
 
   protected saveSnapshot(): void {
@@ -383,7 +411,7 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
     localStorage.setItem('collaboration-snapshot', JSON.stringify(snapshot));
   }
 
-  protected restoreSnapshot(): void {
+  protected restoreLocalSnapshot(): void {
     try {
       const snapshotStr = localStorage.getItem('collaboration-snapshot');
       if (!snapshotStr) {
@@ -419,56 +447,61 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
   }
 
   protected async startAutoOrchestration(): Promise<void> {
-    const agents = this.stateService.agents();
-    const tasks = this.taskOrchestrationList;
-    
-    const idleAgents = agents.filter(a => a.status === 'idle');
-    const pendingTasks = tasks.filter(t => t.status === 'pending');
-    
-    for (let i = 0; i < Math.min(idleAgents.length, pendingTasks.length); i++) {
-      const agent = idleAgents[i];
-      const task = pendingTasks[i];
-      
+    const mockCase = DEBATE_ORCHESTRATION_MOCKS.find(item => item.id === 'debate-auto');
+    if (!mockCase) {
+      return;
+    }
+
+    this.resetCollaborationScene();
+    mockCase.agents.forEach(agent => this.stateService.addAgent(agent));
+    mockCase.teams.forEach(team => this.stateService.addTeam(team));
+    mockCase.tasks.forEach(task => this.stateService.addTask(task));
+    this.taskOrchestrationList = mockCase.tasks.map(task => ({ ...task }));
+
+    const pendingTasks = this.taskOrchestrationList.filter(task => task.status === 'pending');
+    const availableAgents = this.stateService.agents().filter(agent => agent.status === 'idle');
+    pendingTasks.forEach((task, index) => {
+      const agent = availableAgents[index % availableAgents.length];
+      if (!agent) {
+        return;
+      }
       task.assignedAgentId = agent.id;
       this.stateService.assignTask(task.id, agent.id);
       this.stateService.updateAgentStatus(agent.id, 'running');
-    }
-    
-    this.syncFromOrchestrator();
+    });
+
+    this.stateService.updateBattleState({
+      teams: mockCase.teams,
+      currentTurn: 'AUTO-DEBATE',
+      round: 1,
+      status: 'playing',
+    });
+
+    this.refreshDashboardFromState();
   }
 
   protected async stopAutoOrchestration(): Promise<void> {
-    const agents = this.stateService.agents();
-    
-    const runningAgents = agents.filter(a => a.status === 'running');
-    runningAgents.forEach(agent => {
+    this.stateService.agents().forEach(agent => {
       this.stateService.updateAgentStatus(agent.id, 'idle');
     });
-    
-    this.syncFromOrchestrator();
+    this.refreshDashboardFromState();
   }
 
   protected async suggestAutoOrchestration(): Promise<void> {
-    const agents = this.stateService.agents();
-    const tasks = this.taskOrchestrationList;
-    
-    const idleAgents = agents.filter(a => a.status === 'idle');
-    const pendingTasks = tasks.filter(t => t.status === 'pending');
-    const runningTasks = tasks.filter(t => t.status === 'running');
-    
-    console.log('编排建议:', {
+    const pendingTasks = this.taskOrchestrationList.filter(task => task.status === 'pending');
+    const runningTasks = this.taskOrchestrationList.filter(task => task.status === 'running');
+    const idleAgents = this.stateService.agents().filter(agent => agent.status === 'idle');
+
+    console.log('辩论自动编排建议', {
       idleAgents: idleAgents.length,
       pendingTasks: pendingTasks.length,
       runningTasks: runningTasks.length,
-      recommendation: pendingTasks.length > idleAgents.length 
-        ? '需要更多Agent' 
-        : pendingTasks.length === 0 
-          ? '所有任务已分配' 
-          : '可以自动分配任务',
+      recommendation: pendingTasks.length > idleAgents.length ? '需要更多裁判/辅助Agent' : '可直接启动自动编排',
     });
   }
 
   protected openAgentDashboardModal(): void {
+    this.refreshDashboardFromState();
     this.showAgentDashboardModal.set(true);
   }
 
@@ -530,19 +563,7 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
   }
 
   protected resetGame(): void {
-    this.stateService.updateRuntime({
-      teamCount: 0,
-      agentCount: 0,
-      activeSessions: 0,
-      failedSessions: 0,
-      currentTasks: 0,
-    });
-    this.stateService.updateBattleState({
-      teams: [],
-      currentTurn: '--',
-      round: 0,
-      status: 'paused',
-    });
+    this.resetCollaborationScene();
   }
 
   protected async createAgent(): Promise<void> {
@@ -640,53 +661,405 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    window.addEventListener('keydown', this.handleKeyDown.bind(this));
-    this.syncFromOrchestrator();
-    
+    window.addEventListener('keydown', this.boundKeyDownHandler);
+    this.prepareManualDebateScene();
+
     const initialMode = this.modeManager.currentMode();
     this.stateService.updateMode(
       initialMode.currentMode,
-      this.modeManager.getCurrentModeConfig().name,
-      this.modeManager.getCurrentModeConfig().description,
+      '辩论对抗模式',
+      '围绕辩题进行正反对抗与裁决',
       initialMode.isActive ? '运行中' : '已停止',
     );
   }
 
   ngOnDestroy(): void {
-    window.removeEventListener('keydown', this.handleKeyDown.bind(this));
+    window.removeEventListener('keydown', this.boundKeyDownHandler);
+  }
+
+  // 快照相关方法
+  protected saveCurrentSnapshot(): void {
+    const state = {
+      agents: this.stateService.agents(),
+      teams: this.stateService.battleStage().teams,
+      tasks: this.taskOrchestrationList,
+      mode: this.stateService.mode(),
+      runtime: this.stateService.runtime(),
+      battleStage: this.stateService.battleStage(),
+      collaborationSummary: this.stateService.collaborationSummary(),
+      orchestration: this.stateService.orchestration(),
+      monitor: this.stateService.monitor(),
+    };
+    this.snapshotService.createSnapshot('辩论场景手动保存', state, 'collaboration', '辩论模式协作状态快照');
+  }
+
+  protected restoreLatestSnapshot(): void {
+    const latest = this.snapshotService.getLatestSnapshot();
+    if (latest) {
+      this.restoreSnapshot(latest.id);
+    }
+  }
+
+  protected restoreSnapshot(snapshotId: string): void {
+    const snapshot = this.snapshotService.getSnapshotById(snapshotId);
+    if (!snapshot) {
+      return;
+    }
+
+    this.snapshotService.restoreSnapshot(snapshotId);
+    this.stateService.resetCollaborationScene(snapshot.state.mode || 'battle');
+    snapshot.state.agents?.forEach((agent: CollaborationAgentVm) => this.stateService.addAgent(agent));
+    snapshot.state.teams?.forEach((team: CollaborationTeamVm) => this.stateService.addTeam(team));
+    snapshot.state.tasks?.forEach((task: TaskOrchestrationItem) => this.stateService.addTask(task));
+    this.taskOrchestrationList = (snapshot.state.tasks || []).map((task: TaskOrchestrationItem) => ({ ...task }));
+    this.stateService.updateBattleState(snapshot.state.battleStage || { teams: snapshot.state.teams || [], currentTurn: '--', round: 0, status: 'paused' });
+    this.stateService.updateCollaborationSummary(snapshot.state.collaborationSummary || this.stateService.collaborationSummary());
+    this.stateService.updateOrchestration(snapshot.state.orchestration || this.stateService.orchestration());
+    this.stateService.updateMonitor(snapshot.state.monitor || this.stateService.monitor());
+    this.stateService.updateMode(
+      snapshot.state.mode,
+      '辩论对抗模式',
+      '围绕辩题进行正反对抗与裁决',
+      '已恢复'
+    );
+    this.refreshDashboardFromState();
+  }
+
+  // 错误恢复相关方法
+  protected clearErrors(): void {
+    this.errorRecoveryService.clearErrors();
+  }
+
+  protected tryRecovery(): void {
+    const latestError = this.errorRecoveryService.errors()[this.errorRecoveryService.errors().length - 1];
+    if (latestError) {
+      this.errorRecoveryService.tryRecovery(latestError.id);
+    }
+    // 同时恢复快照（如果有的话）
+    this.restoreLatestSnapshot();
+  }
+
+  // 自动编排相关方法
+  protected runAutoOrchestration(): void {
+    const agents = this.stateService.agents();
+    if (agents.length === 0) {
+      this.resetCollaborationScene();
+      return;
+    }
+
+    this.prepareManualDebateScene();
+    const tasks = this.taskOrchestrationList.map(task => ({ ...task }));
+    this.taskOrchestrationList = tasks;
+
+    this.stateService.updateCollaborationSummary({
+      runningAgents: 0,
+      currentTasks: tasks.length,
+      collaborationLevel: 'High',
+      syncLatency: '12ms',
+    });
+
+    this.stateService.updateOrchestration({
+      planMode: '辩论预设编排',
+      assignedAgents: tasks.filter(task => task.assignedAgentId !== null).length,
+      activeEdges: tasks.filter(task => task.dependencies.length > 0).length,
+      convergence: '预设已生成',
+    });
+  }
+
+  protected prepareManualDebateScene(): void {
+    const agents = this.stateService.agents();
+    if (agents.length === 0) {
+      this.resetCollaborationScene();
+      return;
+    }
+
+    const affirmativeAgents = agents.filter(agent => agent.role === 'architect' || agent.role === 'analyst' || agent.role === 'developer');
+    const negativeAgents = agents.filter(agent => agent.role === 'tester' || agent.role === 'devops' || agent.role === 'product');
+    const judgeAgents = agents.filter(agent => agent.role === 'product' || agent.role === 'architect').slice(0, 1);
+
+    const teamBlueprints: CollaborationTeamVm[] = [
+      {
+        id: 'team-affirmative',
+        name: 'AFFIRMATIVE',
+        score: 0,
+        agents: affirmativeAgents.map((agent, index) => ({
+          id: agent.id,
+          name: agent.name,
+          role: agent.role,
+          status: agent.status,
+          position: { x: 18 + index * 10, y: 24 + index * 8 },
+        })),
+      },
+      {
+        id: 'team-negative',
+        name: 'NEGATIVE',
+        score: 0,
+        agents: negativeAgents.map((agent, index) => ({
+          id: agent.id,
+          name: agent.name,
+          role: agent.role,
+          status: agent.status,
+          position: { x: 70 - index * 10, y: 24 + index * 8 },
+        })),
+      },
+      {
+        id: 'team-judge',
+        name: 'JUDGE',
+        score: 0,
+        agents: judgeAgents.map((agent, index) => ({
+          id: agent.id,
+          name: agent.name,
+          role: agent.role,
+          status: agent.status,
+          position: { x: 50, y: 82 + index * 4 },
+        })),
+      },
+    ];
+
+    const tasks: TaskOrchestrationItem[] = [
+      {
+        id: 'debate-task-opening-affirmative',
+        title: '正方开篇立论',
+        description: '由正方 Agent 输出开篇论点',
+        assignedAgentId: affirmativeAgents[0]?.id ?? null,
+        status: 'pending',
+        priority: 'high',
+        dependencies: [],
+      },
+      {
+        id: 'debate-task-opening-negative',
+        title: '反方开篇立论',
+        description: '由反方 Agent 输出开篇论点',
+        assignedAgentId: negativeAgents[0]?.id ?? null,
+        status: 'pending',
+        priority: 'high',
+        dependencies: [],
+      },
+      {
+        id: 'debate-task-crossfire',
+        title: '交叉质询',
+        description: '双方针对对方观点展开质询',
+        assignedAgentId: affirmativeAgents[1]?.id ?? affirmativeAgents[0]?.id ?? null,
+        status: 'pending',
+        priority: 'medium',
+        dependencies: ['debate-task-opening-affirmative', 'debate-task-opening-negative'],
+      },
+      {
+        id: 'debate-task-verdict',
+        title: '裁判裁决',
+        description: '裁判 Agent 生成裁决结果',
+        assignedAgentId: judgeAgents[0]?.id ?? null,
+        status: 'pending',
+        priority: 'high',
+        dependencies: ['debate-task-crossfire'],
+      },
+    ];
+
+    this.stateService.resetCollaborationScene('battle');
+    agents.forEach(agent => this.stateService.addAgent(agent));
+    teamBlueprints.forEach(team => this.stateService.addTeam(team));
+    this.taskOrchestrationList = tasks.map(task => ({ ...task }));
+    tasks.forEach(task => this.stateService.addTask(task));
+
+    this.stateService.updateBattleState({
+      teams: teamBlueprints,
+      currentTurn: 'MANUAL-DEBATE',
+      round: 1,
+      status: 'paused',
+    });
+
+    this.stateService.updateRuntime({
+      teamCount: teamBlueprints.length,
+      agentCount: agents.length,
+      activeSessions: 0,
+      failedSessions: 0,
+      currentTasks: tasks.length,
+    });
+
+    this.stateService.updateCollaborationSummary({
+      runningAgents: 0,
+      currentTasks: tasks.length,
+      collaborationLevel: 'Medium',
+      syncLatency: '18ms',
+    });
+
+    this.stateService.updateOrchestration({
+      planMode: '辩论预设编排',
+      assignedAgents: tasks.filter(task => task.assignedAgentId !== null).length,
+      activeEdges: tasks.filter(task => task.dependencies.length > 0).length,
+      convergence: '等待手动启动',
+    });
+
+    this.stateService.updateMonitor({
+      cpu: 18,
+      memory: 25,
+      network: 10,
+      gpu: 12,
+      tokenTrend: 'stable',
+      recoveryStatus: '正常',
+    });
+  }
+
+  // 模板相关方法
+  protected applyTemplate(templateId: string): void {
+    const template = this.orchestrationTemplatesService.getTemplateById(templateId);
+    if (!template) {
+      console.error('模板不存在:', templateId);
+      return;
+    }
+
+    this.orchestrationTemplatesService.selectTemplate(template);
+    this.stateService.resetCollaborationScene(template.mode);
+    this.taskOrchestrationList = [];
+
+    template.agents.forEach(templateAgent => {
+      const newAgent: CollaborationAgentVm = {
+        id: templateAgent.id,
+        name: templateAgent.name,
+        role: templateAgent.role,
+        status: 'idle',
+        load: 0,
+        skills: templateAgent.skills,
+      };
+      this.stateService.addAgent(newAgent);
+    });
+
+    if (template.agents.length > 0) {
+      const newTeam: CollaborationTeamVm = {
+        id: `team-${Date.now()}`,
+        name: template.name,
+        score: 0,
+        agents: template.agents.map((a, index) => ({
+          id: a.id,
+          name: a.name,
+          role: a.role,
+          status: 'idle',
+          position: { x: 20 + index * 15, y: 20 + index * 8 },
+        })),
+      };
+      this.stateService.addTeam(newTeam);
+    }
+
+    template.tasks.forEach(templateTask => {
+      const newTask: TaskOrchestrationItem = {
+        id: templateTask.id,
+        title: templateTask.title,
+        description: templateTask.description,
+        assignedAgentId: templateTask.assignedAgentId,
+        status: 'pending',
+        priority: templateTask.priority,
+        dependencies: [],
+      };
+      this.taskOrchestrationList.push(newTask);
+      this.stateService.addTask(newTask);
+    });
+
+    this.stateService.updateMode(
+      template.mode,
+      template.name,
+      template.description,
+      '已加载'
+    );
+
+    this.stateService.updateBattleState({
+      teams: this.stateService.battleStage().teams,
+      currentTurn: template.name,
+      round: 1,
+      status: 'paused',
+    });
+
+    // 如果是辩论模式，传递辩论主题到辩论面板
+    if (template.mode === 'battle' && template.debateTopic) {
+      const debateTopic = {
+        id: templateId,
+        title: template.debateTopic.title,
+        description: template.debateTopic.description,
+        sides: [
+          {
+            id: 'affirmative',
+            name: '正方',
+            description: template.debateTopic.affirmativeDescription,
+          },
+          {
+            id: 'negative',
+            name: '反方',
+            description: template.debateTopic.negativeDescription,
+          },
+        ],
+      };
+      this.debateTopicBridge.setDebateTopic(debateTopic);
+
+      // 设置团队分配
+      const affirmativeAgents = template.agents
+        .filter(a => a.id.includes('affirmative'))
+        .map(a => a.id);
+      const negativeAgents = template.agents
+        .filter(a => a.id.includes('negative'))
+        .map(a => a.id);
+      const judges = template.agents
+        .filter(a => a.id.includes('judge'))
+        .map(a => a.id);
+
+      this.debateTopicBridge.setTeamAssignments(affirmativeAgents, negativeAgents, judges);
+    }
+
+    this.syncFromOrchestrator();
+    console.log('模板应用成功:', template.name);
   }
 
   private syncFromOrchestrator(): void {
     const vm = this.orchestrator.getCurrentVm();
-    
-    const agents = vm.teammates.map(teammate => ({
-      id: teammate.agentId,
-      name: teammate.name,
-      role: 'developer' as const,
-      status: teammate.sessionStatus === 'connected' ? 'running' : 'idle',
-      load: Math.round(Math.random() * 30),
-      skills: ['Auto-generated'],
-    }));
-    
     this.stateService.updateRuntime({
       teamCount: vm.teammates.length > 0 ? 1 : 0,
       agentCount: vm.teammates.length,
       activeSessions: vm.runningCount,
       failedSessions: vm.errorCount,
     });
-    
+    this.refreshDashboardFromState();
+  }
+
+  private refreshDashboardFromState(): void {
+    const tasks = this.stateService.tasks();
+    const runningTasks = tasks.filter(task => task.status === 'running').length;
+    const assignedAgents = tasks.filter(task => task.assignedAgentId !== null).length;
+    const activeEdges = tasks.filter(task => task.dependencies.length > 0).length;
+    const runningAgents = this.stateService.agents().filter(agent => agent.status === 'running' || agent.status === 'busy').length;
+
     this.stateService.updateCollaborationSummary({
-      runningAgents: vm.runningCount,
-      currentTasks: this.taskOrchestrationList.filter(t => t.status === 'running').length,
-      collaborationLevel: vm.runningCount > 0 ? 'High' : 'Low',
-      syncLatency: vm.runningCount > 0 ? `${Math.round(Math.random() * 20 + 10)}ms` : '--',
+      runningAgents,
+      currentTasks: runningTasks,
+      collaborationLevel: runningAgents > 0 ? 'High' : 'Low',
+      syncLatency: tasks.length > 0 ? '12ms' : '--',
     });
-    
+
     this.stateService.updateOrchestration({
-      planMode: this.taskOrchestrationList.length > 0 ? '手动编排' : '未启动',
-      assignedAgents: this.taskOrchestrationList.filter(t => t.assignedAgentId !== 'unassigned').length,
-      activeEdges: this.taskOrchestrationList.filter(t => t.status === 'running').length,
-      convergence: this.taskOrchestrationList.length > 0 ? '进行中' : '待确认',
+      planMode: tasks.length > 0 ? '辩论编排' : '未启动',
+      assignedAgents,
+      activeEdges,
+      convergence: tasks.some(task => task.status === 'failed') ? '存在异常' : tasks.every(task => task.status === 'completed') ? '已收敛' : '进行中',
     });
+
+    this.stateService.updateMonitor({
+      cpu: runningAgents > 0 ? 28 : 12,
+      memory: tasks.length > 0 ? 34 : 18,
+      network: tasks.length > 0 ? 16 : 8,
+      gpu: runningAgents > 0 ? 22 : 10,
+      tokenTrend: tasks.length > 0 ? 'rising' : 'stable',
+      recoveryStatus: tasks.some(task => task.status === 'failed') ? '需要恢复' : '正常',
+    });
+  }
+
+  private resetCollaborationScene(): void {
+    this.stateService.resetCollaborationScene('battle');
+    this.taskOrchestrationList = [];
+  }
+
+  // 画布事件处理
+  protected onTaskStarted(taskId: string): void {
+    this.startTask(taskId);
+  }
+
+  protected onTaskCompleted(taskId: string): void {
+    this.completeTask(taskId);
   }
 }

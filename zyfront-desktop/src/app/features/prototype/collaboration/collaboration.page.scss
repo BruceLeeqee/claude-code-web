@@ -783,6 +783,12 @@
   gap: 8px;
   padding: 8px;
   overflow: hidden;
+
+  // 编排视图：隐藏左右侧栏，画布占满全宽
+  &.arena-viewport-cognitive {
+    grid-template-columns: 1fr !important;
+    padding: 8px;
+  }
 }
 
 .arena-sidebar-left,
@@ -796,6 +802,13 @@
 .arena-main {
   min-height: 0;
   overflow: hidden;
+  width: 100%;
+}
+
+// 编排视图下的主区域
+.arena-viewport-cognitive .arena-main {
+  width: 100%;
+  max-width: 100%;
 }
 
 // ===== 8-BIT PIXEL PANEL =====
@@ -1612,9 +1625,8 @@
 // ===== COGNITIVE VIEW =====
 .cognitive-container {
   height: 100%;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
 }
 
 .cognition-panel,

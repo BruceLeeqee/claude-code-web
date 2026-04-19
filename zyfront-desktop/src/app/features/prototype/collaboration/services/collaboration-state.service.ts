@@ -9,6 +9,7 @@ export interface CollaborationAgentVm {
   status: 'idle' | 'running' | 'busy' | 'error';
   load: number;
   skills: string[];
+  teamRole?: 'affirmative' | 'negative' | 'judge';
 }
 
 export interface CollaborationTeamVm {
@@ -28,7 +29,7 @@ export interface CollaborationTaskVm {
   id: string;
   title: string;
   description: string;
-  assignedAgentId: string;
+  assignedAgentId: string | null;
   status: 'pending' | 'running' | 'completed' | 'failed';
   priority: 'high' | 'medium' | 'low';
   dependencies: string[];
@@ -89,7 +90,7 @@ export interface CollaborationStateSnapshot {
 @Injectable({ providedIn: 'root' })
 export class CollaborationStateService {
   private readonly state = signal<CollaborationStateSnapshot>({
-    activeTab: 'arena',
+    activeTab: 'monitor',
     mode: 'battle',
     modeLabel: '对抗模式',
     modeDescription: '智能体之间的辩论和竞争',
@@ -260,6 +261,51 @@ export class CollaborationStateService {
       runtime: {
         ...state.runtime,
         currentTasks: state.tasks.length - 1,
+      },
+    }));
+  }
+
+  resetCollaborationScene(mode: CollaborationMode = 'battle'): void {
+    this.state.update(state => ({
+      ...state,
+      mode,
+      modeLabel: '辩论对抗模式',
+      modeDescription: '围绕辩题进行正反对抗与裁决',
+      modeStatus: '已加载',
+      collaborationSummary: {
+        runningAgents: 0,
+        currentTasks: 0,
+        collaborationLevel: 'Low',
+        syncLatency: '--',
+      },
+      orchestration: {
+        planMode: '未启动',
+        assignedAgents: 0,
+        activeEdges: 0,
+        convergence: '待确认',
+      },
+      runtime: {
+        teamCount: 0,
+        agentCount: 0,
+        activeSessions: 0,
+        failedSessions: 0,
+        currentTasks: 0,
+      },
+      battleStage: {
+        teams: [],
+        currentTurn: '--',
+        round: 0,
+        status: 'paused',
+      },
+      tasks: [],
+      agents: [],
+      monitor: {
+        cpu: 0,
+        memory: 0,
+        network: 0,
+        gpu: 0,
+        tokenTrend: 'stable',
+        recoveryStatus: '正常',
       },
     }));
   }

@@ -14,15 +14,15 @@
         </div>
         <div class="arena-top-nav">
           <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'arena'" (click)="switchTab('arena')">智能体看板</button>
-          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'cognitive'" (click)="switchTab('cognitive')">任务编排</button>
+          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'cognitive'" (click)="switchTab('cognitive')">可视化编排</button>
           <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'monitor'" (click)="switchTab('monitor')">智能体管理</button>
         </div>
       </header>
 
       <!-- Main Content -->
-      <div class="arena-viewport">
-        <!-- ============ Left Panel (Shared) ============ -->
-        <aside class="arena-sidebar-left">
+      <div class="arena-viewport" [style.grid-template-columns]="activeTab() === 'cognitive' ? '1fr' : '260px 1fr 280px'">
+        <!-- ============ Left Panel (Hidden in cognitive view) ============ -->
+        <aside class="arena-sidebar-left" *ngIf="activeTab() !== 'cognitive'">
           <!-- Timeline Panel -->
           <div class="pixel-panel">
             <app-timeline></app-timeline>
@@ -159,120 +159,43 @@
 
         <!-- ============ COGNITIVE VIEW ============ -->
         <ng-container *ngIf="activeTab() === 'cognitive'">
-          <!-- Center Stage - Brain Visualization -->
-          <main class="arena-main">
-            <div class="cognitive-container">
-              <!-- Agent Cognition View -->
-              <div class="pixel-panel">
+          <!-- Center Stage - Visual Orchestration Canvas (Full Width) -->
+          <main class="arena-main" style="width: 100%; max-width: 100%; grid-column: 1 / -1;">
+            <div class="cognitive-container" style="height: 100%; width: 100%; display: flex; flex-direction: column;">
+              <!-- Orchestration Canvas -->
+              <div class="pixel-panel" style="flex: 1; display: flex; flex-direction: column; width: 100%;">
                 <div class="panel-header panel-header-purple">
-                  <span class="panel-title">编排入口</span>
+                  <span class="panel-title">可视化编排画布</span>
                   <span class="panel-badge">{{ currentModeSummary() }}</span>
                 </div>
-                <div class="panel-actions" style="margin-bottom: 12px;">
-                  <button class="btn btn-primary" style="width: 100%;" (click)="openTaskOrchestrationModal()">开始任务编排</button>
+                <div class="panel-actions" style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                  <button class="btn btn-primary" (click)="prepareManualDebateScene()">手动编排辩论场景</button>
+                  <button class="btn btn-success" (click)="runAutoOrchestration()">自动编排辩论场景</button>
+                  <button class="btn btn-warning" (click)="saveCurrentSnapshot()">保存快照</button>
+                  <button class="btn btn-info" (click)="restoreLatestSnapshot()">恢复快照</button>
                 </div>
-                <div class="cognition-visual">
-                  <div class="cognition-circle">
-                    <div class="cognition-human"></div>
-                    <div class="cognition-pixel cognition-pixel-top"></div>
-                    <div class="cognition-pixel cognition-pixel-right"></div>
-                    <div class="cognition-pixel cognition-pixel-bottom"></div>
-                    <div class="cognition-pixel cognition-pixel-left"></div>
-                  </div>
-                </div>
-                <div class="shared-board">
-                  <div class="board-item">
-                    <span class="board-label">编排方式</span>
-                    <span class="board-value board-value-yellow">{{ orchestrationValue('planMode') }}</span>
-                  </div>
-                  <div class="board-item">
-                    <span class="board-label">已分配Agent</span>
-                    <span class="board-value board-value-green">{{ orchestrationValue('assignedAgents') }}</span>
-                  </div>
-                  <div class="board-item">
-                    <span class="board-label">连接关系</span>
-                    <span class="board-value board-value-blue">{{ orchestrationValue('activeEdges') }}</span>
-                  </div>
-                  <div class="board-item">
-                    <span class="board-label">收敛状态</span>
-                    <span class="board-value board-value-yellow">{{ orchestrationValue('convergence') }}</span>
+                <div style="margin-bottom: 16px;">
+                  <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">快速模板：</div>
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button *ngFor="let template of orchestrationTemplatesService.templates().slice(0, 5)" 
+                            class="btn btn-small" 
+                            style="font-size: 11px; padding: 4px 12px;"
+                            (click)="applyTemplate(template.id)">
+                      {{ template.name }}
+                    </button>
                   </div>
                 </div>
-              </div>
-
-              <!-- Shared Workspace -->
-              <div class="pixel-panel thought-panel">
-                <app-shared-workspace></app-shared-workspace>
-              </div>
-
-              <div class="pixel-panel">
-                <div class="panel-header panel-header-green">
-                  <span class="panel-title">编排结果</span>
-                  <span class="panel-subtitle">拓扑 / 流向</span>
-                </div>
-                <div class="shared-board">
-                  <div class="board-item">
-                    <span class="board-label">拓扑状态</span>
-                    <span class="board-value board-value-green">已收敛</span>
-                  </div>
-                  <div class="board-item">
-                    <span class="board-label">任务流向</span>
-                    <span class="board-value board-value-yellow">顺序可见</span>
-                  </div>
-                  <div class="board-item">
-                    <span class="board-label">依赖关系</span>
-                    <span class="board-value board-value-blue">可追踪</span>
-                  </div>
-                  <div class="board-item">
-                    <span class="board-label">结果状态</span>
-                    <span class="board-value board-value-blue">待执行</span>
-                  </div>
-                </div>
+                <app-orchestration-canvas 
+                  [agents]="agents" 
+                  [tasks]="taskOrchestrationList"
+                  [mode]="stateService.mode()"
+                  (taskStarted)="onTaskStarted($event)"
+                  (taskCompleted)="onTaskCompleted($event)"
+                  style="flex: 1; min-height: 0; width: 100%;">
+                </app-orchestration-canvas>
               </div>
             </div>
           </main>
-
-          <!-- Right Panel -->
-          <aside class="arena-sidebar-right">
-            <!-- Mode Selector -->
-            <app-mode-selector></app-mode-selector>
-
-            <!-- Agent Status Panel -->
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-cyan">
-                <span class="panel-title">AGENT</span>
-                <span class="panel-subtitle">实时负载</span>
-              </div>
-              <div class="agent-list" *ngFor="let agent of agents">
-                <app-agent-node [agent]="agent"></app-agent-node>
-              </div>
-
-              <div class="perf-section">
-                <div class="perf-header">
-                  <span class="perf-icon">⚡</span>
-                  <span>结构快照</span>
-                </div>
-                <div class="perf-grid">
-                  <div class="perf-item">
-                    <span class="perf-label">CPU</span>
-                    <span class="perf-value perf-value-red">{{ monitorValue('cpu') }}%</span>
-                  </div>
-                  <div class="perf-item">
-                    <span class="perf-label">GPU</span>
-                    <span class="perf-value perf-value-green">{{ monitorValue('gpu') }}%</span>
-                  </div>
-                  <div class="perf-item">
-                    <span class="perf-label">NET</span>
-                    <span class="perf-value perf-value-blue">{{ monitorValue('network') }}%</span>
-                  </div>
-                  <div class="perf-item">
-                    <span class="perf-label">MEM</span>
-                    <span class="perf-value perf-value-yellow">{{ monitorValue('memory') }}%</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </aside>
         </ng-container>
 
 

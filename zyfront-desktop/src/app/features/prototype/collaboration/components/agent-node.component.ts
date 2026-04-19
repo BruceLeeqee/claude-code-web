@@ -9,6 +9,7 @@ interface AgentNodeState {
   status: 'idle' | 'running' | 'busy' | 'error';
   load: number;
   skills: string[];
+  teamRole?: 'affirmative' | 'negative' | 'judge';
 }
 
 @Component({
@@ -17,7 +18,16 @@ interface AgentNodeState {
   imports: [CommonModule],
   template: `
     <div class="agent-node" [class.agent-node-running]="agent.status === 'running'" [class.agent-node-busy]="agent.status === 'busy'" [class.agent-node-error]="agent.status === 'error'" #agentNode>
-      <div class="agent-avatar" [class.agent-avatar-architect]="agent.role === 'architect'" [class.agent-avatar-analyst]="agent.role === 'analyst'" [class.agent-avatar-developer]="agent.role === 'developer'" [class.agent-avatar-tester]="agent.role === 'tester'" [class.agent-avatar-devops]="agent.role === 'devops'" [class.agent-avatar-product]="agent.role === 'product'">
+      <div class="agent-avatar" 
+        [class.agent-avatar-affirmative]="agent.teamRole === 'affirmative'"
+        [class.agent-avatar-negative]="agent.teamRole === 'negative'"
+        [class.agent-avatar-judge]="agent.teamRole === 'judge'"
+        [class.agent-avatar-architect]="!agent.teamRole && agent.role === 'architect'" 
+        [class.agent-avatar-analyst]="!agent.teamRole && agent.role === 'analyst'" 
+        [class.agent-avatar-developer]="!agent.teamRole && agent.role === 'developer'" 
+        [class.agent-avatar-tester]="!agent.teamRole && agent.role === 'tester'" 
+        [class.agent-avatar-devops]="!agent.teamRole && agent.role === 'devops'" 
+        [class.agent-avatar-product]="!agent.teamRole && agent.role === 'product'">
         <div class="agent-avatar-inner"></div>
       </div>
       <div class="agent-info">
@@ -81,6 +91,24 @@ interface AgentNodeState {
         height: 24px;
         background: currentColor;
         image-rendering: pixelated;
+      }
+      
+      .agent-avatar-affirmative {
+        color: #00ff88;
+        border-color: #00ff88;
+        box-shadow: 0 0 12px rgba(0, 255, 136, 0.6);
+      }
+      
+      .agent-avatar-negative {
+        color: #ff4466;
+        border-color: #ff4466;
+        box-shadow: 0 0 12px rgba(255, 68, 102, 0.6);
+      }
+      
+      .agent-avatar-judge {
+        color: #ffdd00;
+        border-color: #ffdd00;
+        box-shadow: 0 0 12px rgba(255, 221, 0, 0.6);
       }
       
       .agent-avatar-architect {
