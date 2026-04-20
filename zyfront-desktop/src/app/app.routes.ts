@@ -7,7 +7,7 @@ export const routes: Routes = [
   {
     path: '',
     pathMatch: 'full',
-    redirectTo: 'prototype/collaboration',
+    redirectTo: 'workbench',
   },
   {
     path: 'workbench',
@@ -41,6 +41,10 @@ export const routes: Routes = [
       {
         path: 'plugins',
         loadComponent: () => import('./features/prototype/plugins/plugins.page').then((m) => m.PluginsPrototypePageComponent),
+      },
+      {
+        path: 'multi-agent-test',
+        loadComponent: () => import('./core/multi-agent/multi-agent-test-panel.component').then((m) => m.MultiAgentTestPanelComponent),
       },
       {
         path: 'quant',

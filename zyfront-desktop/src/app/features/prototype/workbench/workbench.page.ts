@@ -44,6 +44,7 @@ import { type TurnContext } from '../../../core/memory/memory.types';
 import { MultiAgentOrchestratorService } from '../../../core/multi-agent/multi-agent.orchestrator.service';
 import type { TeammateMode, WorkbenchTeamVm } from '../../../core/multi-agent/multi-agent.types';
 import type { MultiAgentEvent } from '../../../core/multi-agent/multi-agent.events';
+import { MultiAgentSidebarComponent } from '../../../core/multi-agent/multi-agent-sidebar.component';
 
 type MultiAgentTimelineTier = 'info' | 'success' | 'warning' | 'error';
 
@@ -325,6 +326,7 @@ function parsePlanStepsFromText(text: string): string[] {
     NzInputModule,
     NzProgressModule,
     WorkbenchMonacoEditorComponent,
+    MultiAgentSidebarComponent,
   ],
   templateUrl: './workbench.page.html',
   styleUrls: ['../prototype-page.scss', './workbench.page.scss'],
@@ -356,6 +358,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   @ViewChild('tabScrollHost', { static: false })
   private tabScrollHost?: ElementRef<HTMLDivElement>;
+
+  @ViewChild(MultiAgentSidebarComponent, { static: false })
+  private multiAgentSidebar?: MultiAgentSidebarComponent;
 
   protected readonly workspaceRoot = signal('workspace');
   /** Vault 绝对路径（Electron 解析后） */
@@ -609,7 +614,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly leftPanelVisible = signal(true);
   /** 为 true 时渲染底部 PTY；默认开启以便首次进入即可初始化真实 Shell */
   protected readonly terminalMenuVisible = signal(false);
-  protected readonly rightPanelVisible = signal(false);
+  protected readonly rightPanelVisible = signal(true);
 
   protected readonly leftPanelWidth = signal(260);
   protected readonly rightPanelWidth = signal(300);
@@ -4571,6 +4576,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     if (!trimmed) {
       this.aiXtermWrite('\r\n\x1b[31m[error]\x1b[0m 请输入内容。\r\n');
       return;
+    }
+
+    if (this.multiAgentSidebar) {
+      this.multiAgentSidebar.processRequest(trimmed).catch(() => {});
     }
 
     if (!this.appSettings.value.apiKey?.trim()) {

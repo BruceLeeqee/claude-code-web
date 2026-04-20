@@ -162,27 +162,7 @@
       <div class="panel-resizer vertical" *ngIf="rightPanelVisible()" (mousedown)="onRightResizeStart($event)"></div>
 
       <aside class="wb-right-panel" *ngIf="rightPanelVisible()" [style.width.px]="rightPanelWidth()">
-        <div class="wb-right-scroll">
-          <div class="right-header">
-            <div class="panel-title vscode-section-title">终端会话</div>
-            <div class="panel-sub">只保留会话控制与连接说明</div>
-            <div class="panel-sub">当前绑定：主终端 / Shell 会话</div>
-            <div class="panel-sub">会话状态：仅保留终端连接与输出</div>
-          </div>
-
-          <div class="multi-agent-block">
-            <div class="section-label">会话说明</div>
-            <div class="ma-manual-card">
-              <div class="ma-manual-title">当前职责</div>
-              <div class="ma-manual-grid">
-                <div class="ma-manual-step"><span>1</span><p>这里只保留 Shell、日志和 tmux 会话控制。</p></div>
-                <div class="ma-manual-step"><span>2</span><p>每个 Tab 对应一个独立执行环境，可连接、断开和重连。</p></div>
-                <div class="ma-manual-step"><span>3</span><p>任务、计划、记忆和协作信息已迁移到协作页。</p></div>
-                <div class="ma-manual-step"><span>4</span><p>终端页不再承载多 Agent 编排入口。</p></div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <app-multi-agent-sidebar [visible]="rightPanelVisible()"></app-multi-agent-sidebar>
       </aside>
     </div>
   </div>

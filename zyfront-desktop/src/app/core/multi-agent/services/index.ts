@@ -1,0 +1,9 @@
+export { TaskPlannerService } from './task-planner.service';
+export { AgentFactoryService } from './agent-factory.service';
+export { AgentIntentEngine } from './agent-intent-engine.service';
+export { AgentLifecycleManager } from './agent-lifecycle-manager.service';
+export { SessionRegistryService } from './session-registry.service';
+export { ModelRouterService } from './model-router.service';
+export { AutoScaleOrchestrator } from './auto-scale-orchestrator.service';
+export { MultiAgentFacade } from '../multi-agent.facade';
+export { MultiAgentTestService } from '../multi-agent-test.service';

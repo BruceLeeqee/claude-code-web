@@ -7,6 +7,7 @@ import { DebatePanelComponent } from './components/debate-panel.component';
 import { ModeSelectorComponent } from './components/mode-selector.component';
 import { TimelineComponent } from './components/timeline.component';
 import { OrchestrationCanvasComponent } from './components/orchestration-canvas.component';
+import { MultiAgentSidebarComponent } from '../../../core/multi-agent/multi-agent-sidebar.component';
 import { MultiAgentOrchestratorService } from '../../../core/multi-agent/multi-agent.orchestrator.service';
 import { CollaborationStateService, CollaborationAgentVm, CollaborationTeamVm } from './services/collaboration-state.service';
 import { ModeManagerService } from './services/mode-manager.service';
@@ -53,7 +54,7 @@ interface TaskOrchestrationItem {
 @Component({
   selector: 'app-collaboration-page',
   standalone: true,
-  imports: [CommonModule, FormsModule, AgentNodeComponent, BattleStageComponent, DebatePanelComponent, ModeSelectorComponent, TimelineComponent, OrchestrationCanvasComponent],
+  imports: [CommonModule, FormsModule, AgentNodeComponent, BattleStageComponent, DebatePanelComponent, ModeSelectorComponent, TimelineComponent, OrchestrationCanvasComponent, MultiAgentSidebarComponent],
   templateUrl: './collaboration.page.html',
   styleUrls: ['../prototype-page.scss', './collaboration.page.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
