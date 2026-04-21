@@ -29,7 +29,7 @@ export class GlobalShellFrameComponent {
   @Output() toggleRightPanel = new EventEmitter<void>();
   @Output() openProject = new EventEmitter<void>();
 
-  protected readonly fileMenuItems = [{ key: 'open-project', label: '打开工程…' }];
+  protected readonly fileMenuItems = [{ key: 'open-project', label: '打开文件夹…' }];
 
   protected handleFileMenuAction(key: string): void {
     if (key === 'open-project') this.openProject.emit();

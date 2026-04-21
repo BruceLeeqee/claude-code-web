@@ -21,6 +21,12 @@ import { EVENT_TYPES, MultiAgentEvent, TaskPlannedPayload, AgentCreatedPayload, 
 import { Subscription } from 'rxjs';
 import { filter } from 'rxjs/operators';
 
+interface SubTask {
+  text: string;
+  completed: boolean;
+  tag?: string;
+}
+
 interface TaskNodeVm {
   taskId: string;
   title: string;
@@ -33,6 +39,8 @@ interface TaskNodeVm {
   depth: number;
   progress?: number;
   output?: string;
+  subtasks?: SubTask[];
+  currentStep?: string;
 }
 
 interface AgentVm {
@@ -113,6 +121,11 @@ export class MultiAgentSidebarComponent implements OnDestroy {
 
     Object.values(taskMap).forEach((task: TaskNode) => {
       if (!visibleIds.has(task.taskId)) return;
+      const subtasks = this.generateSubTasksForType(task.type);
+      const currentStep = task.status === 'running' 
+        ? this.getCurrentStepText(task.type)
+        : undefined;
+        
       nodes.push({
         taskId: task.taskId,
         title: task.title,
@@ -125,6 +138,8 @@ export class MultiAgentSidebarComponent implements OnDestroy {
         depth: depths[task.taskId] || 0,
         progress: this.taskProgressMap.get(task.taskId),
         output: this.taskOutputMap.get(task.taskId),
+        subtasks,
+        currentStep,
       });
     });
 
@@ -204,7 +219,8 @@ export class MultiAgentSidebarComponent implements OnDestroy {
       this.taskOutputMap.clear();
       this.agentThinkingMap.clear();
       this.agentOutputMap.clear();
-      this.visibleTaskIds.set(new Set());
+      const newVisibleIds = new Set<string>(Object.keys(taskGraph.tasks));
+      this.visibleTaskIds.set(newVisibleIds);
       this.taskGraph.set(taskGraph);
       
       if (userRequest) {
@@ -578,6 +594,14 @@ export class MultiAgentSidebarComponent implements OnDestroy {
       });
 
       this.taskGraph.set(output.taskGraph);
+      
+      console.log('[MultiAgent] Task graph:', output.taskGraph);
+      console.log('[MultiAgent] Tasks:', output.taskGraph.tasks);
+      
+      // Immediately show all tasks in the sidebar
+      const allTaskIds = new Set(Object.keys(output.taskGraph.tasks));
+      console.log('[MultiAgent] Visible task IDs:', allTaskIds);
+      this.visibleTaskIds.set(allTaskIds);
 
       if (output.agentIntents.length > 0) {
         const roleToAgentId = new Map<string, string>();
@@ -689,12 +713,6 @@ export class MultiAgentSidebarComponent implements OnDestroy {
       }
 
       const task = sortedTasks[currentIndex];
-
-      this.visibleTaskIds.update(ids => {
-        const newIds = new Set(ids);
-        newIds.add(task.taskId);
-        return newIds;
-      });
       
       const toolCallResult = this.planModeTrigger.recordToolCall();
       if (toolCallResult.warning) {
@@ -933,5 +951,77 @@ export class MultiAgentSidebarComponent implements OnDestroy {
       coordination: 'planner',
     };
     return mapping[type] || 'executor';
+  }
+
+  private generateSubTasksForType(type: string): SubTask[] {
+    const subTasksByType: Record<string, SubTask[]> = {
+      research: [
+        { text: '分析项目结构', completed: true, tag: 'DevOps' },
+        { text: '识别关键模块', completed: true, tag: 'DevOps' },
+        { text: '收集技术文档', completed: false },
+      ],
+      analysis: [
+        { text: '数据收集', completed: true },
+        { text: '问题分析', completed: true },
+        { text: '方案评估', completed: false },
+      ],
+      planning: [
+        { text: '需求分析', completed: true },
+        { text: '架构设计', completed: false },
+        { text: '任务拆分', completed: false },
+      ],
+      coding: [
+        { text: '接口定义', completed: true },
+        { text: '核心逻辑实现', completed: false },
+        { text: '单元测试', completed: false },
+      ],
+      testing: [
+        { text: '测试用例编写', completed: true },
+        { text: '集成测试', completed: false },
+        { text: '性能测试', completed: false },
+      ],
+      documentation: [
+        { text: 'API 文档', completed: true },
+        { text: '使用指南', completed: false },
+        { text: '示例代码', completed: false },
+      ],
+      review: [
+        { text: '代码审查', completed: true },
+        { text: '安全审计', completed: false },
+        { text: '性能审查', completed: false },
+      ],
+      debugging: [
+        { text: '问题复现', completed: true },
+        { text: '根因定位', completed: false },
+        { text: '修复方案', completed: false },
+      ],
+      coordination: [
+        { text: '任务分配', completed: true },
+        { text: '进度同步', completed: false },
+        { text: '资源调度', completed: false },
+      ],
+    };
+    
+    return subTasksByType[type] || [
+      { text: '任务准备', completed: true },
+      { text: '任务执行', completed: false },
+      { text: '结果验证', completed: false },
+    ];
+  }
+
+  private getCurrentStepText(type: string): string {
+    const stepsByType: Record<string, string> = {
+      research: '正在分析项目结构和关键模块...',
+      analysis: '正在分析数据和问题点...',
+      planning: '正在制定实施计划...',
+      coding: '正在编写核心功能代码...',
+      testing: '正在执行测试用例...',
+      documentation: '正在更新文档...',
+      review: '正在进行代码审查...',
+      debugging: '正在定位问题根因...',
+      coordination: '正在协调任务分配...',
+    };
+    
+    return stepsByType[type] || '正在执行任务...';
   }
 }

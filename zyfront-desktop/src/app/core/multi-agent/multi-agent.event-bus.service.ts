@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { Subject } from 'rxjs';
+import { Subject, Subscription } from 'rxjs';
 import type { MultiAgentEvent, MultiAgentEventEnvelope, MultiAgentEventMap, MultiAgentEventSource } from './multi-agent.events';
 
 @Injectable({ providedIn: 'root' })
@@ -27,5 +27,16 @@ export class MultiAgentEventBusService {
     };
     this.subject.next(envelope as unknown as MultiAgentEvent);
     return envelope as unknown as MultiAgentEvent<K>;
+  }
+
+  on<K extends keyof MultiAgentEventMap>(
+    type: K,
+    handler: (event: MultiAgentEvent<K>) => void,
+  ): Subscription {
+    return this.events$.subscribe((event) => {
+      if (event.type === type) {
+        handler(event as MultiAgentEvent<K>);
+      }
+    });
   }
 }

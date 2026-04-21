@@ -1,106 +1,82 @@
 <div class="multi-agent-sidebar" [class.collapsed]="collapsed()" [class.hidden]="!visible()">
   <div class="sidebar-header">
-    <div class="header-title" *ngIf="!collapsed()">
-      <span nz-icon nzType="team" nzTheme="outline"></span>
+    <div class="header-left">
+      <span class="header-icon" nz-icon nzType="diff" nzTheme="outline"></span>
+      <span class="header-title">AI 任务分解</span>
     </div>
-    <button nz-button nzType="text" nzSize="small" class="collapse-btn" (click)="toggleCollapse()">
-      <span nz-icon [nzType]="collapsed() ? 'menu-unfold' : 'menu-fold'" nzTheme="outline"></span>
-    </button>
   </div>
 
   <div class="sidebar-content" *ngIf="!collapsed()">
-    <div class="current-request" *ngIf="currentRequest()">
-      <div class="request-label">当前任务</div>
-      <div class="request-text">{{ currentRequest() }}</div>
+    <div class="status-overview-section">
+      <div class="section-title">
+        <span class="title-text">智能体状态概览</span>
+        <span class="status-badge">
+          <span class="status-dot"></span>
+          {{ agents().length }} ACTIVE
+        </span>
+      </div>
+      <div class="agents-display-grid" *ngIf="agents().length > 0; else emptyAgents">
+        <div class="agent-display-card" *ngFor="let agent of agents(); trackBy: trackByAgentId">
+          <div class="agent-icon-wrapper" [class.running]="agent.status === 'running'" [class.idle]="agent.status === 'idle'">
+            <span nz-icon [nzType]="getRoleIcon(agent.role)" nzTheme="outline"></span>
+          </div>
+          <div class="agent-info-wrapper">
+            <div class="agent-name-text">{{ agent.agentName }}</div>
+            <div class="agent-status-text" [class.running]="agent.status === 'running'" [class.idle]="agent.status === 'idle'">
+              {{ agent.status === 'running' ? '编码中...' : '待命' }}
+            </div>
+          </div>
+        </div>
+      </div>
+      <ng-template #emptyAgents>
+        <div class="empty-section">等待输入任务后自动分解</div>
+      </ng-template>
     </div>
 
-    <div class="section tasks-section" *ngIf="taskNodes().length > 0">
-      <div class="section-header">
-        <span nz-icon nzType="apartment" nzTheme="outline"></span>
-        <span>任务列表</span>
-        <span class="task-count">{{ completedTaskCount() }}/{{ taskNodes().length }}</span>
-        <button nz-button nzType="text" nzSize="small" class="expand-btn" (click)="toggleTaskList()">
-          <span nz-icon [nzType]="taskListExpanded() ? 'down' : 'right'" nzTheme="outline"></span>
-        </button>
-      </div>
-      <div class="task-list" *ngIf="taskListExpanded()">
-        <div 
-          class="task-item" 
-          *ngFor="let task of taskNodes(); trackBy: trackByTaskId"
-          [class.task-pending]="task.status === 'pending'"
-          [class.task-running]="task.status === 'running'"
-          [class.task-completed]="task.status === 'completed'"
-          [class.task-failed]="task.status === 'failed'">
-          <div class="task-item-row">
-            <span class="task-status-icon" [class.status-pending]="task.status === 'pending'" [class.status-running]="task.status === 'running'" [class.status-completed]="task.status === 'completed'" [class.status-failed]="task.status === 'failed'">
-              <span *ngIf="task.status === 'pending'" class="status-circle pending"></span>
-              <span *ngIf="task.status === 'running'" class="status-circle running"></span>
-              <span *ngIf="task.status === 'completed'" class="status-check completed">
-                <span nz-icon nzType="check" nzTheme="outline"></span>
-              </span>
-              <span *ngIf="task.status === 'failed'" class="status-cross failed">
-                <span nz-icon nzType="close" nzTheme="outline"></span>
-              </span>
+    <div class="tasks-section" *ngIf="taskNodes().length > 0">
+      <div class="task-item" *ngFor="let task of taskNodes(); trackBy: trackByTaskId" [class.task-pending]="task.status === 'pending'" [class.task-running]="task.status === 'running'" [class.task-completed]="task.status === 'completed'" [class.task-failed]="task.status === 'failed'">
+        <div class="task-header">
+          <div class="task-icon-wrapper" [class.status-pending]="task.status === 'pending'" [class.status-running]="task.status === 'running'" [class.status-completed]="task.status === 'completed'" [class.status-failed]="task.status === 'failed'">
+            <span *ngIf="task.status === 'pending'" class="circle-pending" nz-icon nzType="ellipsis" nzTheme="outline"></span>
+            <span *ngIf="task.status === 'running'" class="circle-running" nz-icon nzType="loading" nzTheme="outline" nzSpin></span>
+            <span *ngIf="task.status === 'completed'" class="circle-completed" nz-icon nzType="check" nzTheme="outline"></span>
+            <span *ngIf="task.status === 'failed'" class="circle-failed" nz-icon nzType="close-circle" nzTheme="outline"></span>
+          </div>
+          <span class="task-title-text">{{ task.title }}</span>
+          <span class="task-percent" *ngIf="task.progress !== undefined && task.status !== 'completed'">
+            {{ task.progress }}%
+          </span>
+          <span class="task-status-label" *ngIf="task.status === 'completed'">100%</span>
+          <span class="task-status-label failed" *ngIf="task.status === 'failed'">FAILED</span>
+        </div>
+        <div class="task-subtasks" *ngIf="task.subtasks && task.subtasks.length > 0">
+          <div class="subtask-item" *ngFor="let subtask of task.subtasks" [class.completed]="subtask.completed">
+            <span class="subtask-check">
+              <span nz-icon nzType="check" nzTheme="outline" *ngIf="subtask.completed"></span>
             </span>
-            <span class="task-item-title" [class.completed]="task.status === 'completed'">{{ task.title }}</span>
-            <span class="task-item-type">{{ task.taskType }}</span>
+            <span class="subtask-text">{{ subtask.text }}</span>
+            <span class="subtask-tag" *ngIf="subtask.tag">{{ subtask.tag }}</span>
           </div>
-          <div class="task-item-output" *ngIf="task.output">
-            <span class="output-label">输出:</span>
-            <span class="output-text">{{ task.output }}</span>
+        </div>
+        <div class="task-progress-bar-container" *ngIf="task.progress !== undefined && task.status === 'running'">
+          <div class="task-progress-bar">
+            <span [style.width.%]="task.progress"></span>
+          </div>
+        </div>
+        <div class="task-collapsed-panel" *ngIf="task.status === 'running'">
+          <div class="collapsed-content">
+            <span class="collapsed-text">{{ task.currentStep || '正在执行...' }}</span>
+            <div class="collapsed-icons">
+              <span class="collapsed-icon">
+                <span nz-icon nzType="swap" nzTheme="outline"></span>
+              </span>
+              <span class="collapsed-icon purple">
+                <span nz-icon nzType="layer" nzTheme="outline"></span>
+              </span>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-
-    <div class="section agents-section" *ngIf="agents().length > 0">
-      <div class="section-header">
-        <span nz-icon nzType="user" nzTheme="outline"></span>
-        <span>智能体</span>
-      </div>
-      <div class="agent-list">
-        <div 
-          class="agent-card" 
-          *ngFor="let agent of agents(); trackBy: trackByAgentId"
-          [class.agent-running]="agent.status === 'running'"
-          [class.agent-idle]="agent.status === 'idle'"
-          [class.agent-thinking]="agent.status === 'thinking'">
-          <div class="agent-row">
-            <div class="agent-avatar" [class.status-running]="agent.status === 'running'" [class.status-idle]="agent.status === 'idle'" [class.status-thinking]="agent.status === 'thinking'" [ngClass]="'role-' + agent.role">
-              <span nz-icon [nzType]="getRoleIcon(agent.role)" nzTheme="outline"></span>
-            </div>
-            <div class="agent-info">
-              <span class="agent-name">{{ agent.agentName }}</span>
-              <nz-tag [nzColor]="getRoleColor(agent.role)" nzSize="small">{{ agent.role }}</nz-tag>
-            </div>
-            <div class="agent-status">
-              <span class="status-dot" [class.running]="agent.status === 'running'" [class.idle]="agent.status === 'idle'" [class.thinking]="agent.status === 'thinking'"></span>
-              <span class="status-text">{{ getAgentStatusText(agent.status) }}</span>
-            </div>
-          </div>
-          
-          <div class="agent-thinking" *ngIf="agent.thinking">
-            <div class="thinking-header">
-              <span nz-icon nzType="bulb" nzTheme="outline"></span>
-              <span>思考中...</span>
-            </div>
-            <div class="thinking-content">{{ agent.thinking }}</div>
-          </div>
-
-          <div class="agent-output" *ngIf="agent.output">
-            <div class="output-header">
-              <span nz-icon nzType="file-text" nzTheme="outline"></span>
-              <span>输出结果</span>
-            </div>
-            <div class="output-content">{{ agent.output }}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="empty-state" *ngIf="taskNodes().length === 0 && agents().length === 0">
-      <span nz-icon nzType="inbox" nzTheme="outline" class="empty-icon"></span>
-      <p>输入任务后将自动分解并分配智能体</p>
     </div>
   </div>
 </div>

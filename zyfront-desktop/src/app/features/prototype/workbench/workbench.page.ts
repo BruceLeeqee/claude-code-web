@@ -10,6 +10,7 @@ import {
   effect,
   inject,
   signal,
+  CUSTOM_ELEMENTS_SCHEMA,
 } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { NgFor, NgIf, NgTemplateOutlet } from '@angular/common';
@@ -331,6 +332,7 @@ function parsePlanStepsFromText(text: string): string[] {
     WorkbenchMonacoEditorComponent,
     MultiAgentSidebarComponent,
   ],
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
   templateUrl: './workbench.page.html',
   styleUrls: ['../prototype-page.scss', './workbench.page.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -442,6 +444,20 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   /** 左侧：资源管理器 / 搜索 / Git */
   protected readonly sidebarView = signal<SidebarView>('explorer');
+  
+  /** 三个可折叠区域的状态 */
+  protected readonly projectTreeExpanded = signal(true);
+  protected readonly recentSessionsExpanded = signal(false);
+  protected readonly memoryVaultExpanded = signal(false);
+  protected readonly gitChangesExpanded = signal(true);
+  protected readonly gitCommitsExpanded = signal(true);
+  
+  /** Vault根目录固定目录列表 */
+  protected readonly vaultExplorerTop = VAULT_EXPLORER_TOP;
+  
+  /** 记忆仓库的树节点 */
+  protected readonly memoryVaultTree = signal<FileNode[]>([]);
+  
   protected readonly gitBranch = signal('');
   protected readonly gitBranchRefs = signal<GitBranchRef[]>([]);
   protected readonly gitChangedFiles = signal<GitChangedFile[]>([]);
@@ -469,6 +485,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly searchBusy = signal(false);
   protected readonly searchHits = signal<SearchHit[]>([]);
   protected readonly searchMessage = signal('');
+
+  protected readonly composerDraft = signal('');
+  protected readonly composerImages = signal<string[]>([]);
+  protected readonly recentSessionItems = signal<RecentTurn[]>([]);
 
   private gitPollTimer?: number;
 
@@ -533,7 +553,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     },
     { id: 'projects' as const, label: '04-PROJECTS', cwd: '04-PROJECTS', cwdScope: 'vault' as const },
   ];
-  protected readonly activePsCwdPresetId = signal<PsCwdPresetId>('vault-root');
+  protected readonly activePsCwdPresetId = signal<PsCwdPresetId>('workspace-root');
   /** ??? Backspace?????????? xterm/?? IME ? onData ????? */
   private xtermBackspaceKeydown?: (e: Event) => void;
   private aiXtermContextMenu?: (e: Event) => void;
@@ -618,7 +638,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected readonly leftPanelVisible = signal(true);
   /** 为 true 时渲染底部 PTY；默认开启以便首次进入即可初始化真实 Shell */
-  protected readonly terminalMenuVisible = signal(false);
+  protected readonly terminalMenuVisible = signal(true);
   protected readonly rightPanelVisible = signal(true);
 
   protected readonly leftPanelWidth = signal(260);
@@ -1270,6 +1290,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       };
     });
     this.memoryTree.set(nodes);
+    this.memoryVaultTree.set([...nodes]);
   }
 
   /** 系统对话框选择工程目录并持久化 */
@@ -1581,15 +1602,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     await this.openFileByPath(hit.path);
   }
 
-  private async openFileByPath(rel: string): Promise<void> {
+  private async openFileByPath(rel: string, scope: 'workspace' | 'vault' = 'workspace'): Promise<void> {
     const norm = rel.replace(/\\/g, '/');
-    const tabLabel = `workspace:${norm}`;
+    const tabLabel = `${scope}:${norm}`;
     this.persistTabState(this.activeTab());
-    const result = await window.zytrader.fs.read(norm, { scope: 'workspace' });
+    const result = await window.zytrader.fs.read(norm, { scope });
     if (!result.ok) {
       this.previewKind.set('code');
       this.selectedPath.set(norm);
-      this.selectedFileTreeRoot.set('workspace');
+      this.selectedFileTreeRoot.set(scope);
       this.selectedContent.set('无法读取该文件。');
       this.editorDirty.set(false);
       this.tabEditorState.set(tabLabel, {
@@ -1597,7 +1618,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         content: '无法读取该文件。',
         previewKind: 'code',
         dirty: false,
-        fsScope: 'workspace',
+        fsScope: scope,
       });
       this.addTabIfMissing(tabLabel);
       this.activeTab.set(tabLabel);
@@ -1611,7 +1632,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       return;
     }
     const content = result.content.slice(0, 800_000);
-    this.tabEditorState.set(tabLabel, { relPath: norm, content, previewKind: 'code', dirty: false, fsScope: 'workspace' });
+    this.tabEditorState.set(tabLabel, { relPath: norm, content, previewKind: 'code', dirty: false, fsScope: scope });
     this.addTabIfMissing(tabLabel);
     this.setTab(tabLabel);
     this.editorDiagnostics.set([]);
@@ -1639,7 +1660,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.psFitAddon?.fit();
       if (tab === 'Terminal - Main') {
         this.focusAiTerminal();
-        if (this.terminalMenuVisible()) this.focusPowerShellTerminal();
+      }
+      if (this.terminalMenuVisible()) {
+        this.focusPowerShellTerminal();
       }
     });
     this.cdr.markForCheck();
@@ -2164,6 +2187,122 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
+  protected recentSessionLabel(item: RecentTurn): string {
+    return item.title || item.prompt || '未命名会话';
+  }
+
+  protected openRecentSession(item: RecentTurn): void {
+    void this.replayRecent(item);
+  }
+
+  protected createDraftFromCurrentPrompt(): void {
+    this.composerDraft.set(this.mainLineBuffer || this.selectedContent() || '');
+  }
+
+  protected sendDraftToMainTerminal(): void {
+    const text = this.composerDraft().trim();
+    if (!text) return;
+    this.composerDraft.set('');
+    this.composerImages.set([]);
+    this.mainLineBuffer = '';
+    this.clearSlashHintRow();
+    this.directiveTabCycle = 0;
+    this.aiXtermWrite(`\r\n\x1b[32m>\x1b[0m ${text}\r\n`);
+    void this.dispatchMainTerminalLine(text);
+  }
+
+  protected onPaste(event: ClipboardEvent): void {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          event.preventDefault();
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const imageData = e.target?.result as string;
+            this.composerImages.update(prev => [...prev, imageData]);
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+    }
+  }
+
+  protected removeComposerImage(index: number): void {
+    this.composerImages.update(prev => prev.filter((_, i) => i !== index));
+  }
+
+  /** 切换项目资源展开状态 */
+  protected toggleProjectTree(): void {
+    this.projectTreeExpanded.set(!this.projectTreeExpanded());
+  }
+
+  /** 切换最近会话展开状态 */
+  protected toggleRecentSessions(): void {
+    this.recentSessionsExpanded.set(!this.recentSessionsExpanded());
+  }
+
+  /** 切换记忆仓库展开状态 */
+  protected toggleMemoryVault(): void {
+    this.memoryVaultExpanded.set(!this.memoryVaultExpanded());
+  }
+
+  /** 切换 Git 更改展开状态 */
+  protected toggleGitChanges(): void {
+    this.gitChangesExpanded.set(!this.gitChangesExpanded());
+  }
+
+  /** 切换 Git 提交展开状态 */
+  protected toggleGitCommits(): void {
+    this.gitCommitsExpanded.set(!this.gitCommitsExpanded());
+  }
+
+  /** 记忆仓库的目录展开/收起 */
+  protected async toggleMemoryVaultDir(node: FileNode): Promise<void> {
+    if (node.type !== 'dir') return;
+
+    const nodes = [...this.memoryVaultTree()];
+    const findAndToggle = (arr: FileNode[]): boolean => {
+      for (let i = 0; i < arr.length; i++) {
+        if (arr[i] === node) {
+          arr[i] = { ...node, expanded: !node.expanded };
+          return true;
+        }
+        if (arr[i].children && findAndToggle(arr[i].children!)) {
+          return true;
+        }
+      }
+      return false;
+    };
+    findAndToggle(nodes);
+
+    if (!node.expanded && !node.loaded) {
+      await this.loadDir(node.path, node, 'vault');
+    }
+
+    this.memoryVaultTree.set([...this.memoryVaultTree()]);
+    this.cdr.markForCheck();
+  }
+
+  /** 打开记忆仓库中的文件 */
+  protected async openMemoryVaultFile(node: FileNode): Promise<void> {
+    if (node.type === 'dir') {
+      await this.toggleMemoryVaultDir(node);
+      return;
+    }
+
+    if (!node.path) return;
+    if (node.treeRoot === 'vault') {
+      await this.openFileByPath(node.path, 'vault');
+    } else {
+      await this.openFileByPath(node.path, 'workspace');
+    }
+  }
+
   protected async onRecentTurnClick(r: RecentTurn): Promise<void> {
     this.selectedRecentTurnId.set(r.id);
     await this.replayRecent(r);
@@ -2338,11 +2477,27 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     event.preventDefault();
     const startX = event.clientX;
     const start = this.rightPanelWidth();
+    const HIDE_THRESHOLD = 150; // 拖动小于此值时自动隐藏
     const move = (ev: MouseEvent) => {
-      const next = Math.max(240, Math.min(560, start - (ev.clientX - startX)));
-      this.rightPanelWidth.set(next);
+      const delta = ev.clientX - startX;
+      const next = start - delta;
+      
+      if (next < HIDE_THRESHOLD) {
+        // 小于阈值时只更新宽度但不限制最小值，以便用户可以继续拖动来隐藏
+        this.rightPanelWidth.set(Math.max(60, next));
+      } else {
+        this.rightPanelWidth.set(Math.max(240, Math.min(560, next)));
+      }
     };
     const up = () => {
+      const finalWidth = this.rightPanelWidth();
+      if (finalWidth < HIDE_THRESHOLD) {
+        // 拖动结束时，如果小于阈值，自动隐藏
+        this.toggleRightPanel();
+      } else {
+        // 确保最终宽度在合理范围内
+        this.rightPanelWidth.set(Math.max(240, Math.min(560, finalWidth)));
+      }
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
     };
@@ -2459,16 +2614,19 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
       if (!read.ok) {
         this.recentTurns.set([]);
+        this.recentSessionItems.set([]);
         return;
       }
       const parsed = JSON.parse(read.content);
       const normalized = this.normalizeRecentTurns(parsed);
       this.recentTurns.set(normalized);
+      this.recentSessionItems.set(normalized);
       if (!this.selectedRecentTurnId() && normalized.length > 0) {
         this.selectedRecentTurnId.set(normalized[0]!.id);
       }
     } catch {
       this.recentTurns.set([]);
+      this.recentSessionItems.set([]);
     }
   }
 
@@ -2588,6 +2746,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     entry.transcriptPath = await this.persistRecentTurnTranscript(entry);
     const next = [entry, ...this.recentTurns()].slice(0, 30);
     this.recentTurns.set(next);
+    this.recentSessionItems.set(next);
     this.selectedRecentTurnId.set(entry.id);
     await this.persistRecentTurns(next);
   }
@@ -3388,6 +3547,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           : '';
         // 先整行清空再写，避免 CUU 落在欢迎语行时与「主终端：shell」拼在同一行
         xterm.write(`\r\x1b[2K\x1b[36m[用户]\x1b[0m ${promptText.replaceAll('\n', '\r\n')}${skillSuffix}`);
+      }
+
+      if (this.composerDraft().trim()) {
+        xterm.write(`\r\n\x1b[90m[草稿]\x1b[0m ${this.composerDraft().trim().replaceAll('\n', '\r\n')}`);
       }
 
       // 顺序：User -> Skill -> Thinking -> Answer
@@ -5335,7 +5498,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     setTimeout(() => {
       this.syncPowerShellSize();
       this.psFitAddon?.fit();
+      this.focusPowerShellTerminal();
     }, 120);
+    setTimeout(() => {
+      const id = this.activePsSessionId();
+      if (id) {
+        void window.zytrader.terminal.write({ id, data: '\r' });
+      }
+    }, 300);
   }
 
   protected switchPsSession(id: string): void {

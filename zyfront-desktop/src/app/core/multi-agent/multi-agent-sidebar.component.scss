@@ -1,71 +1,68 @@
 .multi-agent-sidebar {
-  width: 320px;
+  width: 100%;
   height: 100%;
-  background: #1a1a2e;
-  border-left: 1px solid #2a2a3e;
+  background: #0d0d0d;
   display: flex;
   flex-direction: column;
-  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  font-size: 12px;
   overflow: hidden;
-
-  &.collapsed {
-    width: 48px;
-  }
-
-  &.hidden {
-    display: none;
-  }
+  color: #e5e7eb;
+  font-size: 14px;
+  max-width: 480px;
+  margin: 0 auto;
 }
 
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px 12px 0;
-  border-bottom: 1px solid #2a2a3e;
-  background: #16162a;
-  flex-shrink: 0;
-  min-height: 48px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #262626;
+  background: transparent;
 
-  .header-title {
+  .header-left {
     display: flex;
     align-items: center;
     gap: 10px;
-    color: #e4e4f0;
-    font-weight: 600;
-    font-size: 13px;
-    letter-spacing: 0.3px;
 
-    [nz-icon] {
-      color: #a78bfa;
+    .header-icon {
+      color: #a855f7;
+      font-size: 20px;
+    }
+
+    .header-title {
       font-size: 16px;
+      font-weight: 600;
+      color: #fff;
     }
   }
 
-  .collapse-btn {
-    color: #6b6b8a;
-    padding: 6px;
-    border-radius: 6px;
-    transition: all 0.2s;
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
 
-    &:hover {
-      color: #e4e4f0;
-      background: #2a2a3e;
+    .header-icon-btn {
+      color: #888;
+      padding: 6px;
+
+      &:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.05);
+      }
     }
   }
 }
 
 .sidebar-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  padding: 0;
 
   &::-webkit-scrollbar {
-    width: 5px;
+    width: 6px;
   }
 
   &::-webkit-scrollbar-track {
@@ -73,482 +70,411 @@
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #3a3a5a;
-    border-radius: 3px;
+    background: #2f2f2f;
+    border-radius: 999px;
 
     &:hover {
-      background: #4a4a6a;
+      background: #3f3f3f;
     }
   }
 }
 
-.current-request {
-  padding: 14px 12px;
-  background: #16162a;
-  border-bottom: 1px solid #2a2a3e;
-  flex-shrink: 0;
+.status-overview-section {
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.1) 0%, rgba(0, 0, 0, 0) 100%);
+  border-bottom: 1px solid #262626;
 
-  .request-label {
-    font-size: 10px;
-    color: #6b6b8a;
-    margin-bottom: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    font-weight: 500;
-  }
-
-  .request-text {
-    font-size: 13px;
-    color: #d4d4e8;
-    line-height: 1.6;
-    max-height: 64px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-  }
-}
-
-.section {
-  padding: 16px 12px;
-  border-bottom: 1px solid #22223a;
-
-  .section-header {
+  .section-title {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    color: #c4c4d8;
-    margin-bottom: 14px;
+    justify-content: space-between;
+    margin-bottom: 12px;
 
-    [nz-icon] {
-      color: #a78bfa;
-      font-size: 14px;
-    }
-
-    .task-count {
-      margin-left: auto;
+    .title-text {
       font-size: 11px;
-      color: #86efac;
-      background: rgba(134, 239, 172, 0.12);
-      padding: 3px 10px;
-      border-radius: 12px;
-      font-weight: 500;
+      font-weight: 700;
+      color: #a855f7;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
-    .expand-btn {
-      color: #6b6b8a;
-      padding: 4px;
-      margin-left: 4px;
-      border-radius: 4px;
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: #86efac;
+      font-size: 11px;
+      font-weight: 600;
 
-      &:hover {
-        color: #e4e4f0;
-        background: #2a2a3e;
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 8px rgba(34, 195, 94, 0.7);
       }
     }
   }
-}
 
-.task-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  .agents-display-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
 
-  .task-item {
+  .agent-display-card {
     display: flex;
-    flex-direction: column;
-    padding: 12px 10px;
-    border-bottom: 1px solid #22223a;
-    transition: background 0.15s;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: #121212;
+    border: 1px solid #2a2a2a;
 
-    &:last-child {
-      border-bottom: none;
-    }
+    .agent-icon-wrapper {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: #1e293b;
+      color: #64748b;
+      flex-shrink: 0;
+      transition: all 0.3s ease;
 
-    &:hover {
-      background: rgba(255, 255, 255, 0.02);
-    }
-
-    &.task-running {
-      background: rgba(96, 165, 250, 0.08);
-    }
-
-    .task-item-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-
-      .task-status-icon {
-        width: 18px;
-        height: 18px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-
-        .status-circle {
-          width: 12px;
-          height: 12px;
-          border-radius: 50%;
-          border: 2px solid;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-
-          &.pending {
-            border-color: #6b6b8a;
-            border-style: dashed;
-            background: transparent;
-          }
-
-          &.running {
-            border-color: #60a5fa;
-            border-style: dashed;
-            background: transparent;
-          }
-        }
-
-        .status-check {
-          width: 14px;
-          height: 14px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-
-          &.completed {
-            background: #86efac;
-            color: #1a1a2e;
-            font-size: 10px;
-          }
-        }
-
-        .status-cross {
-          width: 14px;
-          height: 14px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-
-          &.failed {
-            background: #f87171;
-            color: #1a1a2e;
-            font-size: 10px;
-          }
-        }
+      &.running {
+        background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+        color: #fff;
+        box-shadow: 0 0 16px rgba(59, 130, 246, 0.4);
       }
 
-      .task-item-title {
-        flex: 1;
-        color: #d4d4e8;
+      &.idle {
+        background: linear-gradient(135deg, #f97316, #c2410c);
+        color: #fff;
+      }
+
+      nz-icon {
+        font-size: 18px;
+      }
+    }
+
+    .agent-info-wrapper {
+      flex: 1;
+      min-width: 0;
+
+      .agent-name-text {
         font-size: 12px;
+        font-weight: 600;
+        color: #f3f4f6;
+        margin-bottom: 2px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
 
-        &.completed {
-          text-decoration: line-through;
-          color: #6b6b8a;
+      .agent-status-text {
+        font-size: 11px;
+        color: #6b7280;
+        font-weight: 500;
+
+        &.running {
+          color: #60a5fa;
+        }
+
+        &.idle {
+          color: #f97316;
+        }
+      }
+    }
+  }
+
+  .empty-section {
+    color: #6b7280;
+    font-size: 12px;
+    padding: 16px 0;
+    text-align: center;
+  }
+}
+
+.tasks-section {
+  padding: 0;
+
+  .task-item {
+    padding: 14px 16px;
+    border-bottom: 1px solid #262626;
+    transition: background 0.2s ease;
+
+    &.task-completed {
+      opacity: 0.7;
+    }
+
+    &.task-failed {
+      background: rgba(239, 68, 68, 0.03);
+    }
+
+    &.task-pending {
+      opacity: 0.5;
+    }
+
+    .task-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+
+      .task-icon-wrapper {
+        width: 24px;
+        height: 24px;
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+
+        .circle-pending {
+          color: #525252;
+          font-size: 18px;
+        }
+
+        .circle-running {
+          color: #a855f7;
+          font-size: 20px;
+        }
+
+        .circle-completed {
+          color: #22c55e;
+          font-size: 20px;
+        }
+
+        .circle-failed {
+          color: #ef4444;
+          font-size: 20px;
         }
       }
 
-      .task-item-type {
-        color: #6b6b8a;
-        font-size: 10px;
-        flex-shrink: 0;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+      .task-title-text {
+        flex: 1;
+        font-size: 13px;
+        font-weight: 600;
+        color: #e5e7eb;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .task-percent {
+        color: #a855f7;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .task-status-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #71717a;
+
+        &.failed {
+          color: #ef4444;
+        }
       }
     }
 
-    .task-item-output {
-      margin-top: 8px;
-      padding-left: 28px;
-      font-size: 11px;
-      color: #9090a8;
-      line-height: 1.5;
+    .task-subtasks {
+      margin-top: 6px;
+      padding-left: 34px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
 
-      .output-label {
-        color: #86efac;
-        font-weight: 500;
+      .subtask-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+
+        &.completed {
+          opacity: 0.6;
+        }
+
+        .subtask-check {
+          width: 16px;
+          height: 16px;
+          flex-shrink: 0;
+          display: grid;
+          place-items: center;
+
+          nz-icon {
+            color: #22c55e;
+            font-size: 12px;
+          }
+        }
+
+        .subtask-text {
+          flex: 1;
+          font-size: 12px;
+          color: #a1a1aa;
+        }
+
+        .subtask-tag {
+          padding: 2px 8px;
+          border-radius: 999px;
+          background: #1e3a5f;
+          color: #60a5fa;
+          font-size: 10px;
+          font-weight: 600;
+        }
       }
+    }
 
-      .output-text {
-        color: #9090a8;
+    .task-progress-bar-container {
+      margin-top: 10px;
+      padding-left: 34px;
+    }
+
+    .task-progress-bar {
+      height: 4px;
+      background: #27272a;
+      border-radius: 999px;
+      overflow: hidden;
+
+      span {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, #a855f7, #7c3aed);
+        border-radius: 999px;
+        transition: width 0.3s ease;
+      }
+    }
+
+    .task-collapsed-panel {
+      margin-top: 10px;
+      padding-left: 34px;
+
+      .collapsed-content {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-radius: 10px;
+        background: rgba(168, 85, 247, 0.08);
+        border: 1px solid rgba(168, 85, 247, 0.25);
+        border-right: 4px solid #a855f7;
+
+        .collapsed-text {
+          font-size: 12px;
+          color: #e5e7eb;
+        }
+
+        .collapsed-icons {
+          display: flex;
+          gap: 5px;
+
+          .collapsed-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #3b82f6;
+            display: grid;
+            place-items: center;
+            color: #fff;
+
+            &.purple {
+              background: #a855f7;
+            }
+
+            nz-icon {
+              font-size: 12px;
+            }
+          }
+        }
       }
     }
   }
 }
 
-.agent-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.collaboration-section {
+  padding: 20px;
 
-  .agent-card {
-    background: #16162a;
-    border: 1px solid #2a2a3e;
-    border-radius: 10px;
-    padding: 14px;
-    transition: all 0.2s;
+  .section-title-simple {
+    font-size: 12px;
+    font-weight: 600;
+    color: #71717a;
+    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
 
-    &:hover {
-      border-color: #3a3a5a;
-    }
+  .collaboration-flow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px;
+    border-radius: 20px;
+    background: #111111;
+    border: 1px solid #27272a;
 
-    &.agent-running {
-      border-left: 3px solid #60a5fa;
-    }
-
-    &.agent-idle {
-      border-left: 3px solid #86efac;
-    }
-
-    &.agent-thinking {
-      border-left: 3px solid #fbbf24;
-    }
-
-    .agent-row {
+    .flow-item {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
+      flex: 1;
+      position: relative;
 
-      .agent-avatar {
-        width: 34px;
-        height: 34px;
-        border-radius: 50%;
-        background: #2a2a3e;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #6b6b8a;
-        font-size: 16px;
-        flex-shrink: 0;
-
-        // Default status colors (overridden by role-specific below)
-        &.status-running {
-          background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+      &.active {
+        .flow-icon-wrapper {
+          background: linear-gradient(135deg, #3b82f6, #1d4ed8);
           color: #fff;
         }
 
-        &.status-idle {
-          background: linear-gradient(135deg, #86efac 0%, #22c55e 100%);
-          color: #fff;
-        }
-
-        &.status-thinking {
-          background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-          color: #fff;
-        }
-
-        // Role-specific base colors (shown when idle)
-        &.role-leader {
-          background: linear-gradient(135deg, #f87171 0%, #dc2626 100%);
-          color: #fff;
-        }
-
-        &.role-planner {
-          background: linear-gradient(135deg, #c084fc 0%, #a855f7 100%);
-          color: #fff;
-        }
-
-        &.role-executor {
-          background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
-          color: #fff;
-        }
-
-        &.role-reviewer {
-          background: linear-gradient(135deg, #22d3d3 0%, #06b6d4 100%);
-          color: #fff;
-        }
-
-        &.role-researcher {
-          background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
-          color: #fff;
-        }
-
-        &.role-validator {
-          background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
-          color: #fff;
-        }
-
-        &.role-coordinator {
-          background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-          color: #fff;
-        }
-
-        // Status glow effects for running state
-        &.status-running {
-          &.role-leader { box-shadow: 0 0 12px rgba(248, 113, 113, 0.5); }
-          &.role-planner { box-shadow: 0 0 12px rgba(192, 132, 252, 0.5); }
-          &.role-executor { box-shadow: 0 0 12px rgba(96, 165, 250, 0.5); }
-          &.role-reviewer { box-shadow: 0 0 12px rgba(34, 211, 211, 0.5); }
-          &.role-researcher { box-shadow: 0 0 12px rgba(74, 222, 128, 0.5); }
-          &.role-validator { box-shadow: 0 0 12px rgba(251, 146, 60, 0.5); }
-          &.role-coordinator { box-shadow: 0 0 12px rgba(251, 191, 36, 0.5); }
-        }
-
-        // Thinking pulse animation
-        &.status-thinking {
-          animation: thinking-pulse 1.5s ease-in-out infinite;
+        .flow-agent-name {
+          color: #60a5fa;
         }
       }
 
-      .agent-info {
-        flex: 1;
-        min-width: 0;
+      .flow-icon-wrapper {
+        width: 56px;
+        height: 56px;
+        border-radius: 16px;
+        background: #242427;
+        display: grid;
+        place-items: center;
+        color: #71717a;
+        transition: all 0.3s ease;
 
-        .agent-name {
-          display: block;
-          color: #e4e4f0;
-          font-size: 13px;
-          font-weight: 500;
-          margin-bottom: 6px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+        &.active {
+          background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+          color: #fff;
+        }
+
+        nz-icon {
+          font-size: 24px;
         }
       }
 
-      .agent-status {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        flex-shrink: 0;
-
-        .status-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: #6b6b8a;
-
-          &.running {
-            background: #60a5fa;
-          }
-
-          &.idle {
-            background: #86efac;
-          }
-
-          &.thinking {
-            background: #fbbf24;
-          }
-        }
-
-        .status-text {
-          font-size: 11px;
-          color: #6b6b8a;
-        }
-      }
-    }
-
-    .agent-thinking {
-      margin-top: 12px;
-      padding: 12px;
-      background: rgba(251, 191, 36, 0.08);
-      border-radius: 8px;
-      border: 1px solid rgba(251, 191, 36, 0.2);
-
-      .thinking-header {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 11px;
-        color: #fbbf24;
-        margin-bottom: 8px;
-        font-weight: 500;
-
-        [nz-icon] {
-          font-size: 12px;
-        }
+      .flow-agent-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: #71717a;
+        text-align: center;
       }
 
-      .thinking-content {
-        font-size: 11px;
-        color: #a8a8c0;
-        line-height: 1.6;
-      }
-    }
+      .flow-arrow {
+        position: absolute;
+        right: -24px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #52525b;
 
-    .agent-output {
-      margin-top: 12px;
-      padding: 12px;
-      background: #111120;
-      border-radius: 8px;
-      border: 1px solid rgba(134, 239, 172, 0.2);
-
-      .output-header {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 11px;
-        color: #86efac;
-        margin-bottom: 8px;
-        font-weight: 500;
-
-        [nz-icon] {
-          color: #86efac;
-          font-size: 12px;
+        nz-icon {
+          font-size: 18px;
         }
-      }
-
-      .output-content {
-        font-size: 11px;
-        color: #9090a8;
-        line-height: 1.6;
       }
     }
   }
 }
 
 .empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 24px;
-  color: #6b6b8a;
-
-  .empty-icon {
-    font-size: 42px;
-    margin-bottom: 16px;
-    color: #4a4a6a;
-  }
-
-  p {
-    font-size: 12px;
-    text-align: center;
-    line-height: 1.6;
-    margin: 0;
-    color: #6b6b8a;
-  }
-}
-
-:host ::ng-deep {
-  .ant-tag {
-    margin: 0;
-  }
-
-  .ant-progress-inner {
-    background: #2a2a3e;
-  }
-
-  .ant-progress-bg {
-    background: linear-gradient(90deg, #60a5fa 0%, #3b82f6 100%);
-  }
-}
-
-@keyframes thinking-pulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.7;
-    transform: scale(0.95);
-  }
+  margin: auto;
+  color: #6b7280;
+  text-align: center;
+  font-size: 14px;
+  padding: 40px 20px;
 }

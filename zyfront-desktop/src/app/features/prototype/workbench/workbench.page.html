@@ -15,68 +15,153 @@
   <div class="wb-shell">
     <div class="wb-main" [style.gridTemplateColumns]="mainGridTemplate()">
       <section class="wb-left-panel" *ngIf="leftPanelVisible()" [style.width.px]="leftPanelWidth()">
-        <div class="wb-sidebar-column">
-          <div class="left-header">
-            <div class="left-title-row">
-              <nav class="view-toolbar" aria-label="视图切换">
-                <button type="button" class="vt-btn" [class.active]="sidebarView() === 'explorer' && explorerRootView() === 'project'" (click)="setSidebarView('explorer'); showProjectExplorer()" title="项目目录"><span nz-icon nzType="folder-open"></span></button>
-                <button type="button" class="vt-btn" [class.active]="explorerRootView() === 'memory'" (click)="setSidebarView('explorer'); showMemoryExplorer()" title="记忆目录"><span nz-icon nzType="database"></span></button>
-                <button type="button" class="vt-btn" [class.active]="sidebarView() === 'search'" (click)="setSidebarView('search')" title="在文件中搜索"><span nz-icon nzType="search"></span></button>
-                <button type="button" class="vt-btn" [class.active]="sidebarView() === 'git'" (click)="setSidebarView('git')" title="源代码管理"><span nz-icon nzType="branches"></span></button>
-              </nav>
+        <div class="left-top-bar">
+          <div class="left-top-bar__tabs">
+            <button type="button" class="top-bar-tab" [class.active]="sidebarView() === 'explorer'" (click)="setSidebarView('explorer')" title="Explorer">
+              <span nz-icon nzType="folder-open"></span>
+            </button>
+            <button type="button" class="top-bar-tab" [class.active]="sidebarView() === 'git'" (click)="setSidebarView('git')" title="Git">
+              <span nz-icon nzType="branches"></span>
+            </button>
+            <button type="button" class="top-bar-tab" [class.active]="sidebarView() === 'search'" (click)="setSidebarView('search')" title="Search">
+              <span nz-icon nzType="search"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="left-content">
+          <div class="explorer-shell" *ngIf="sidebarView() === 'explorer'">
+            <div class="explorer-wrapper">
+              <!-- 项目资源 -->
+              <div class="explorer-section">
+                <div class="section-header" (click)="toggleProjectTree()">
+                  <span class="section-chevron">{{ projectTreeExpanded() ? '▾' : '▸' }}</span>
+                  <span class="section-label">项目资源</span>
+                  <span class="section-refresh" nz-icon nzType="refresh" title="刷新" (click)="$event.stopPropagation()"></span>
+                </div>
+                <div class="section-content" *ngIf="projectTreeExpanded()">
+                  <div class="tree-scroll vscode-tree">
+                    <ng-template #workspaceTreeTpl let-nodes let-depth="depth">
+                      <ng-container *ngFor="let node of nodes">
+                        <div
+                          class="vscode-tree-row"
+                          [class.is-dir]="node.type === 'dir'"
+                          [class.is-selected]="node.type === 'file' && selectedPath() === node.path && selectedFileTreeRoot() === (node.treeRoot ?? 'workspace')"
+                          [style.paddingLeft.px]="depth * 14 + 8"
+                          (click)="node.type === 'dir' ? toggleDir(node) : openFile(node)"
+                          (dblclick)="onTreeNodeDblClick(node, $event)"
+                        >
+                          <span class="vscode-chevron" *ngIf="node.type === 'dir'">{{ node.expanded ? '▾' : '▸' }}</span>
+                          <span class="vscode-chevron-placeholder" *ngIf="node.type === 'file'"></span>
+                          <span class="vscode-tree-icon" nz-icon [nzType]="treeIcon(node)"></span>
+                          <span class="vscode-tree-label">{{ node.name }}</span>
+                        </div>
+                        <ng-container *ngIf="node.type === 'dir' && node.expanded && node.children?.length">
+                          <ng-container [ngTemplateOutlet]="workspaceTreeTpl" [ngTemplateOutletContext]="{ $implicit: node.children, depth: depth + 1 }"></ng-container>
+                        </ng-container>
+                      </ng-container>
+                    </ng-template>
+                    <ng-container [ngTemplateOutlet]="workspaceTreeTpl" [ngTemplateOutletContext]="{ $implicit: workspaceTree(), depth: 0 }"></ng-container>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 记忆仓库 -->
+              <div class="explorer-section">
+                <div class="section-header" (click)="toggleMemoryVault()">
+                  <span class="section-chevron">{{ memoryVaultExpanded() ? '▾' : '▸' }}</span>
+                  <span class="section-label">记忆仓库</span>
+                </div>
+                <div class="section-content" *ngIf="memoryVaultExpanded()">
+                  <div class="tree-scroll vscode-tree">
+                    <ng-template #memoryVaultTreeTpl let-nodes let-depth="depth">
+                      <ng-container *ngFor="let node of nodes">
+                        <div
+                          class="vscode-tree-row"
+                          [class.is-dir]="node.type === 'dir'"
+                          [class.is-selected]="node.type === 'file' && selectedPath() === node.path && selectedFileTreeRoot() === (node.treeRoot ?? 'vault')"
+                          [style.paddingLeft.px]="depth * 14 + 8"
+                          (click)="node.type === 'dir' ? toggleDir(node) : openFile(node)"
+                          (dblclick)="onTreeNodeDblClick(node, $event)"
+                        >
+                          <span class="vscode-chevron" *ngIf="node.type === 'dir'">{{ node.expanded ? '▾' : '▸' }}</span>
+                          <span class="vscode-chevron-placeholder" *ngIf="node.type === 'file'"></span>
+                          <span class="vscode-tree-icon" nz-icon [nzType]="treeIcon(node)"></span>
+                          <span class="vscode-tree-label">{{ node.name }}</span>
+                        </div>
+                        <ng-container *ngIf="node.type === 'dir' && node.expanded && node.children?.length">
+                          <ng-container [ngTemplateOutlet]="memoryVaultTreeTpl" [ngTemplateOutletContext]="{ $implicit: node.children, depth: depth + 1 }"></ng-container>
+                        </ng-container>
+                      </ng-container>
+                    </ng-template>
+                    <ng-container [ngTemplateOutlet]="memoryVaultTreeTpl" [ngTemplateOutletContext]="{ $implicit: memoryTree(), depth: 0 }"></ng-container>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 最近会话 -->
+              <div class="explorer-section">
+                <div class="section-header" (click)="toggleRecentSessions()">
+                  <span class="section-chevron">{{ recentSessionsExpanded() ? '▾' : '▸' }}</span>
+                  <span class="section-label">最近会话</span>
+                </div>
+                <div class="section-content" *ngIf="recentSessionsExpanded()">
+                  <div class="timeline-list">
+                    <button type="button" class="timeline-item" *ngFor="let item of recentSessionItems()" [class.active]="selectedRecentTurnId() === item.id" (click)="openRecentSession(item)">
+                      <span class="timeline-text">{{ recentSessionLabel(item) }}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="wb-sidebar-body">
-            <ng-container *ngIf="sidebarView() === 'explorer'">
-              <ng-container *ngIf="explorerRootView() === 'project'; else memoryTreeBlock">
-                <div class="explorer-section-label">工程目录</div>
-                <div class="tree-scroll vscode-tree">
-                  <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: workspaceTree(), depth: 0 }"></ng-container>
-                </div>
-              </ng-container>
-              <ng-template #memoryTreeBlock>
-                <div class="explorer-section-label">记忆目录</div>
-                <div class="tree-scroll vscode-tree">
-                  <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: memoryTree(), depth: 0 }"></ng-container>
-                </div>
-              </ng-template>
-              <ng-template #treeTpl let-nodes let-depth="depth">
-                <ng-container *ngFor="let node of nodes">
-                  <div class="vscode-tree-row" [class.is-dir]="node.type === 'dir'" [class.is-selected]="node.type === 'file' && selectedPath() === node.path && selectedFileTreeRoot() === (node.treeRoot ?? 'vault')" [style.paddingLeft.px]="depth * 16 + 8" (click)="node.type === 'dir' ? toggleDir(node) : openFile(node)" (dblclick)="onTreeNodeDblClick(node, $event)">
-                    <span class="vscode-chevron" *ngIf="node.type === 'dir'">{{ node.expanded ? '▾' : '▸' }}</span>
-                    <span class="vscode-chevron-placeholder" *ngIf="node.type === 'file'"></span>
-                    <span class="vscode-tree-icon" nz-icon [nzType]="treeIcon(node)"></span>
-                    <span class="vscode-tree-label">{{ node.name }}</span>
-                  </div>
-                  <ng-container *ngIf="node.type === 'dir' && node.expanded && node.children?.length">
-                    <ng-container [ngTemplateOutlet]="treeTpl" [ngTemplateOutletContext]="{ $implicit: node.children, depth: depth + 1 }"></ng-container>
-                  </ng-container>
-                </ng-container>
-              </ng-template>
-            </ng-container>
 
-            <div class="wb-search-panel" *ngIf="sidebarView() === 'search'">
-              <div class="search-row">
-                <input class="search-input" type="text" placeholder="输入关键字（git grep，需 Git 仓库）" [value]="searchQuery()" (input)="searchQuery.set($any($event.target).value)" (keydown.enter)="runFileSearch()" />
-                <button type="button" class="search-run" [disabled]="searchBusy()" (click)="runFileSearch()">{{ searchBusy() ? '…' : '搜索' }}</button>
-              </div>
-              <p class="search-msg" *ngIf="searchMessage()">{{ searchMessage() }}</p>
-              <div class="search-results">
-                <button type="button" class="search-hit" *ngFor="let h of searchHits()" (click)="openSearchHit(h)">
-                  <span class="search-hit-path">{{ h.path }}:{{ h.line }}</span>
-                  <span class="search-hit-text">{{ h.text }}</span>
-                </button>
-              </div>
+          <div class="search-shell" *ngIf="sidebarView() === 'search'">
+            <div class="section-label">搜索</div>
+            <div class="search-row">
+              <input class="search-input" type="text" placeholder="在 Git 工作区中搜索" [value]="searchQuery()" (input)="searchQuery.set($any($event.target).value)" (keydown.enter)="runFileSearch()" />
+              <button type="button" class="search-run" [disabled]="searchBusy()" (click)="runFileSearch()">{{ searchBusy() ? '…' : '搜索' }}</button>
             </div>
+            <p class="search-msg" *ngIf="searchMessage()">{{ searchMessage() }}</p>
+            <div class="timeline-list">
+              <button type="button" class="timeline-item" *ngFor="let h of searchHits()" (click)="openSearchHit(h)">
+                <span class="timeline-text">{{ h.path }}:{{ h.line }} {{ h.text }}</span>
+              </button>
+            </div>
+          </div>
 
-            <div class="wb-git-panel" *ngIf="sidebarView() === 'git'">
-              <div class="git-section-label">更改</div>
-              <div class="git-changes-scroll">
-                <button type="button" class="git-file-one-line" *ngFor="let f of gitChangedFiles()" (click)="openGitDiffFile(f.path)">
-                  <span class="git-st">{{ f.status }}</span>
-                  <span class="git-path">{{ f.path }}</span>
-                </button>
-                <p class="git-hint" *ngIf="!gitChangedFiles().length && !gitBusy()">没有检测到更改。</p>
+          <div class="git-shell" *ngIf="sidebarView() === 'git'">
+            <div class="explorer-wrapper">
+              <!-- Git 更改 -->
+              <div class="explorer-section">
+                <div class="section-header" (click)="toggleGitChanges()">
+                  <span class="section-chevron">{{ gitChangesExpanded() ? '▾' : '▸' }}</span>
+                  <span class="section-label">更改</span>
+                </div>
+                <div class="section-content" *ngIf="gitChangesExpanded()">
+                  <div class="timeline-list">
+                    <button type="button" class="timeline-item" *ngFor="let f of gitChangedFiles()" (click)="openGitDiffFile(f.path)">
+                      <span class="timeline-status">{{ f.status }}</span>
+                      <span class="timeline-text">{{ f.path }}</span>
+                    </button>
+                    <p class="git-hint" *ngIf="!gitChangedFiles().length && !gitBusy()">没有检测到更改。</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Git 提交 -->
+              <div class="explorer-section">
+                <div class="section-header" (click)="toggleGitCommits()">
+                  <span class="section-chevron">{{ gitCommitsExpanded() ? '▾' : '▸' }}</span>
+                  <span class="section-label">提交</span>
+                </div>
+                <div class="section-content" *ngIf="gitCommitsExpanded()">
+                  <div class="timeline-list">
+                    <button type="button" class="timeline-item" *ngFor="let c of gitCommits()" (click)="openCommitDetail(c.hash)">
+                      <span class="timeline-text">{{ c.subject }}</span>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -109,17 +194,11 @@
           <div class="wb-center-main-row">
             <section class="terminal-panel" [class.is-hidden]="activeTab() !== 'Terminal - Main'" (click)="focusAiTerminal()">
               <div class="terminal-body">
-                <div class="terminal-bind-bar" *ngIf="activeAgentId(); else mainTerminalLabel">
-                  当前绑定会话：{{ activeAgentLabel() }} · 状态：已连接
-                </div>
-                <ng-template #mainTerminalLabel>
-                  <div class="terminal-bind-bar">当前为主终端 · 这里仅保留 Shell 执行</div>
-                </ng-template>
                 <div #xtermHost class="xterm-host"></div>
               </div>
             </section>
 
-            <div class="file-editor-stack" *ngIf="activeTab() !== 'Terminal - Main' && previewKind() === 'code'">
+            <section class="file-editor-stack" [class.is-hidden]="activeTab() === 'Terminal - Main' || previewKind() !== 'code'">
               <app-workbench-monaco-editor [value]="selectedContent()" [language]="monacoLanguage()" (valueChange)="onEditorContentChange($event)" (saveRequested)="saveCurrentFile()" (markersChange)="onEditorMarkersChange($event)" />
               <div class="editor-diagnostics" *ngIf="editorDiagnostics().length">
                 <div class="editor-diagnostics-head">问题（{{ editorDiagnostics().length }}）</div>
@@ -128,12 +207,10 @@
                   <span class="diag-msg">{{ d.message }}</span>
                 </div>
               </div>
-            </div>
+            </section>
 
-            <div class="file-preview-wrap file-preview-diff" *ngIf="activeTab() !== 'Terminal - Main' && previewKind() === 'diff'" [innerHTML]="filePreviewHtml()"></div>
+            <section class="file-preview-wrap file-preview-diff" [class.is-hidden]="activeTab() === 'Terminal - Main' || previewKind() !== 'diff'" [innerHTML]="filePreviewHtml()"></section>
           </div>
-
-          <div class="panel-resizer horizontal" *ngIf="terminalMenuVisible()" (mousedown)="onBottomResizeStart($event)"></div>
 
           <section class="powershell-panel" *ngIf="terminalMenuVisible()" (click)="focusPowerShellTerminal()">
             <div class="powershell-head">
@@ -145,13 +222,10 @@
                 </button>
               </div>
               <div class="ps-toolbar">
-                <select style="height:24px;padding:0 6px;border-radius:4px;border:1px solid #3a3f4f;background:#121826;color:#c7d2fe;font-size:11px;max-width:180px" [value]="activePsCwdPresetId()" (change)="setPsCwdPreset($any($event.target).value)" title="新终端默认目录">
-                  <option *ngFor="let p of psCwdPresets" [value]="p.id">{{ p.label }}</option>
-                </select>
                 <button type="button" class="ps-btn plus-only" title="新建 PowerShell" (click)="createPsSession('powershell')">+</button>
                 <button type="button" class="ps-btn action" title="执行 npm run start" (click)="runAutomation('run')">自动运行</button>
                 <button type="button" class="ps-btn action" title="执行 npm run build" (click)="runAutomation('build')">自动构建</button>
-                <button type="button" class="ps-btn action" title="在主终端填入提示词并请求助手生成提交说明并推送到远程" (click)="runAutomation('commit')">自动提交</button>
+                <button type="button" class="ps-btn action" title="自动提交" (click)="runAutomation('commit')">自动提交</button>
               </div>
             </div>
             <div class="powershell-body"><div #psHost class="ps-xterm-host"></div></div>
@@ -162,7 +236,55 @@
       <div class="panel-resizer vertical" *ngIf="rightPanelVisible()" (mousedown)="onRightResizeStart($event)"></div>
 
       <aside class="wb-right-panel" *ngIf="rightPanelVisible()" [style.width.px]="rightPanelWidth()">
-        <app-multi-agent-sidebar [visible]="rightPanelVisible()"></app-multi-agent-sidebar>
+        <div class="right-panel-shell">
+
+          <div class="right-panel-body">
+            <app-multi-agent-sidebar [visible]="rightPanelVisible()"></app-multi-agent-sidebar>
+          </div>
+          <div class="right-panel-composer">
+            <div class="ai-composer">
+              <div class="composer-toolbar">
+                <button type="button" class="toolbar-btn" title="添加图片">
+                  <span nz-icon nzType="image"></span>
+                </button>
+                <button type="button" class="toolbar-btn" title="添加附件">
+                  <span nz-icon nzType="paper-clip"></span>
+                </button>
+              </div>
+              <div class="composer-images-preview" *ngIf="composerImages().length > 0">
+                <div class="composer-image-item" *ngFor="let imgData of composerImages(); let i = index">
+                  <img [src]="imgData" class="composer-preview-img">
+                  <button type="button" class="composer-image-remove" (click)="removeComposerImage(i)">
+                    <span nz-icon nzType="close"></span>
+                  </button>
+                </div>
+              </div>
+              <div class="composer-input-wrapper">
+                <textarea 
+                  class="composer-textarea" 
+                  [value]="composerDraft()" 
+                  (input)="composerDraft.set($any($event.target).value)"
+                  (paste)="onPaste($event)"
+                  placeholder="Ask anything or @agents to delegate"
+                  rows="1"
+                ></textarea>
+              </div>
+              <div class="composer-footer-row">
+                <div class="footer-left">
+                  <span class="model-badge">
+                    <span class="model-dot"></span>
+                    {{ activeAgentLabel() || 'claude-3-5-sonnet-latest' }}
+                  </span>
+                </div>
+                <div class="footer-right">
+                  <button type="button" class="send-btn" [disabled]="!composerDraft().trim()" (click)="sendDraftToMainTerminal()">
+                    <span nz-icon nzType="arrow-right"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </aside>
     </div>
   </div>

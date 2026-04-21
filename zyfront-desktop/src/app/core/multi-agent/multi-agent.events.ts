@@ -67,7 +67,8 @@ export type MultiAgentEventType =
   | 'recovery.completed'
   | 'execution.warning'
   | 'execution.paused'
-  | 'execution.resumed';
+  | 'execution.resumed'
+  | 'input.submitted';
 
 export interface MultiAgentModeCapturedPayload extends ExecutionModeSnapshot {
   snapshotAt: number;
@@ -370,6 +371,26 @@ export interface ExecutionResumedPayload {
   timestamp: number;
 }
 
+export interface Attachment {
+  id: string;
+  type: 'file' | 'image' | 'code' | 'link';
+  name: string;
+  path?: string;
+  url?: string;
+  content?: string;
+  size?: number;
+  mimeType?: string;
+}
+
+export interface InputSubmittedPayload {
+  sessionId: string;
+  text: string;
+  attachments?: Attachment[];
+  command?: string;
+  timestamp: number;
+  source: 'user' | 'shortcut' | 'script';
+}
+
 export type MultiAgentEventMap = {
   'multiagent.mode.captured': MultiAgentModeCapturedPayload;
   'multiagent.backend.detected': MultiAgentBackendDetectedPayload;
@@ -426,6 +447,7 @@ export type MultiAgentEventMap = {
   'execution.warning': ExecutionWarningPayload;
   'execution.paused': ExecutionPausedPayload;
   'execution.resumed': ExecutionResumedPayload;
+  'input.submitted': InputSubmittedPayload;
 };
 
 export const EVENT_TYPES = {
@@ -474,6 +496,7 @@ export const EVENT_TYPES = {
   EXECUTION_WARNING: 'execution.warning' as const,
   EXECUTION_PAUSED: 'execution.paused' as const,
   EXECUTION_RESUMED: 'execution.resumed' as const,
+  INPUT_SUBMITTED: 'input.submitted' as const,
 } as const;
 
 /**
