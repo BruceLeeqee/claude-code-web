@@ -112,6 +112,7 @@ export class ExecutionModeDeciderService {
       estimatedSubtasks: 1,
       requiresMultipleAgents: mode === 'multi',
       estimatedDurationMs: 30_000,
+      estimatedSteps: 1,
     };
 
     return {
@@ -131,6 +132,7 @@ export class ExecutionModeDeciderService {
         estimatedSubtasks: 1,
         requiresMultipleAgents: false,
         estimatedDurationMs: 30_000,
+        estimatedSteps: 1,
       },
     };
   }

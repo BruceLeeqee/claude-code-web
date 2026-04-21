@@ -1,10 +1,13 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { MultiAgentEventBusService } from './multi-agent.event-bus.service';
 import { MultiAgentInProcessBackend } from './multi-agent.in-process.backend';
 import { MultiAgentITermBackend } from './multi-agent.iterm.backend';
 import { MultiAgentSessionService } from './multi-agent.session';
 import { MultiAgentTmuxBackend } from './multi-agent.tmux.backend';
+import { ParallelExecutionService, type ParallelTaskResult, type ParallelExecutionConfig } from './services/parallel-execution.service';
+import { TaskPlannerService } from './services/task-planner.service';
+import type { TaskGraph } from './domain/types';
 import type { BackendDetectionResult, TeammateBackend } from './multi-agent.backend';
 import type {
   BackendCapability,
@@ -14,6 +17,7 @@ import type {
   WorkbenchTeamVm,
   WorkbenchTeammateVm,
 } from './multi-agent.types';
+import type { TaskNode, AgentRole } from './domain/types';
 import { buildBackendBlockingReason, buildBackendSetupHints } from './multi-agent.backend-setup';
 
 @Injectable({ providedIn: 'root' })
@@ -36,6 +40,9 @@ export class MultiAgentOrchestratorService {
   ) {
     void this.refreshBackendHealth();
   }
+
+  private readonly parallelExecution = inject(ParallelExecutionService);
+  private readonly planner = inject(TaskPlannerService);
 
   readonly workbenchTeamVm$ = this.teamVm$.asObservable();
   readonly events$ = this.eventBus.events$;
@@ -662,5 +669,33 @@ export class MultiAgentOrchestratorService {
       teamStatus: errorCount > 0 ? 'error' : runningCount > 0 ? 'running' : stoppedCount > 0 ? 'stopped' : 'background',
       updatedAt: Date.now(),
     };
+  }
+
+  canExecuteInParallel(taskGraph: TaskGraph): boolean {
+    return this.parallelExecution.canExecuteInParallel(taskGraph);
+  }
+
+  getParallelizableTasks(taskGraph: TaskGraph): TaskNode[][] {
+    return this.parallelExecution.findParallelizableTasks(taskGraph);
+  }
+
+  setParallelExecutionConfig(config: Partial<ParallelExecutionConfig>): void {
+    this.parallelExecution.setConfig(config);
+  }
+
+  async executeTaskGraph(
+    taskGraph: TaskGraph,
+    executor: (task: TaskNode, agentRole: AgentRole) => Promise<string>,
+    onProgress?: (taskId: string, status: 'started' | 'completed' | 'failed') => void,
+  ): Promise<ParallelTaskResult[]> {
+    return this.parallelExecution.executeTaskGraph(taskGraph, executor, onProgress);
+  }
+
+  getParallelExecutionStats() {
+    return this.parallelExecution.getExecutionStats();
+  }
+
+  validateTaskResult(task: TaskNode, result: string) {
+    return this.planner.validateTaskResult(task, result);
   }
 }

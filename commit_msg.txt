@@ -1,0 +1,27 @@
+feat(multi-agent): 实现完整的多代理核心模块与事件系统
+
+【背景】
+- 原有架构缺少并行执行、计划模式触发和工作台模式切换能力
+- 多代理协作缺乏统一的事件总线与Orchestrator协调机制
+
+【本次改动】
+- 新增并行执行服务 (ParallelExecutionService)：支持任务图并行执行、自动批次、依赖分析
+- 新增计划模式触发器 (PlanModeTriggerService)：基于步骤阈值、上下文预算、复杂度决策
+- 新增工作台模式服务 (WorkbenchModeService)：支持solo/plan/dev三种模式切换与团队初始化
+- 重构侧边栏组件：新增Agent管理、事件可视化、模式切换UI
+- 重构事件系统：统一EVENT_TYPES，增加MODE_MULTI、TASK_STARTED/COMPLETED/FAILED
+- 重构多个核心服务：AgentFactory、ExecutionModeDecider、LLMTaskDecomposition、ModelRouter、SingleAgentExecution、TaskPlanner
+
+【影响范围】
+- multi-agent模块：services目录新增3个服务，修改6个现有文件
+- workbench模块：directive-registry和workbench.page.ts配合多代理模式调整
+- sidebar组件：UI重构，新增事件流显示、Agent状态监控
+
+【验证】
+- TypeScript类型检查通过 (zyfront-core)
+- UTF-8源码验证通过 (173 files in zyfront-desktop)
+- 多代理服务独立可注入，事件总线统一管理
+
+【风险与回滚】
+- 低风险，新增服务完全独立，修改的服务已做向后兼容
+- 回滚：git revert commit-id 即可恢复之前状态

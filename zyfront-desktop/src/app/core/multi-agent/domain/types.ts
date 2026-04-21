@@ -45,8 +45,7 @@ export type AgentRole =
   | 'executor'
   | 'reviewer'
   | 'researcher'
-  | 'validator'
-  | 'coordinator';
+  | 'validator';
 
 export type TaskPriority = 'critical' | 'high' | 'medium' | 'low';
 

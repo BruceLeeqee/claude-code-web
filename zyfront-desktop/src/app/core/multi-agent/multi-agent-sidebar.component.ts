@@ -14,6 +14,7 @@ import { SessionRegistryService } from './services/session-registry.service';
 import { MultiAgentEventBusService } from './multi-agent.event-bus.service';
 import { ModeSwitchApiService } from './services/mode-switch-api.service';
 import { AgentStateMachineService } from './services/agent-state-machine.service';
+import { PlanModeTriggerService } from './services/plan-mode-trigger.service';
 import type { TaskGraph, TaskNode, AgentDescriptor, AgentRuntimeState, TaskNodeStatus } from './domain/types';
 import type { ExecutionMode } from './services/execution-mode-decider.service';
 import { EVENT_TYPES, MultiAgentEvent, TaskPlannedPayload, AgentCreatedPayload, TaskStartedPayload, TaskCompletedPayload, TaskFailedPayload, AgentStateChangedPayload, AgentThinkingPayload, AgentOutputPayload } from './multi-agent.events';
@@ -74,10 +75,13 @@ export class MultiAgentSidebarComponent implements OnDestroy {
   private readonly eventBus = inject(MultiAgentEventBusService);
   private readonly modeSwitchApi = inject(ModeSwitchApiService);
   private readonly stateMachine = inject(AgentStateMachineService);
+  private readonly planModeTrigger = inject(PlanModeTriggerService);
 
   protected readonly executionMode = signal<ExecutionMode>('single');
   protected readonly modeReason = signal('');
   protected readonly isForcedMode = computed(() => this.modeSwitchApi.isForced());
+  protected readonly planModeReason = signal<string | null>(null);
+  protected readonly executionConstraints = signal<string | null>(null);
 
   protected readonly taskGraph = signal<TaskGraph | null>(null);
   protected readonly agents = signal<AgentVm[]>([]);
@@ -85,15 +89,22 @@ export class MultiAgentSidebarComponent implements OnDestroy {
   protected readonly agentStates = signal<Map<string, AgentRuntimeState>>(new Map());
   protected readonly isProcessing = signal(false);
   protected readonly currentRequest = signal('');
+  protected readonly taskListExpanded = signal(true);
 
   private subscriptions: Subscription[] = [];
   private taskProgressMap = new Map<string, number>();
   private taskOutputMap = new Map<string, string>();
   private agentThinkingMap = new Map<string, string>();
   private agentOutputMap = new Map<string, string>();
+  private visibleTaskIds = signal<Set<string>>(new Set());
+
+  setCurrentRequest(request: string): void {
+    this.currentRequest.set(request);
+  }
 
   protected readonly taskNodes = computed(() => {
     const graph = this.taskGraph();
+    const visibleIds = this.visibleTaskIds();
     if (!graph) return [];
 
     const nodes: TaskNodeVm[] = [];
@@ -101,6 +112,7 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     const depths = this.calculateDepths(graph);
 
     Object.values(taskMap).forEach((task: TaskNode) => {
+      if (!visibleIds.has(task.taskId)) return;
       nodes.push({
         taskId: task.taskId,
         title: task.title,
@@ -117,6 +129,11 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     });
 
     return nodes.sort((a, b) => a.depth - b.depth);
+  });
+
+  protected readonly completedTaskCount = computed(() => {
+    const nodes = this.taskNodes();
+    return nodes.filter(t => t.status === 'completed').length;
   });
 
   constructor() {
@@ -187,6 +204,7 @@ export class MultiAgentSidebarComponent implements OnDestroy {
       this.taskOutputMap.clear();
       this.agentThinkingMap.clear();
       this.agentOutputMap.clear();
+      this.visibleTaskIds.set(new Set());
       this.taskGraph.set(taskGraph);
       
       if (userRequest) {
@@ -340,22 +358,33 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     const agentList: AgentVm[] = [];
     descriptors.forEach((descriptor, agentId) => {
       const state = states.get(agentId);
-      const taskCount = taskGraph
-        ? Object.values(taskGraph.tasks).filter(t => t.assignedAgentId === agentId).length
-        : 0;
-
       const agentTasks = taskGraph
         ? Object.values(taskGraph.tasks).filter(t => t.assignedAgentId === agentId)
         : [];
       
+      const taskCount = agentTasks.length;
       const hasRunningTask = agentTasks.some(t => t.status === 'running');
-      const allCompleted = agentTasks.length > 0 && agentTasks.every(t => t.status === 'completed');
+      const hasPendingTask = agentTasks.some(t => t.status === 'pending');
+      const completedTaskCount = agentTasks.filter(t => t.status === 'completed').length;
+      const allCompleted = agentTasks.length > 0 && completedTaskCount === agentTasks.length;
+      const hasFailedTask = agentTasks.some(t => t.status === 'failed');
+
+      const hasThinking = this.agentThinkingMap.has(agentId);
+      const hasOutput = this.agentOutputMap.has(agentId);
+      const thinkingContent = this.agentThinkingMap.get(agentId);
+      const outputContent = this.agentOutputMap.get(agentId);
 
       let status: AgentVm['status'] = 'idle';
-      if (hasRunningTask) {
+      if (hasFailedTask) {
+        status = 'failed';
+      } else if (hasThinking || hasRunningTask) {
         status = 'thinking';
       } else if (allCompleted) {
         status = 'completed';
+      } else if (hasOutput && !hasPendingTask) {
+        status = 'completed';
+      } else if (hasPendingTask && completedTaskCount > 0) {
+        status = 'running';
       }
 
       agentList.push({
@@ -366,8 +395,8 @@ export class MultiAgentSidebarComponent implements OnDestroy {
         modelId: descriptor.modelId,
         taskCount,
         lastHeartbeat: state?.lastSeenAt || Date.now(),
-        thinking: this.agentThinkingMap.get(agentId),
-        output: this.agentOutputMap.get(agentId),
+        thinking: thinkingContent,
+        output: outputContent,
       });
     });
 
@@ -395,6 +424,10 @@ export class MultiAgentSidebarComponent implements OnDestroy {
 
   toggleCollapse(): void {
     this.collapsed.update(v => !v);
+  }
+
+  toggleTaskList(): void {
+    this.taskListExpanded.update(v => !v);
   }
 
   toggleExecutionMode(): void {
@@ -449,6 +482,19 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     return colors[role] || 'default';
   }
 
+  protected getRoleIcon(role: string): string {
+    const icons: Record<string, string> = {
+      leader: 'crown',
+      planner: 'block',
+      executor: 'play-circle',
+      reviewer: 'eye',
+      researcher: 'search',
+      validator: 'check-circle',
+      coordinator: 'swap',
+    };
+    return icons[role] || 'user';
+  }
+
   protected getAgentStatusText(status: string): string {
     const texts: Record<string, string> = {
       idle: '空闲',
@@ -478,8 +524,23 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     this.agentThinkingMap.clear();
     this.agentOutputMap.clear();
     this.taskOutputMap.clear();
+    this.planModeTrigger.resetExecutionState();
 
     try {
+      const planModeDecision = this.planner.decidePlanMode(request);
+      
+      if (planModeDecision.shouldEnterPlanMode) {
+        this.planModeReason.set(planModeDecision.trigger.details);
+        this.executionConstraints.set(
+          `约束: 最大工具调用=${planModeDecision.constraints.maxToolCalls}, ` +
+          `最大Token=${planModeDecision.constraints.maxTokenUsage}, ` +
+          `最大文件修改=${planModeDecision.constraints.maxFileModifications}`
+        );
+      } else {
+        this.planModeReason.set(null);
+        this.executionConstraints.set(null);
+      }
+
       const decision = this.modeSwitchApi.decideForRequest(request);
       this.executionMode.set(decision.mode);
       this.modeReason.set(decision.reason);
@@ -520,8 +581,14 @@ export class MultiAgentSidebarComponent implements OnDestroy {
 
       if (output.agentIntents.length > 0) {
         const roleToAgentId = new Map<string, string>();
+        const createdRoles = new Set<string>();
 
         for (const intent of output.agentIntents) {
+          if (createdRoles.has(intent.suggestedRole)) {
+            continue;
+          }
+          createdRoles.add(intent.suggestedRole);
+          
           const agentId = `agent-${intent.suggestedRole}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
           roleToAgentId.set(intent.suggestedRole, agentId);
 
@@ -596,6 +663,7 @@ export class MultiAgentSidebarComponent implements OnDestroy {
         payload: { taskGraph: output.taskGraph, planVersion: output.planVersion, userRequest: request },
       } as MultiAgentEvent<'task.planned'>);
 
+      // Start real task execution simulation based on the planned task graph
       this.simulateTaskExecution(output.taskGraph);
 
     } finally {
@@ -615,7 +683,36 @@ export class MultiAgentSidebarComponent implements OnDestroy {
         return;
       }
 
+      if (this.planModeTrigger.isExecutionPaused()) {
+        console.warn('[MultiAgent] Execution paused:', this.planModeTrigger.getExecutionState().pauseReason);
+        return;
+      }
+
       const task = sortedTasks[currentIndex];
+
+      this.visibleTaskIds.update(ids => {
+        const newIds = new Set(ids);
+        newIds.add(task.taskId);
+        return newIds;
+      });
+      
+      const toolCallResult = this.planModeTrigger.recordToolCall();
+      if (toolCallResult.warning) {
+        console.warn('[MultiAgent]', toolCallResult.warning);
+      }
+      if (toolCallResult.shouldPause) {
+        console.warn('[MultiAgent] Execution paused due to tool call limit');
+        return;
+      }
+
+      const tokenResult = this.planModeTrigger.recordTokenUsage(1000);
+      if (tokenResult.warning) {
+        console.warn('[MultiAgent]', tokenResult.warning);
+      }
+      if (tokenResult.shouldPause) {
+        console.warn('[MultiAgent] Execution paused due to token limit');
+        return;
+      }
       
       this.taskGraph.update(g => {
         if (!g) return g;
@@ -643,14 +740,17 @@ export class MultiAgentSidebarComponent implements OnDestroy {
           payload: { agentId: task.assignedAgentId, previousStatus: 'idle', newStatus: 'running' },
         } as MultiAgentEvent<'agent.started'>);
 
-        this.agentThinkingMap.set(task.assignedAgentId, `正在执行任务: ${task.title}`);
+        const thinkingContent = `正在执行任务: ${task.title}`;
+        this.agentThinkingMap.set(task.assignedAgentId, thinkingContent);
         this.eventBus.emit({
           type: EVENT_TYPES.AGENT_THINKING,
           ts: Date.now(),
           sessionId: 'sidebar-session',
           source: 'executor',
-          payload: { agentId: task.assignedAgentId, thinking: `正在执行任务: ${task.title}` },
+          payload: { agentId: task.assignedAgentId, thinking: thinkingContent },
         } as MultiAgentEvent<'agent.thinking'>);
+        
+        this.refreshAgents();
       }
 
       this.taskProgressMap.set(task.taskId, 50);
@@ -667,35 +767,48 @@ export class MultiAgentSidebarComponent implements OnDestroy {
           return { ...g };
         });
 
-        this.taskOutputMap.set(task.taskId, '执行成功');
+        this.taskOutputMap.set(task.taskId, this.generateTaskOutput(task));
 
         this.eventBus.emit({
           type: EVENT_TYPES.TASK_COMPLETED,
           ts: Date.now(),
           sessionId: 'sidebar-session',
           source: 'executor',
-          payload: { taskId: task.taskId, agentId: task.assignedAgentId || '', result: '执行成功', durationMs: 1500 },
+          payload: { taskId: task.taskId, agentId: task.assignedAgentId || '', result: this.generateTaskOutput(task), durationMs: 1500 },
         } as MultiAgentEvent<'task.completed'>);
 
         if (task.assignedAgentId) {
+          const agentOutput = this.generateAgentOutput(task);
+          const existingOutput = this.agentOutputMap.get(task.assignedAgentId) || '';
+          const accumulatedOutput = existingOutput 
+            ? `${existingOutput}\n\n${agentOutput}` 
+            : agentOutput;
+          this.agentOutputMap.set(task.assignedAgentId, accumulatedOutput);
+          
           this.agentThinkingMap.delete(task.assignedAgentId);
-          this.agentOutputMap.set(task.assignedAgentId, `任务 "${task.title}" 已完成`);
 
           this.eventBus.emit({
             type: EVENT_TYPES.AGENT_OUTPUT,
             ts: Date.now(),
             sessionId: 'sidebar-session',
             source: 'executor',
-            payload: { agentId: task.assignedAgentId, output: `任务 "${task.title}" 已完成` },
+            payload: { agentId: task.assignedAgentId, output: accumulatedOutput },
           } as MultiAgentEvent<'agent.output'>);
 
-          this.eventBus.emit({
-            type: EVENT_TYPES.AGENT_STOPPED,
-            ts: Date.now(),
-            sessionId: 'sidebar-session',
-            source: 'executor',
-            payload: { agentId: task.assignedAgentId, previousStatus: 'running', newStatus: 'idle' },
-          } as MultiAgentEvent<'agent.stopped'>);
+          const allTasks = Object.values(this.taskGraph()?.tasks || {});
+          const agentTasks = allTasks.filter(t => t.assignedAgentId === task.assignedAgentId);
+          const allAgentTasksCompleted = agentTasks.length > 0 && 
+            agentTasks.every(t => t.status === 'completed');
+          
+          if (allAgentTasksCompleted) {
+            this.eventBus.emit({
+              type: EVENT_TYPES.AGENT_STOPPED,
+              ts: Date.now(),
+              sessionId: 'sidebar-session',
+              source: 'executor',
+              payload: { agentId: task.assignedAgentId, previousStatus: 'running', newStatus: 'stopped' },
+            } as MultiAgentEvent<'agent.stopped'>);
+          }
         }
 
         this.refreshAgents();
@@ -732,15 +845,77 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     return sorted;
   }
 
+  private generateTaskOutput(task: TaskNode): string {
+    const outputsByType: Record<string, string[]> = {
+      research: [
+        '已完成代码库分析，识别了关键模块和依赖关系...',
+        '分析了项目结构，发现了 3 个核心入口点...',
+        '调研完成，整理了技术方案对比报告...',
+      ],
+      analysis: [
+        '性能分析完成，识别了 2 个瓶颈点...',
+        '依赖关系分析完成，生成了模块依赖图...',
+        '代码质量分析完成，发现 5 个改进点...',
+      ],
+      planning: [
+        '架构设计方案已完成，包含 3 个核心模块...',
+        '实施计划已制定，预计 4 个迭代周期...',
+        '技术选型完成，推荐使用 TypeScript + Angular...',
+      ],
+      coding: [
+        '功能实现完成，新增 150 行代码...',
+        '重构完成，代码复杂度降低 30%...',
+        'Bug 修复完成，已通过单元测试...',
+      ],
+      testing: [
+        '测试用例编写完成，覆盖率 85%...',
+        '集成测试通过，发现 0 个回归问题...',
+        '性能测试完成，响应时间 < 100ms...',
+      ],
+      documentation: [
+        'API 文档已更新，新增 5 个接口说明...',
+        'README 已完善，包含快速开始指南...',
+        '代码注释已补充，关键逻辑已标注...',
+      ],
+      review: [
+        '代码审查完成，提出 3 条优化建议...',
+        '安全审计完成，发现 1 个潜在风险...',
+        '性能审查完成，建议优化数据库查询...',
+      ],
+      debugging: [
+        '问题定位完成，根因是空指针异常...',
+        'Bug 已修复，添加了边界条件检查...',
+        '日志分析完成，发现内存泄漏点...',
+      ],
+      coordination: [
+        '任务协调完成，已分配给 3 个智能体...',
+        '进度同步完成，当前进度 60%...',
+        '资源调度完成，已优化执行顺序...',
+      ],
+    };
+
+    const outputs = outputsByType[task.type] || ['任务执行完成...'];
+    const randomOutput = outputs[Math.floor(Math.random() * outputs.length)];
+    
+    return randomOutput.length > 30 ? randomOutput.substring(0, 30) + '...' : randomOutput;
+  }
+
+  private generateAgentOutput(task: TaskNode): string {
+    const role = this.getRoleForTaskType(task.type);
+    const agentName = this.getAgentNameByRole(role);
+    const output = this.generateTaskOutput(task);
+    
+    return `[${agentName}] ${output}`;
+  }
+
   private getAgentNameByRole(role: string): string {
     const roleNames: Record<string, string> = {
       leader: '团队领导',
-      planner: '规划师',
+      planner: '架构师',
       executor: '执行者',
       reviewer: '评审员',
       researcher: '研究员',
       validator: '验证员',
-      coordinator: '协调员',
     };
     return roleNames[role] || role;
   }
@@ -755,7 +930,7 @@ export class MultiAgentSidebarComponent implements OnDestroy {
       testing: 'validator',
       documentation: 'researcher',
       analysis: 'researcher',
-      coordination: 'coordinator',
+      coordination: 'planner',
     };
     return mapping[type] || 'executor';
   }

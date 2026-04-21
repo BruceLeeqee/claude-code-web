@@ -38,13 +38,16 @@ import type { ChatMessage, CoordinationMode, CoordinationStep, StreamChunk } fro
 import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../../../core/zyfront-core.providers';
 import { TerminalMemoryGraphService } from '../../../core/terminal-memory-graph.service';
 import { CommandRouterService } from './command-router.service';
-import { DIRECTIVE_REGISTRY, isCoordinationMode, parseDirective, type DirectiveDefinition } from './directive-registry';
+import { DIRECTIVE_REGISTRY, isCoordinationMode, parseDirective, getModeDirectives, type DirectiveDefinition } from './directive-registry';
 import { Subscription } from 'rxjs';
 import { type TurnContext } from '../../../core/memory/memory.types';
 import { MultiAgentOrchestratorService } from '../../../core/multi-agent/multi-agent.orchestrator.service';
 import type { TeammateMode, WorkbenchTeamVm } from '../../../core/multi-agent/multi-agent.types';
 import type { MultiAgentEvent } from '../../../core/multi-agent/multi-agent.events';
 import { MultiAgentSidebarComponent } from '../../../core/multi-agent/multi-agent-sidebar.component';
+import { WorkbenchModeService } from '../../../core/multi-agent/services/workbench-mode.service';
+import { MultiAgentEventBusService } from '../../../core/multi-agent/multi-agent.event-bus.service';
+import { EVENT_TYPES } from '../../../core/multi-agent/multi-agent.events';
 
 type MultiAgentTimelineTier = 'info' | 'success' | 'warning' | 'error';
 
@@ -432,6 +435,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly agentSessionsById = signal<Record<string, { agentId: string; createdAt: number; updatedAt: number; messages: { at: number; role: 'leader' | 'user' | 'teammate' | 'system'; text: string }[] }>>({});
 
   private readonly multiAgent = inject(MultiAgentOrchestratorService);
+  private readonly workbenchMode = inject(WorkbenchModeService);
+  private readonly multiAgentEventBus = inject(MultiAgentEventBusService);
 
   protected readonly llmAvailable = signal(this.hasLlmConfigured());
 
@@ -4252,17 +4257,58 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
 
       case 'mode': {
-        if (!isCoordinationMode(parsed.args)) {
-          this.aiXtermWrite(`\r\n[error] ${parsed.def.usage ?? '/mode <single|plan|parallel>'}\r\n`);
-          return;
+        const modeDirectives = getModeDirectives();
+        const currentMode = this.workbenchMode.currentMode();
+        this.aiXtermWrite('\r\n[mode] 可用模式切换指令：\r\n');
+        modeDirectives.forEach(d => {
+          const isCurrent = d.name === `/mode-${currentMode}`;
+          const marker = isCurrent ? ' \x1b[32m(当前)\x1b[0m' : '';
+          this.aiXtermWrite(`  ${d.name.padEnd(15)} ${d.desc}${marker}\r\n`);
+        });
+        return;
+      }
+
+      case 'mode_solo': {
+        const switched = this.workbenchMode.switchMode('solo', '用户指令切换');
+        if (switched) {
+          this.aiXtermWrite('\r\n\x1b[32m[ok]\x1b[0m 已切换到单智能体模式（默认）\r\n');
+          this.aiXtermWrite('\x1b[90m单个智能体负责日常任务执行，适合简单对话和快速问答。\x1b[0m\r\n');
+        } else {
+          this.aiXtermWrite('\r\n\x1b[33m[info]\x1b[0m 已经是单智能体模式\r\n');
         }
-        this.runtime.coordinator.setMode(parsed.args);
-        this.syncCoordinatorState();
-        this.aiXtermWrite(`\r\n[ok] coordinator mode => ${parsed.args}\r\n`);
-        if (parsed.args === 'plan') {
-          this.aiXtermWrite(
-            '\x1b[90m已切换为 plan：助手若回复带编号列表，会自动同步到右侧「计划步骤」。\x1b[0m\r\n',
-          );
+        return;
+      }
+
+      case 'mode_plan': {
+        const switched = this.workbenchMode.switchMode('plan', '用户指令切换');
+        if (switched) {
+          this.aiXtermWrite('\r\n\x1b[32m[ok]\x1b[0m 已切换到计划模式\r\n');
+          this.aiXtermWrite('\x1b[90m根据用户提示词生成详细计划文档，不执行实际操作。\x1b[0m\r\n');
+          this.aiXtermWrite('\x1b[90m输入自然语言描述任务，系统将生成结构化的计划文档。\x1b[0m\r\n');
+        } else {
+          this.aiXtermWrite('\r\n\x1b[33m[info]\x1b[0m 已经是计划模式\r\n');
+        }
+        return;
+      }
+
+      case 'mode_dev': {
+        const switched = this.workbenchMode.switchMode('dev', '用户指令切换');
+        if (switched) {
+          this.aiXtermWrite('\r\n\x1b[32m[ok]\x1b[0m 已切换到开发者模式\r\n');
+          this.aiXtermWrite('\x1b[90m正在实例化开发团队...\x1b[0m\r\n');
+          try {
+            const devTeam = await this.workbenchMode.initializeDevTeam();
+            this.aiXtermWrite('\x1b[90m开发团队已就绪：\x1b[0m\r\n');
+            this.aiXtermWrite(`  \x1b[36m架构师\x1b[0m - 负责系统架构设计和技术决策\r\n`);
+            this.aiXtermWrite(`  \x1b[36m前端开发\x1b[0m - 负责前端界面和交互实现\r\n`);
+            this.aiXtermWrite(`  \x1b[36m后端开发\x1b[0m - 负责后端服务和API实现\r\n`);
+            this.aiXtermWrite(`  \x1b[36m测试工程师\x1b[0m - 负责测试用例和质量验证\r\n`);
+            this.aiXtermWrite('\x1b[90m采用主从多智能体模式，中央 Planner 统一协调任务。\x1b[0m\r\n');
+          } catch (error) {
+            this.aiXtermWrite(`\r\n\x1b[31m[error]\x1b[0m 初始化开发团队失败: ${error}\r\n`);
+          }
+        } else {
+          this.aiXtermWrite('\r\n\x1b[33m[info]\x1b[0m 已经是开发者模式\r\n');
         }
         return;
       }
@@ -4578,8 +4624,23 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
+    const currentMode = this.workbenchMode.currentMode();
+
+    if (currentMode === 'plan') {
+      await this.executePlanMode(trimmed, opts);
+      return;
+    }
+
+    if (currentMode === 'dev') {
+      await this.executeDevMode(trimmed, opts);
+      return;
+    }
+
+    // Trigger task decomposition for the multi-agent sidebar
     if (this.multiAgentSidebar) {
-      this.multiAgentSidebar.processRequest(trimmed).catch(() => {});
+      this.multiAgentSidebar.processRequest(trimmed).catch(err => {
+        console.warn('[MultiAgent] Task decomposition failed:', err);
+      });
     }
 
     if (!this.appSettings.value.apiKey?.trim()) {
@@ -4735,6 +4796,366 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.syncCoordinatorState();
       }
     }
+  }
+
+  private async executePlanMode(
+    raw: string,
+    opts?: { skipTerminalUserLineAnchor?: boolean },
+  ): Promise<void> {
+    this.aiXtermWrite('\r\n\x1b[36m[计划模式]\x1b[0m 正在生成计划文档...\r\n');
+    
+    const planPrompt = `请为以下任务生成详细的计划文档。计划文档应包含：
+
+## 任务概述
+简要描述任务目标和背景
+
+## 分析阶段
+- 需要收集哪些信息
+- 需要分析哪些现有代码/系统
+- 潜在的风险和挑战
+
+## 设计阶段
+- 技术方案概述
+- 架构设计要点
+- 关键决策点
+
+## 实施阶段
+- 分步骤的实施计划
+- 每个步骤的预期产出
+- 步骤之间的依赖关系
+
+## 验证阶段
+- 测试策略
+- 验收标准
+- 回滚方案
+
+---
+
+用户任务：${raw}
+
+请生成结构化的计划文档（仅生成计划，不执行任何操作）：`;
+
+    const planSystemPrompt = `你是一个专业的项目规划师。你的职责是根据用户需求生成详细的计划文档。
+重要规则：
+1. 只生成计划文档，不执行任何实际操作
+2. 计划应该具体、可执行、有明确的验收标准
+3. 识别潜在风险并提供缓解措施
+4. 计划应该分阶段，每个阶段有明确的里程碑
+5. 使用 Markdown 格式输出`;
+
+    if (!this.appSettings.value.apiKey?.trim()) {
+      this.aiXtermWrite(
+        '\r\n\x1b[31m[error]\x1b[0m 未配置 API Key。\x1b[90m 请打开「API 设置」填写密钥后再试。\x1b[0m\r\n',
+      );
+      return;
+    }
+
+    this.streamInterruptRequested = false;
+    this.terminalBusy.set(true);
+    this.streamRequestStartMs = Date.now();
+
+    const cfg = this.readModelRequestUiConfig();
+    this.commitMainTerminalUserRowForStreamRound(raw, cfg, {
+      skipTerminalUserLineAnchor: opts?.skipTerminalUserLineAnchor,
+    });
+
+    const fullPrompt = await this.promptMemoryBuilder.buildFullPromptForInput(
+      SESSION_ID,
+      planPrompt,
+      planSystemPrompt,
+    );
+
+    const { stream, cancel } = this.runtime.assistant.stream(SESSION_ID, {
+      userInput: fullPrompt,
+      config: this.runtime.client.getModel(),
+    });
+    this.streamStop = cancel;
+    const reader = stream.getReader();
+    this.streamReader = reader;
+
+    let planDocument = '';
+    let streamFailed = false;
+
+    try {
+      while (true) {
+        let chunk: ReadableStreamReadResult<StreamChunk>;
+        try {
+          chunk = await reader.read();
+        } catch {
+          if (!this.streamInterruptRequested) {
+            streamFailed = true;
+            this.aiXtermWrite('\r\n[error] 流被异常终止\r\n');
+          }
+          break;
+        }
+        const { done, value } = chunk;
+        if (done) break;
+        if (value.type === 'error' && value.error) {
+          streamFailed = true;
+          this.aiXtermWrite(`\r\n[error] ${value.error}${this.hintIfUnauthorized(value.error)}`);
+        } else if (value.type === 'delta' && value.textDelta) {
+          planDocument += value.textDelta;
+          this.aiXtermWrite(value.textDelta);
+        }
+      }
+    } catch (error) {
+      streamFailed = true;
+      const msg = error instanceof Error ? error.message : '未知错误';
+      this.aiXtermWrite(`\r\n[error] ${msg}\r\n`);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch { /* ignore */ }
+      this.streamReader = null;
+      this.streamStop = undefined;
+      this.terminalBusy.set(false);
+
+      if (!streamFailed && planDocument) {
+        this.workbenchMode.setPlanDocument(planDocument);
+        this.aiXtermWrite('\r\n\r\n\x1b[32m[计划文档已生成]\x1b[0m 计划已保存，可随时查看或修改。\r\n');
+      }
+
+      this.writeMainTerminalPrompt();
+    }
+  }
+
+  private async executeDevMode(
+    raw: string,
+    opts?: { skipTerminalUserLineAnchor?: boolean },
+  ): Promise<void> {
+    let devTeam = this.workbenchMode.devTeam();
+    
+    if (!devTeam) {
+      this.aiXtermWrite('\r\n\x1b[33m[warn]\x1b[0m 开发团队未初始化，正在初始化...\r\n');
+      try {
+        devTeam = await this.workbenchMode.initializeDevTeam();
+      } catch (error) {
+        this.aiXtermWrite(`\r\n\x1b[31m[error]\x1b[0m 初始化开发团队失败: ${error}\r\n`);
+        return;
+      }
+    }
+
+    this.aiXtermWrite('\r\n\x1b[36m[开发者模式]\x1b[0m 开发团队已就绪\r\n');
+    this.aiXtermWrite('\x1b[90m┌──────────────────────────────────────────────────────────┐\x1b[0m\r\n');
+    this.aiXtermWrite('\x1b[90m│ 主从多智能体协作模式                                      │\x1b[0m\r\n');
+    this.aiXtermWrite('\x1b[90m│ 架构师(协调者): 统一任务队列、状态机、任务分配            │\x1b[0m\r\n');
+    this.aiXtermWrite('\x1b[90m│ 专业 Worker: 前端开发、后端开发、测试工程师              │\x1b[0m\r\n');
+    this.aiXtermWrite('\x1b[90m│ 执行串行，能力并行                                        │\x1b[0m\r\n');
+    this.aiXtermWrite('\x1b[90m└──────────────────────────────────────────────────────────┘\x1b[0m\r\n');
+    this.aiXtermWrite('\r\n');
+
+    this.aiXtermWrite('\x1b[36m[架构师]\x1b[0m 正在分析任务需求...\r\n');
+
+    const agentIdMap: Record<string, string> = {
+      '架构师': devTeam.architect.agentId,
+      '前端开发': devTeam.frontend.agentId,
+      '后端开发': devTeam.backend.agentId,
+      '测试工程师': devTeam.tester.agentId,
+    };
+
+    this.emitAgentThinking(devTeam.architect.agentId, '正在分析任务需求...');
+
+    if (this.multiAgentSidebar) {
+      this.multiAgentSidebar.setCurrentRequest(raw);
+    }
+
+    if (!this.appSettings.value.apiKey?.trim()) {
+      this.aiXtermWrite(
+        '\r\n\x1b[31m[error]\x1b[0m 未配置 API Key。\x1b[90m 请打开「API 设置」填写密钥后再试。\x1b[0m\r\n',
+      );
+      return;
+    }
+
+    this.streamInterruptRequested = false;
+    this.resetThinkingStreamState();
+    this.mergeThinkingBlocksFromSession();
+    this.streamRouteDeltaToThinking = false;
+    this.terminalBusy.set(true);
+    this.streamRequestStartMs = Date.now();
+
+    const cfg = this.readModelRequestUiConfig();
+    this.commitMainTerminalUserRowForStreamRound(raw, cfg, {
+      skipTerminalUserLineAnchor: opts?.skipTerminalUserLineAnchor,
+    });
+
+    const devSystemPrompt = `你是开发团队的架构师和协调者。你必须严格按照以下流程执行任务。
+
+## 强制执行流程（必须按顺序执行）
+
+### 阶段1: 架构师分析
+[架构师] 分析用户需求，分解任务
+
+### 阶段2: 开发执行
+根据任务类型分配给对应开发者执行：
+- 前端任务 -> [前端开发]
+- 后端任务 -> [后端开发]
+- 通用任务 -> [前端开发] 或 [后端开发]
+
+### 阶段3: 测试验证（必须执行）
+[测试工程师] 对所有完成的任务进行测试验证
+
+### 阶段4: 架构师汇总
+[架构师] 汇总结果并报告
+
+## 团队成员
+- [架构师]：系统架构设计、技术决策、任务协调、结果汇总
+- [前端开发]：前端界面、Angular/TypeScript、UI交互
+- [后端开发]：后端服务、API、Node.js/Python
+- [测试工程师]：测试用例、质量验证、问题检测
+
+## 输出格式（严格遵循）
+
+[架构师] 任务分析完成，共N个子任务：
+1. [任务名] -> 分配给: 前端开发/后端开发
+...
+
+[前端开发/后端开发] 执行任务: xxx
+[前端开发/后端开发] 完成: xxx
+
+[测试工程师] 开始测试验证...
+[测试工程师] 测试结果: 通过/发现问题: xxx
+
+[架构师] 任务完成汇总: xxx
+
+## 重要规则
+1. 必须包含[测试工程师]的测试验证阶段
+2. 测试必须在所有开发任务完成后执行
+3. 如果测试发现问题，必须返回修复后重新测试
+4. 最终由架构师汇总结果`;
+
+    const fullPrompt = await this.promptMemoryBuilder.buildFullPromptForInput(
+      SESSION_ID,
+      raw,
+      devSystemPrompt,
+    );
+
+    const { stream, cancel } = this.runtime.assistant.stream(SESSION_ID, {
+      userInput: fullPrompt,
+      config: this.runtime.client.getModel(),
+    });
+    this.streamStop = cancel;
+    const reader = stream.getReader();
+    this.streamReader = reader;
+
+    let streamFailed = false;
+    let lastAgent = '';
+    let currentThinkingAgent: string | null = null;
+    const agentColors: Record<string, string> = {
+      '架构师': '36',
+      '前端开发': '32',
+      '后端开发': '33',
+      '测试工程师': '35',
+    };
+
+    try {
+      while (true) {
+        let chunk: ReadableStreamReadResult<StreamChunk>;
+        try {
+          chunk = await reader.read();
+        } catch {
+          if (!this.streamInterruptRequested) {
+            streamFailed = true;
+            this.aiXtermWrite('\r\n[error] 流被异常终止\r\n');
+          }
+          break;
+        }
+        const { done, value } = chunk;
+        if (done) break;
+        if (value.type === 'error' && value.error) {
+          streamFailed = true;
+          this.aiXtermWrite(`\r\n[error] ${value.error}${this.hintIfUnauthorized(value.error)}`);
+        } else if (value.type === 'delta' && value.textDelta) {
+          const text = value.textDelta;
+          
+          for (const [agent, color] of Object.entries(agentColors)) {
+            if (text.includes(`[${agent}]`) && lastAgent !== agent) {
+              if (currentThinkingAgent && currentThinkingAgent !== agent) {
+                const prevAgentId = agentIdMap[currentThinkingAgent];
+                if (prevAgentId) {
+                  this.emitAgentOutput(prevAgentId, `已完成任务`);
+                }
+              }
+              
+              lastAgent = agent;
+              currentThinkingAgent = agent;
+              this.aiXtermWrite(`\r\n\x1b[${color}m[${agent}]\x1b[0m `);
+              
+              const agentId = agentIdMap[agent];
+              if (agentId) {
+                this.emitAgentThinking(agentId, `正在执行任务...`);
+              }
+              break;
+            }
+          }
+          
+          this.roundAnswerAccumulator += text;
+          const colored = text
+            .replace(/\[架构师\]/g, '\x1b[36m[架构师]\x1b[0m')
+            .replace(/\[前端开发\]/g, '\x1b[32m[前端开发]\x1b[0m')
+            .replace(/\[后端开发\]/g, '\x1b[33m[后端开发]\x1b[0m')
+            .replace(/\[测试工程师\]/g, '\x1b[35m[测试工程师]\x1b[0m')
+            .replace(/分配给:/g, '\x1b[90m分配给:\x1b[0m\x1b[1m')
+            .replace(/(前端开发|后端开发|测试工程师|架构师)\x1b\[0m\x1b\[1m/g, '$1\x1b[0m');
+          this.aiXtermWrite(colored);
+        }
+      }
+    } catch (error) {
+      streamFailed = true;
+      const msg = error instanceof Error ? error.message : '未知错误';
+      this.aiXtermWrite(`\r\n[error] ${msg}\r\n`);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch { /* ignore */ }
+      this.streamReader = null;
+      this.streamStop = undefined;
+      this.terminalBusy.set(false);
+
+      this.resetThinkingStreamState();
+
+      if (this.streamInterruptRequested) {
+        this.aiXtermWrite('\r\n\x1b[33m[已中断]\x1b[0m\r\n');
+        this.streamInterruptRequested = false;
+      } else if (!streamFailed) {
+        this.aiXtermWrite('\r\n\r\n\x1b[32m[架构师]\x1b[0m 任务执行完成\r\n');
+        
+        if (currentThinkingAgent) {
+          const agentId = agentIdMap[currentThinkingAgent];
+          if (agentId) {
+            this.emitAgentOutput(agentId, '任务执行完成');
+          }
+        }
+        
+        await this.appendRecentTurnAfterSuccess(raw);
+        try {
+          await this.triggerMemoryPipelineFromHistory(raw);
+        } catch { /* 记忆管道失败不向主终端刷屏 */ }
+        await this.syncPlanStepsFromLastAssistant();
+        this.syncCoordinatorState();
+      }
+
+      this.writeMainTerminalPrompt();
+    }
+  }
+
+  private emitAgentThinking(agentId: string, thinking: string): void {
+    this.multiAgentEventBus.emit({
+      type: EVENT_TYPES.AGENT_THINKING,
+      ts: Date.now(),
+      sessionId: SESSION_ID,
+      source: 'executor',
+      payload: { agentId, thinking },
+    } as MultiAgentEvent<'agent.thinking'>);
+  }
+
+  private emitAgentOutput(agentId: string, output: string): void {
+    this.multiAgentEventBus.emit({
+      type: EVENT_TYPES.AGENT_OUTPUT,
+      ts: Date.now(),
+      sessionId: SESSION_ID,
+      source: 'executor',
+      payload: { agentId, output },
+    } as MultiAgentEvent<'agent.output'>);
   }
 
   private pushHistory(input: string): void {

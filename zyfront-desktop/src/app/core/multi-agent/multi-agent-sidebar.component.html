@@ -2,7 +2,6 @@
   <div class="sidebar-header">
     <div class="header-title" *ngIf="!collapsed()">
       <span nz-icon nzType="team" nzTheme="outline"></span>
-      <span>多智能体编排</span>
     </div>
     <button nz-button nzType="text" nzSize="small" class="collapse-btn" (click)="toggleCollapse()">
       <span nz-icon [nzType]="collapsed() ? 'menu-unfold' : 'menu-fold'" nzTheme="outline"></span>
@@ -19,30 +18,36 @@
       <div class="section-header">
         <span nz-icon nzType="apartment" nzTheme="outline"></span>
         <span>任务列表</span>
+        <span class="task-count">{{ completedTaskCount() }}/{{ taskNodes().length }}</span>
+        <button nz-button nzType="text" nzSize="small" class="expand-btn" (click)="toggleTaskList()">
+          <span nz-icon [nzType]="taskListExpanded() ? 'down' : 'right'" nzTheme="outline"></span>
+        </button>
       </div>
-      <div class="task-list">
+      <div class="task-list" *ngIf="taskListExpanded()">
         <div 
-          class="task-node" 
+          class="task-item" 
           *ngFor="let task of taskNodes(); trackBy: trackByTaskId"
           [class.task-pending]="task.status === 'pending'"
           [class.task-running]="task.status === 'running'"
           [class.task-completed]="task.status === 'completed'"
           [class.task-failed]="task.status === 'failed'">
-          <div class="task-row">
-            <span class="task-status-icon">
-              <span nz-icon [nzType]="getStatusIcon(task.status)" nzTheme="outline"></span>
+          <div class="task-item-row">
+            <span class="task-status-icon" [class.status-pending]="task.status === 'pending'" [class.status-running]="task.status === 'running'" [class.status-completed]="task.status === 'completed'" [class.status-failed]="task.status === 'failed'">
+              <span *ngIf="task.status === 'pending'" class="status-circle pending"></span>
+              <span *ngIf="task.status === 'running'" class="status-circle running"></span>
+              <span *ngIf="task.status === 'completed'" class="status-check completed">
+                <span nz-icon nzType="check" nzTheme="outline"></span>
+              </span>
+              <span *ngIf="task.status === 'failed'" class="status-cross failed">
+                <span nz-icon nzType="close" nzTheme="outline"></span>
+              </span>
             </span>
-            <span class="task-title">{{ task.title }}</span>
-            <nz-tag [nzColor]="getTaskTypeColor(task.taskType)" nzSize="small" class="task-type-tag">
-              {{ task.taskType }}
-            </nz-tag>
+            <span class="task-item-title" [class.completed]="task.status === 'completed'">{{ task.title }}</span>
+            <span class="task-item-type">{{ task.taskType }}</span>
           </div>
-          <div class="task-progress" *ngIf="task.status === 'running' && task.progress">
-            <nz-progress [nzPercent]="task.progress" nzSize="small" [nzShowInfo]="false"></nz-progress>
-          </div>
-          <div class="task-output" *ngIf="task.output">
-            <div class="output-label">输出:</div>
-            <div class="output-text">{{ task.output }}</div>
+          <div class="task-item-output" *ngIf="task.output">
+            <span class="output-label">输出:</span>
+            <span class="output-text">{{ task.output }}</span>
           </div>
         </div>
       </div>
@@ -61,8 +66,8 @@
           [class.agent-idle]="agent.status === 'idle'"
           [class.agent-thinking]="agent.status === 'thinking'">
           <div class="agent-row">
-            <div class="agent-avatar" [class.status-running]="agent.status === 'running'" [class.status-idle]="agent.status === 'idle'" [class.status-thinking]="agent.status === 'thinking'">
-              <span nz-icon nzType="user" nzTheme="outline"></span>
+            <div class="agent-avatar" [class.status-running]="agent.status === 'running'" [class.status-idle]="agent.status === 'idle'" [class.status-thinking]="agent.status === 'thinking'" [ngClass]="'role-' + agent.role">
+              <span nz-icon [nzType]="getRoleIcon(agent.role)" nzTheme="outline"></span>
             </div>
             <div class="agent-info">
               <span class="agent-name">{{ agent.agentName }}</span>

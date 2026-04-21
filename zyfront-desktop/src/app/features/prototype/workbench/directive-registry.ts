@@ -1,6 +1,16 @@
 import type { CoordinationMode } from 'zyfront-core';
 
-export type DirectiveKind = 'help' | 'status' | 'mode' | 'plugin_list' | 'plugin_run' | 'superpower' | 'doctor';
+export type DirectiveKind = 
+  | 'help' 
+  | 'status' 
+  | 'mode' 
+  | 'mode_solo' 
+  | 'mode_plan' 
+  | 'mode_dev' 
+  | 'plugin_list' 
+  | 'plugin_run' 
+  | 'superpower' 
+  | 'doctor';
 
 export interface DirectiveDefinition {
   name: string;
@@ -22,10 +32,31 @@ export const DIRECTIVE_REGISTRY: DirectiveDefinition[] = [
   { name: '/status', desc: '查看当前模式/模型/任务状态', template: '/status', kind: 'status' },
   {
     name: '/mode',
-    desc: '切换协调模式 single|plan|parallel',
-    template: '/mode plan',
+    desc: '显示所有模式切换指令',
+    template: '/mode',
     kind: 'mode',
-    usage: '/mode <single|plan|parallel>',
+    usage: '/mode 查看所有模式',
+  },
+  {
+    name: '/mode-solo',
+    desc: '切换到单智能体模式（默认）',
+    template: '/mode-solo',
+    kind: 'mode_solo',
+    usage: '/mode-solo 切换到单智能体模式',
+  },
+  {
+    name: '/mode-plan',
+    desc: '切换到计划模式，只生成计划文档',
+    template: '/mode-plan',
+    kind: 'mode_plan',
+    usage: '/mode-plan 切换到计划模式',
+  },
+  {
+    name: '/mode-dev',
+    desc: '切换到开发者模式，实例化开发团队',
+    template: '/mode-dev',
+    kind: 'mode_dev',
+    usage: '/mode-dev 切换到开发者模式',
   },
   { name: '/plugin:list', desc: '查看插件指令列表', template: '/plugin:list', kind: 'plugin_list' },
   {
@@ -59,4 +90,8 @@ export function parseDirective(raw: string): ParsedDirective {
 
 export function isCoordinationMode(v: string): v is CoordinationMode {
   return v === 'single' || v === 'plan' || v === 'parallel';
+}
+
+export function getModeDirectives(): DirectiveDefinition[] {
+  return DIRECTIVE_REGISTRY.filter(d => d.kind.startsWith('mode'));
 }

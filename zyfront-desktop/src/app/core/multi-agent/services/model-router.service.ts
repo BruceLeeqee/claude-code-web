@@ -340,7 +340,6 @@ export class ModelRouterService {
       reviewer: 'claude-3-5-sonnet-latest',
       researcher: 'claude-3-5-sonnet-latest',
       validator: 'MiniMax-M2.7',
-      coordinator: 'MiniMax-M2.7',
     };
 
     const modelId = roleModelMap[ctx.agentRole] || 'MiniMax-M2.7';

@@ -1,12 +1,13 @@
 .multi-agent-sidebar {
   width: 320px;
   height: 100%;
-  background: #1e1e2e;
-  border-left: 1px solid #313244;
+  background: #1a1a2e;
+  border-left: 1px solid #2a2a3e;
   display: flex;
   flex-direction: column;
-  transition: width 0.3s ease;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   font-size: 12px;
+  overflow: hidden;
 
   &.collapsed {
     width: 48px;
@@ -21,31 +22,36 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid #313244;
-  background: #181825;
+  padding: 12px 16px 12px 0;
+  border-bottom: 1px solid #2a2a3e;
+  background: #16162a;
   flex-shrink: 0;
+  min-height: 48px;
 
   .header-title {
     display: flex;
     align-items: center;
-    gap: 8px;
-    color: #cdd6f4;
+    gap: 10px;
+    color: #e4e4f0;
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13px;
+    letter-spacing: 0.3px;
 
     [nz-icon] {
-      color: #cba6f7;
+      color: #a78bfa;
+      font-size: 16px;
     }
   }
 
   .collapse-btn {
-    color: #6c7086;
-    padding: 4px;
+    color: #6b6b8a;
+    padding: 6px;
+    border-radius: 6px;
+    transition: all 0.2s;
 
     &:hover {
-      color: #cdd6f4;
-      background: #313244;
+      color: #e4e4f0;
+      background: #2a2a3e;
     }
   }
 }
@@ -59,7 +65,7 @@
   min-height: 0;
 
   &::-webkit-scrollbar {
-    width: 6px;
+    width: 5px;
   }
 
   &::-webkit-scrollbar-track {
@@ -67,34 +73,35 @@
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #45475a;
+    background: #3a3a5a;
     border-radius: 3px;
 
     &:hover {
-      background: #585b70;
+      background: #4a4a6a;
     }
   }
 }
 
 .current-request {
-  padding: 12px 8px;
-  background: #181825;
-  border-bottom: 1px solid #313244;
+  padding: 14px 12px;
+  background: #16162a;
+  border-bottom: 1px solid #2a2a3e;
   flex-shrink: 0;
 
   .request-label {
     font-size: 10px;
-    color: #6c7086;
-    margin-bottom: 6px;
+    color: #6b6b8a;
+    margin-bottom: 8px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.8px;
+    font-weight: 500;
   }
 
   .request-text {
-    font-size: 12px;
-    color: #cdd6f4;
+    font-size: 13px;
+    color: #d4d4e8;
     line-height: 1.6;
-    max-height: 72px;
+    max-height: 64px;
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
@@ -104,8 +111,8 @@
 }
 
 .section {
-  padding: 12px 8px;
-  border-bottom: 1px solid #313244;
+  padding: 16px 12px;
+  border-bottom: 1px solid #22223a;
 
   .section-header {
     display: flex;
@@ -113,11 +120,34 @@
     gap: 8px;
     font-size: 12px;
     font-weight: 600;
-    color: #cdd6f4;
-    margin-bottom: 12px;
+    color: #c4c4d8;
+    margin-bottom: 14px;
 
     [nz-icon] {
-      color: #cba6f7;
+      color: #a78bfa;
+      font-size: 14px;
+    }
+
+    .task-count {
+      margin-left: auto;
+      font-size: 11px;
+      color: #86efac;
+      background: rgba(134, 239, 172, 0.12);
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-weight: 500;
+    }
+
+    .expand-btn {
+      color: #6b6b8a;
+      padding: 4px;
+      margin-left: 4px;
+      border-radius: 4px;
+
+      &:hover {
+        color: #e4e4f0;
+        background: #2a2a3e;
+      }
     }
   }
 }
@@ -125,37 +155,28 @@
 .task-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 
-  .task-node {
-    background: #181825;
-    border: 1px solid #313244;
-    border-radius: 8px;
-    padding: 12px;
-    transition: all 0.2s;
+  .task-item {
+    display: flex;
+    flex-direction: column;
+    padding: 12px 10px;
+    border-bottom: 1px solid #22223a;
+    transition: background 0.15s;
 
-    &:hover {
-      border-color: #45475a;
+    &:last-child {
+      border-bottom: none;
     }
 
-    &.task-pending {
-      border-left: 3px solid #6c7086;
+    &:hover {
+      background: rgba(255, 255, 255, 0.02);
     }
 
     &.task-running {
-      border-left: 3px solid #89b4fa;
-      background: linear-gradient(90deg, rgba(30, 102, 245, 0.1) 0%, #181825 100%);
+      background: rgba(96, 165, 250, 0.08);
     }
 
-    &.task-completed {
-      border-left: 3px solid #a6e3a1;
-    }
-
-    &.task-failed {
-      border-left: 3px solid #f38ba8;
-    }
-
-    .task-row {
+    .task-item-row {
       display: flex;
       align-items: center;
       gap: 10px;
@@ -166,55 +187,98 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #6c7086;
+        flex-shrink: 0;
 
-        [nz-icon] {
-          font-size: 14px;
+        .status-circle {
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          border: 2px solid;
+          display: flex;
+          align-items: center;
+          justify-content: center;
 
-          &.anticon-loading {
-            animation: spin 1s linear infinite;
-            color: #89b4fa;
+          &.pending {
+            border-color: #6b6b8a;
+            border-style: dashed;
+            background: transparent;
+          }
+
+          &.running {
+            border-color: #60a5fa;
+            border-style: dashed;
+            background: transparent;
+          }
+        }
+
+        .status-check {
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+
+          &.completed {
+            background: #86efac;
+            color: #1a1a2e;
+            font-size: 10px;
+          }
+        }
+
+        .status-cross {
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+
+          &.failed {
+            background: #f87171;
+            color: #1a1a2e;
+            font-size: 10px;
           }
         }
       }
 
-      .task-title {
+      .task-item-title {
         flex: 1;
-        color: #cdd6f4;
+        color: #d4d4e8;
         font-size: 12px;
-        font-weight: 500;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+
+        &.completed {
+          text-decoration: line-through;
+          color: #6b6b8a;
+        }
       }
 
-      .task-type-tag {
+      .task-item-type {
+        color: #6b6b8a;
         font-size: 10px;
-        margin: 0;
+        flex-shrink: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
       }
     }
 
-    .task-progress {
-      margin-top: 10px;
-    }
-
-    .task-output {
-      margin-top: 10px;
-      padding: 8px 10px;
-      background: #11111b;
-      border-radius: 6px;
+    .task-item-output {
+      margin-top: 8px;
+      padding-left: 28px;
+      font-size: 11px;
+      color: #9090a8;
+      line-height: 1.5;
 
       .output-label {
-        font-size: 10px;
-        color: #a6e3a1;
-        margin-bottom: 4px;
+        color: #86efac;
         font-weight: 500;
       }
 
       .output-text {
-        font-size: 11px;
-        color: #a6adc8;
-        line-height: 1.5;
+        color: #9090a8;
       }
     }
   }
@@ -226,61 +290,111 @@
   gap: 10px;
 
   .agent-card {
-    background: #181825;
-    border: 1px solid #313244;
-    border-radius: 8px;
-    padding: 12px;
+    background: #16162a;
+    border: 1px solid #2a2a3e;
+    border-radius: 10px;
+    padding: 14px;
     transition: all 0.2s;
 
     &:hover {
-      border-color: #45475a;
+      border-color: #3a3a5a;
     }
 
     &.agent-running {
-      border-left: 3px solid #89b4fa;
+      border-left: 3px solid #60a5fa;
     }
 
     &.agent-idle {
-      border-left: 3px solid #a6e3a1;
+      border-left: 3px solid #86efac;
     }
 
     &.agent-thinking {
-      border-left: 3px solid #f9e2af;
-      background: linear-gradient(90deg, rgba(249, 226, 175, 0.1) 0%, #181825 100%);
+      border-left: 3px solid #fbbf24;
     }
 
     .agent-row {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
 
       .agent-avatar {
-        width: 32px;
-        height: 32px;
+        width: 34px;
+        height: 34px;
         border-radius: 50%;
-        background: #313244;
+        background: #2a2a3e;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #6c7086;
+        color: #6b6b8a;
         font-size: 16px;
         flex-shrink: 0;
 
+        // Default status colors (overridden by role-specific below)
         &.status-running {
-          background: linear-gradient(135deg, #89b4fa 0%, #1e66f5 100%);
-          color: #1e1e2e;
-          animation: pulse 2s infinite;
+          background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+          color: #fff;
         }
 
         &.status-idle {
-          background: linear-gradient(135deg, #a6e3a1 0%, #40a02b 100%);
-          color: #1e1e2e;
+          background: linear-gradient(135deg, #86efac 0%, #22c55e 100%);
+          color: #fff;
         }
 
         &.status-thinking {
-          background: linear-gradient(135deg, #f9e2af 0%, #df8e1d 100%);
-          color: #1e1e2e;
-          animation: pulse 1s infinite;
+          background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+          color: #fff;
+        }
+
+        // Role-specific base colors (shown when idle)
+        &.role-leader {
+          background: linear-gradient(135deg, #f87171 0%, #dc2626 100%);
+          color: #fff;
+        }
+
+        &.role-planner {
+          background: linear-gradient(135deg, #c084fc 0%, #a855f7 100%);
+          color: #fff;
+        }
+
+        &.role-executor {
+          background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+          color: #fff;
+        }
+
+        &.role-reviewer {
+          background: linear-gradient(135deg, #22d3d3 0%, #06b6d4 100%);
+          color: #fff;
+        }
+
+        &.role-researcher {
+          background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+          color: #fff;
+        }
+
+        &.role-validator {
+          background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+          color: #fff;
+        }
+
+        &.role-coordinator {
+          background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+          color: #fff;
+        }
+
+        // Status glow effects for running state
+        &.status-running {
+          &.role-leader { box-shadow: 0 0 12px rgba(248, 113, 113, 0.5); }
+          &.role-planner { box-shadow: 0 0 12px rgba(192, 132, 252, 0.5); }
+          &.role-executor { box-shadow: 0 0 12px rgba(96, 165, 250, 0.5); }
+          &.role-reviewer { box-shadow: 0 0 12px rgba(34, 211, 211, 0.5); }
+          &.role-researcher { box-shadow: 0 0 12px rgba(74, 222, 128, 0.5); }
+          &.role-validator { box-shadow: 0 0 12px rgba(251, 146, 60, 0.5); }
+          &.role-coordinator { box-shadow: 0 0 12px rgba(251, 191, 36, 0.5); }
+        }
+
+        // Thinking pulse animation
+        &.status-thinking {
+          animation: thinking-pulse 1.5s ease-in-out infinite;
         }
       }
 
@@ -290,10 +404,10 @@
 
         .agent-name {
           display: block;
-          color: #cdd6f4;
-          font-size: 12px;
+          color: #e4e4f0;
+          font-size: 13px;
           font-weight: 500;
-          margin-bottom: 4px;
+          margin-bottom: 6px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -310,83 +424,82 @@
           width: 8px;
           height: 8px;
           border-radius: 50%;
-          background: #6c7086;
+          background: #6b6b8a;
 
           &.running {
-            background: #89b4fa;
-            animation: blink 1s infinite;
+            background: #60a5fa;
           }
 
           &.idle {
-            background: #a6e3a1;
+            background: #86efac;
           }
 
           &.thinking {
-            background: #f9e2af;
-            animation: blink 0.5s infinite;
+            background: #fbbf24;
           }
         }
 
         .status-text {
           font-size: 11px;
-          color: #6c7086;
+          color: #6b6b8a;
         }
       }
     }
 
     .agent-thinking {
-      margin-top: 10px;
-      padding: 10px;
-      background: linear-gradient(135deg, rgba(249, 226, 175, 0.15) 0%, #11111b 100%);
-      border-radius: 6px;
-      border: 1px solid rgba(249, 226, 175, 0.3);
+      margin-top: 12px;
+      padding: 12px;
+      background: rgba(251, 191, 36, 0.08);
+      border-radius: 8px;
+      border: 1px solid rgba(251, 191, 36, 0.2);
 
       .thinking-header {
         display: flex;
         align-items: center;
         gap: 6px;
         font-size: 11px;
-        color: #f9e2af;
-        margin-bottom: 6px;
+        color: #fbbf24;
+        margin-bottom: 8px;
         font-weight: 500;
 
         [nz-icon] {
-          animation: pulse 1s infinite;
+          font-size: 12px;
         }
       }
 
       .thinking-content {
         font-size: 11px;
-        color: #bac2de;
-        line-height: 1.5;
+        color: #a8a8c0;
+        line-height: 1.6;
       }
     }
 
     .agent-output {
-      margin-top: 10px;
-      padding: 10px;
-      background: #11111b;
-      border-radius: 6px;
-      border: 1px solid rgba(166, 227, 161, 0.3);
+      margin-top: 12px;
+      padding: 12px;
+      background: #111120;
+      border-radius: 8px;
+      border: 1px solid rgba(134, 239, 172, 0.2);
 
       .output-header {
         display: flex;
         align-items: center;
         gap: 6px;
         font-size: 11px;
-        color: #a6e3a1;
-        margin-bottom: 6px;
+        color: #86efac;
+        margin-bottom: 8px;
         font-weight: 500;
 
         [nz-icon] {
-          color: #a6e3a1;
+          color: #86efac;
+          font-size: 12px;
         }
       }
 
       .output-content {
         font-size: 11px;
-        color: #a6adc8;
-        line-height: 1.5;
+        color: #9090a8;
+        line-height: 1.6;
       }
     }
   }
@@ -398,12 +511,12 @@
   align-items: center;
   justify-content: center;
   padding: 60px 24px;
-  color: #6c7086;
+  color: #6b6b8a;
 
   .empty-icon {
-    font-size: 48px;
+    font-size: 42px;
     margin-bottom: 16px;
-    color: #45475a;
+    color: #4a4a6a;
   }
 
   p {
@@ -411,36 +524,7 @@
     text-align: center;
     line-height: 1.6;
     margin: 0;
-    color: #6c7086;
-  }
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 8px rgba(249, 226, 175, 0.4);
-  }
-  50% {
-    box-shadow: 0 0 16px rgba(249, 226, 175, 0.6);
-  }
-}
-
-@keyframes blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
+    color: #6b6b8a;
   }
 }
 
@@ -450,10 +534,21 @@
   }
 
   .ant-progress-inner {
-    background: #313244;
+    background: #2a2a3e;
   }
 
   .ant-progress-bg {
-    background: linear-gradient(90deg, #89b4fa 0%, #1e66f5 100%);
+    background: linear-gradient(90deg, #60a5fa 0%, #3b82f6 100%);
+  }
+}
+
+@keyframes thinking-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(0.95);
   }
 }

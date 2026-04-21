@@ -180,25 +180,6 @@ export class AgentFactoryService {
         allowAutoRecycle: true,
         skills: ['testing', 'validation', 'quality-assurance'],
       },
-      {
-        templateId: 'tpl-coordinator',
-        roleName: 'coordinator',
-        displayName: '协调者',
-        description: '负责团队协调和冲突解决',
-        defaultPromptTemplate: `你是一个团队协调者。你的职责是：
-1. 监控团队状态
-2. 协调资源分配
-3. 解决冲突和阻塞
-4. 同步团队信息
-5. 优化协作流程
-
-请保持沟通顺畅，及时处理问题。`,
-        defaultPermissions: ['fs.read'],
-        recommendedModelFamily: ['claude-3-5-sonnet', 'MiniMax-M2.7'],
-        recommendedBackend: ['in-process'],
-        allowAutoRecycle: true,
-        skills: ['coordination', 'communication', 'problem-solving'],
-      },
     ];
 
     defaultTemplates.forEach(template => {

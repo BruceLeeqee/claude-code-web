@@ -17,6 +17,7 @@ import type {
 import { MultiAgentEventBusService } from '../multi-agent.event-bus.service';
 import { EVENT_TYPES } from '../multi-agent.events';
 import { LLMTaskDecompositionService } from './llm-task-decomposition.service';
+import { PlanModeTriggerService, type PlanModeTrigger, type ExecutionConstraint } from './plan-mode-trigger.service';
 
 export interface TaskDecomposition {
   subtasks: TaskNode[];
@@ -31,6 +32,7 @@ export interface ComplexityAnalysis {
   estimatedSubtasks: number;
   requiresMultipleAgents: boolean;
   estimatedDurationMs: number;
+  estimatedSteps: number;
 }
 
 export interface SimplePlan {
@@ -42,6 +44,20 @@ export interface SimplePlan {
   };
   estimatedDurationMs: number;
   shouldUseSingleAgent: boolean;
+}
+
+export interface TaskValidationResult {
+  isValid: boolean;
+  issues: string[];
+  needsReplan: boolean;
+  confidence: number;
+  suggestions: string[];
+}
+
+export interface PlanModeDecision {
+  shouldEnterPlanMode: boolean;
+  trigger: PlanModeTrigger;
+  constraints: ExecutionConstraint;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -65,18 +81,38 @@ export class TaskPlannerService {
 
   private readonly roleCapabilities: Record<AgentRole, TaskType[]> = {
     leader: ['planning', 'coordination'],
-    planner: ['planning', 'analysis'],
+    planner: ['planning', 'analysis', 'coordination'],
     executor: ['coding', 'debugging', 'testing'],
     reviewer: ['review', 'testing'],
     researcher: ['research', 'analysis', 'documentation'],
     validator: ['testing', 'review'],
-    coordinator: ['planning', 'coordination'],
   };
 
   constructor(
     private readonly eventBus: MultiAgentEventBusService,
     private readonly llmDecomposition: LLMTaskDecompositionService,
+    private readonly planModeTrigger: PlanModeTriggerService,
   ) {}
+
+  decidePlanMode(request: string, currentContextTokens: number = 0): PlanModeDecision {
+    const estimatedSteps = this.planModeTrigger.estimateStepsFromRequest(request);
+    const complexity = this.analyzeComplexity(request);
+    
+    const trigger = this.planModeTrigger.checkPlanModeTrigger(
+      request,
+      estimatedSteps,
+      currentContextTokens,
+      complexity.level,
+    );
+
+    const constraints = this.planModeTrigger.getExecutionConstraints(complexity.level);
+
+    return {
+      shouldEnterPlanMode: trigger.shouldEnterPlanMode,
+      trigger,
+      constraints,
+    };
+  }
 
   planSimple(request: string): SimplePlan {
     const taskType = this.detectTaskType(request);
@@ -215,6 +251,115 @@ export class TaskPlannerService {
     return this.planVersion;
   }
 
+  validateTaskResult(task: TaskNode, result: string): TaskValidationResult {
+    const issues: string[] = [];
+    const suggestions: string[] = [];
+    let confidence = 1.0;
+
+    if (!result || result.trim().length === 0) {
+      issues.push('执行结果为空');
+      confidence -= 0.5;
+    }
+
+    if (result && result.length < 20 && task.type !== 'testing') {
+      issues.push('输出结果过短，可能未完成任务');
+      confidence -= 0.3;
+    }
+
+    const errorPatterns = [
+      /error[:：]/i,
+      /failed[:：]/i,
+      /exception[:：]/i,
+      /错误[:：]/,
+      /失败[:：]/,
+      /异常[:：]/,
+      /cannot\s+/i,
+      /unable\s+to/i,
+      /not\s+found/i,
+    ];
+
+    for (const pattern of errorPatterns) {
+      if (pattern.test(result)) {
+        issues.push(`检测到错误信息: ${pattern.source}`);
+        confidence -= 0.2;
+        break;
+      }
+    }
+
+    const successPatterns = [
+      /success/i,
+      /completed/i,
+      /done/i,
+      /完成/,
+      /成功/,
+      /已实现/,
+    ];
+
+    const hasSuccessIndicator = successPatterns.some(p => p.test(result));
+    if (!hasSuccessIndicator && task.type === 'coding') {
+      suggestions.push('建议添加完成状态确认');
+      confidence -= 0.1;
+    }
+
+    if (task.type === 'testing' && !result.includes('pass') && !result.includes('通过')) {
+      suggestions.push('测试任务建议包含测试通过状态');
+      confidence -= 0.1;
+    }
+
+    if (task.type === 'analysis' && !result.includes('分析') && !result.includes('结果')) {
+      suggestions.push('分析任务建议包含分析结果摘要');
+      confidence -= 0.1;
+    }
+
+    confidence = Math.max(0, Math.min(1, confidence));
+
+    return {
+      isValid: issues.length === 0 && confidence >= 0.5,
+      issues,
+      needsReplan: issues.length > 2 || confidence < 0.3,
+      confidence,
+      suggestions,
+    };
+  }
+
+  shouldPauseForValidation(task: TaskNode, result: string): boolean {
+    const validation = this.validateTaskResult(task, result);
+    
+    if (validation.needsReplan) {
+      this.eventBus.emit({
+        type: EVENT_TYPES.TASK_FAILED,
+        sessionId: this.currentTaskGraph?.sessionId || '',
+        source: 'validator',
+        payload: {
+          taskId: task.taskId,
+          agentId: task.assignedAgentId || 'unknown',
+          error: validation.issues.join('; '),
+          retriable: true,
+          needsReplan: true,
+        },
+      });
+      return true;
+    }
+
+    if (!validation.isValid) {
+      this.eventBus.emit({
+        type: EVENT_TYPES.TASK_FAILED,
+        sessionId: this.currentTaskGraph?.sessionId || '',
+        source: 'validator',
+        payload: {
+          taskId: task.taskId,
+          agentId: task.assignedAgentId || 'unknown',
+          error: validation.issues.join('; '),
+          retriable: false,
+          needsReplan: false,
+          suggestions: validation.suggestions,
+        },
+      });
+    }
+
+    return false;
+  }
+
   analyzeComplexity(request: string): ComplexityAnalysis {
     const factors: string[] = [];
     let score = 0;
@@ -232,6 +377,7 @@ export class TaskPlannerService {
     const estimatedSubtasks = level === 'simple' ? 1 : level === 'medium' ? 3 : 6;
     const requiresMultipleAgents = level !== 'simple' || factors.length > 2;
     const estimatedDurationMs = level === 'simple' ? 5 * 60 * 1000 : level === 'medium' ? 15 * 60 * 1000 : 60 * 60 * 1000;
+    const estimatedSteps = this.planModeTrigger.estimateStepsFromRequest(request);
 
     return {
       level,
@@ -239,6 +385,7 @@ export class TaskPlannerService {
       estimatedSubtasks,
       requiresMultipleAgents,
       estimatedDurationMs,
+      estimatedSteps,
     };
   }
 
@@ -521,13 +668,17 @@ export class TaskPlannerService {
         });
       });
 
-      const suggestedRoles = llmResponse.suggestedAgents.map(a => a.role);
-      const uniqueRoles = [...new Set(suggestedRoles)];
+      const roleSet = new Set<AgentRole>();
+      subtasks.forEach(task => {
+        const role = this.suggestRoleForTaskType(task.type);
+        roleSet.add(role);
+      });
+      const suggestedRoles = [...roleSet];
 
       return {
         subtasks,
         dependencies,
-        suggestedRoles: uniqueRoles,
+        suggestedRoles,
         parallelizable: llmResponse.parallelizable,
       };
     } catch (error) {
@@ -673,7 +824,7 @@ export class TaskPlannerService {
       testing: 'validator',
       documentation: 'researcher',
       analysis: 'researcher',
-      coordination: 'coordinator',
+      coordination: 'planner',
     };
     return mapping[type] || 'executor';
   }
@@ -759,12 +910,11 @@ export class TaskPlannerService {
   private getExpectedInputsForRole(role: AgentRole): string[] {
     const inputs: Record<AgentRole, string[]> = {
       leader: ['任务目标', '团队状态', '资源约束'],
-      planner: ['需求描述', '技术约束', '时间预算'],
+      planner: ['需求描述', '技术约束', '时间预算', '任务列表', '依赖关系', '资源状态'],
       executor: ['任务描述', '代码上下文', '测试要求'],
       reviewer: ['代码变更', '评审标准', '历史问题'],
       researcher: ['研究主题', '信息源', '输出格式'],
       validator: ['测试目标', '验证标准', '测试数据'],
-      coordinator: ['任务列表', '依赖关系', '资源状态'],
     };
     return inputs[role] || [];
   }
@@ -772,12 +922,11 @@ export class TaskPlannerService {
   private getExpectedOutputsForRole(role: AgentRole): string[] {
     const outputs: Record<AgentRole, string[]> = {
       leader: ['决策结果', '任务分配', '进度报告'],
-      planner: ['任务计划', '时间估算', '风险评估'],
+      planner: ['任务计划', '时间估算', '风险评估', '调度计划', '状态同步', '冲突解决'],
       executor: ['代码实现', '测试结果', '文档更新'],
       reviewer: ['评审意见', '改进建议', '质量评分'],
       researcher: ['研究报告', '数据收集', '结论摘要'],
       validator: ['测试报告', '问题列表', '验证结果'],
-      coordinator: ['调度计划', '状态同步', '冲突解决'],
     };
     return outputs[role] || [];
   }

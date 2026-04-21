@@ -1,7 +1,7 @@
 import type { BackendCapability, BackendType, ExecutionModeSnapshot, TeammateIdentity, TeammateMode, TeammateRuntimeStatus } from './multi-agent.types';
 import type { AgentDescriptor, AgentIntent, AgentLifecycleStatus, AgentRuntimeState, ModelRouteDecision, RecoveryAction, SessionContext, SessionSnapshot, TaskGraph, TeamContext } from './domain/types';
 
-export type MultiAgentEventSource = 'system' | 'leader' | 'teammate' | 'backend' | 'user' | 'planner' | 'auto-scale' | 'recovery' | 'executor';
+export type MultiAgentEventSource = 'system' | 'leader' | 'teammate' | 'backend' | 'user' | 'planner' | 'auto-scale' | 'recovery' | 'executor' | 'validator' | 'constraint';
 
 export interface MultiAgentEventEnvelope<TType extends string, TPayload> {
   type: TType;
@@ -57,12 +57,17 @@ export type MultiAgentEventType =
   | 'agent.recovered'
   | 'agent.terminated'
   | 'agent.archived'
+  | 'agent.thinking'
+  | 'agent.output'
   | 'model.routed'
   | 'model.fallback'
   | 'memory.synced'
   | 'team.updated'
   | 'recovery.initiated'
-  | 'recovery.completed';
+  | 'recovery.completed'
+  | 'execution.warning'
+  | 'execution.paused'
+  | 'execution.resumed';
 
 export interface MultiAgentModeCapturedPayload extends ExecutionModeSnapshot {
   snapshotAt: number;
@@ -147,6 +152,7 @@ export interface ModeSinglePayload {
   complexity?: any;
   previousMode?: 'single' | 'multi';
   timestamp?: number;
+  constraints?: any;
 }
 
 export interface ModeMultiPayload {
@@ -246,6 +252,8 @@ export interface TaskFailedPayload {
   agentId: string;
   error: string;
   retriable: boolean;
+  needsReplan?: boolean;
+  suggestions?: string[];
 }
 
 export interface TaskCancelledPayload {
@@ -346,6 +354,22 @@ export interface RecoveryCompletedPayload {
   result?: string;
 }
 
+export interface ExecutionWarningPayload {
+  warning: string;
+  type?: 'tool_call' | 'token_usage' | 'file_modification';
+  currentCount?: number;
+  maxCount?: number;
+}
+
+export interface ExecutionPausedPayload {
+  reason?: string;
+  state?: any;
+}
+
+export interface ExecutionResumedPayload {
+  timestamp: number;
+}
+
 export type MultiAgentEventMap = {
   'multiagent.mode.captured': MultiAgentModeCapturedPayload;
   'multiagent.backend.detected': MultiAgentBackendDetectedPayload;
@@ -399,6 +423,9 @@ export type MultiAgentEventMap = {
   'team.updated': TeamUpdatedPayloadV2;
   'recovery.initiated': RecoveryInitiatedPayload;
   'recovery.completed': RecoveryCompletedPayload;
+  'execution.warning': ExecutionWarningPayload;
+  'execution.paused': ExecutionPausedPayload;
+  'execution.resumed': ExecutionResumedPayload;
 };
 
 export const EVENT_TYPES = {
@@ -444,6 +471,9 @@ export const EVENT_TYPES = {
   RECOVERY_INITIATED: 'recovery.initiated' as const,
   RECOVERY_COMPLETED: 'recovery.completed' as const,
   ERROR: 'multiagent.error' as const,
+  EXECUTION_WARNING: 'execution.warning' as const,
+  EXECUTION_PAUSED: 'execution.paused' as const,
+  EXECUTION_RESUMED: 'execution.resumed' as const,
 } as const;
 
 /**
