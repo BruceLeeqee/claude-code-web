@@ -1,16 +1,30 @@
 import type { CoordinationMode } from 'zyfront-core';
 
-export type DirectiveKind = 
-  | 'help' 
-  | 'status' 
-  | 'mode' 
-  | 'mode_solo' 
-  | 'mode_plan' 
-  | 'mode_dev' 
-  | 'plugin_list' 
-  | 'plugin_run' 
-  | 'superpower' 
+export type DirectiveKind =
+  | 'help'
+  | 'status'
+  | 'mode'
+  | 'mode_solo'
+  | 'mode_plan'
+  | 'mode_dev'
+  | 'plugin_list'
+  | 'plugin_run'
+  | 'superpower'
   | 'doctor';
+
+export type DirectiveGroup = 'system' | 'mode' | 'plugin' | 'development' | 'utility';
+
+export interface DirectiveConstraint {
+  mode?: CoordinationMode | CoordinationMode[];
+  platform?: 'windows' | 'macos' | 'linux' | 'all';
+  requiresAuth?: boolean;
+  featureFlag?: string;
+}
+
+export interface DirectiveAliases {
+  primary: string;
+  alternatives: string[];
+}
 
 export interface DirectiveDefinition {
   name: string;
@@ -18,6 +32,12 @@ export interface DirectiveDefinition {
   template: string;
   kind: DirectiveKind;
   usage?: string;
+  group?: DirectiveGroup;
+  aliases?: string[];
+  enabledWhen?: DirectiveConstraint;
+  visibleInHelp?: boolean;
+  bridgeSafe?: boolean;
+  requiresArgs?: boolean;
 }
 
 export interface ParsedDirective {
@@ -25,67 +45,163 @@ export interface ParsedDirective {
   name: string;
   args: string;
   def: DirectiveDefinition | null;
+  isMcp: boolean;
+  confidence: number;
 }
 
 export const DIRECTIVE_REGISTRY: DirectiveDefinition[] = [
-  { name: '/help', desc: '显示帮助与快捷键', template: '/help', kind: 'help' },
-  { name: '/status', desc: '查看当前模式/模型/任务状态', template: '/status', kind: 'status' },
   {
-    name: '/mode',
-    desc: '显示所有模式切换指令',
-    template: '/mode',
-    kind: 'mode',
-    usage: '/mode 查看所有模式',
+    name: '/help',
+    desc: '显示帮助与快捷键',
+    template: '/help',
+    kind: 'help',
+    group: 'system',
+    aliases: ['/h', '/?'],
+    visibleInHelp: true,
+    bridgeSafe: true,
   },
   {
-    name: '/mode-solo',
+    name: '/status',
+    desc: '查看当前模式/模型/任务状态',
+    template: '/status',
+    kind: 'status',
+    group: 'system',
+    aliases: ['/st'],
+    visibleInHelp: true,
+    bridgeSafe: true,
+  },
+  {
+    name: '/mode',
     desc: '切换到单智能体模式（默认）',
-    template: '/mode-solo',
+    template: '/mode',
     kind: 'mode_solo',
-    usage: '/mode-solo 切换到单智能体模式',
+    group: 'mode',
+    usage: '/mode 切换到单智能体模式',
+    visibleInHelp: true,
+    bridgeSafe: true,
   },
   {
     name: '/mode-plan',
     desc: '切换到计划模式，只生成计划文档',
     template: '/mode-plan',
     kind: 'mode_plan',
+    group: 'mode',
     usage: '/mode-plan 切换到计划模式',
+    visibleInHelp: true,
   },
   {
     name: '/mode-dev',
     desc: '切换到开发者模式，实例化开发团队',
     template: '/mode-dev',
     kind: 'mode_dev',
+    group: 'mode',
     usage: '/mode-dev 切换到开发者模式',
+    visibleInHelp: true,
   },
-  { name: '/plugin:list', desc: '查看插件指令列表', template: '/plugin:list', kind: 'plugin_list' },
+  {
+    name: '/plugin:list',
+    desc: '查看插件指令列表',
+    template: '/plugin:list',
+    kind: 'plugin_list',
+    group: 'plugin',
+    aliases: ['/plugins', '/plugin:ls'],
+    visibleInHelp: true,
+    bridgeSafe: true,
+  },
   {
     name: '/plugin:run',
     desc: '运行插件指令（参数透传 shell）',
-    template: '/plugin:run dir .',
+    template: '/plugin:run <shell command>',
     kind: 'plugin_run',
+    group: 'plugin',
     usage: '/plugin:run <shell command>',
+    requiresArgs: true,
   },
   {
     name: '/superpowers:brainstorm',
     desc: '触发头脑风暴模板',
     template: '/superpowers:brainstorm',
     kind: 'superpower',
+    group: 'development',
   },
   {
     name: '/doctor',
     desc: '执行 tools.doctor 并输出工具健康度',
     template: '/doctor',
     kind: 'doctor',
+    group: 'utility',
+    usage: '/doctor 检查工具健康状态',
+    visibleInHelp: true,
+    bridgeSafe: true,
   },
 ];
 
 export function parseDirective(raw: string): ParsedDirective {
   const trimmed = raw.trim();
-  const [name = '', ...rest] = trimmed.split(/\s+/);
-  const args = rest.join(' ').trim();
-  const def = DIRECTIVE_REGISTRY.find((d) => d.name === name) ?? null;
-  return { raw: trimmed, name, args, def };
+
+  if (!trimmed.startsWith('/')) {
+    return { raw: trimmed, name: '', args: '', def: null, isMcp: false, confidence: 0 };
+  }
+
+  const withoutSlash = trimmed.slice(1);
+  const words = withoutSlash.split(/\s+/);
+
+  if (!words[0]) {
+    return { raw: trimmed, name: '', args: '', def: null, isMcp: false, confidence: 0 };
+  }
+
+  let commandName = words[0];
+  let isMcp = false;
+  let argsStartIndex = 1;
+
+  if (words.length > 1 && words[1] === '(MCP)') {
+    commandName = commandName + ' (MCP)';
+    isMcp = true;
+    argsStartIndex = 2;
+  }
+
+  const args = words.slice(argsStartIndex).join(' ');
+
+  const def = findDirectiveDefinition(commandName);
+
+  let confidence = 0;
+  if (def) {
+    confidence = 1.0;
+  } else if (looksLikeCommand(commandName)) {
+    confidence = 0.5;
+  }
+
+  return { raw: trimmed, name: commandName, args, def, isMcp, confidence };
+}
+
+export function findDirectiveDefinition(name: string): DirectiveDefinition | null {
+  const normalizedName = name.startsWith('/') ? name : `/${name}`;
+
+  for (const def of DIRECTIVE_REGISTRY) {
+    if (def.name === normalizedName) return def;
+
+    if (def.aliases?.some(alias => {
+      const normAlias = alias.startsWith('/') ? alias : `/${alias}`;
+      return normAlias === normalizedName;
+    })) {
+      return def;
+    }
+  }
+
+  return null;
+}
+
+export function getDirectiveDefinition(name: string): DirectiveDefinition | null {
+  return findDirectiveDefinition(name);
+}
+
+export function isBridgeSafeDirectiveName(name: string): boolean {
+  const def = findDirectiveDefinition(name);
+  return def?.bridgeSafe ?? false;
+}
+
+function looksLikeCommand(name: string): boolean {
+  return /^[a-zA-Z0-9:_\-]+$/.test(name);
 }
 
 export function isCoordinationMode(v: string): v is CoordinationMode {
@@ -95,3 +211,17 @@ export function isCoordinationMode(v: string): v is CoordinationMode {
 export function getModeDirectives(): DirectiveDefinition[] {
   return DIRECTIVE_REGISTRY.filter(d => d.kind.startsWith('mode'));
 }
+
+export function getVisibleDirectives(): DirectiveDefinition[] {
+  return DIRECTIVE_REGISTRY.filter(d => d.visibleInHelp !== false);
+}
+
+export function getDirectivesByGroup(group: DirectiveGroup): DirectiveDefinition[] {
+  return DIRECTIVE_REGISTRY.filter(d => d.group === group);
+}
+
+export function formatDirectiveUsage(def: DirectiveDefinition): string {
+  if (def.usage) return def.usage;
+  return def.template;
+}
+

@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, OnDestroy, ViewChild, ElementRef, Input, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import * as d3 from 'd3';
-import { sankey, sankeyLinkHorizontal } from 'd3-sankey';
+import { sankey, sankeyLinkHorizontal, SankeyNode as D3SankeyNode, SankeyLink as D3SankeyLink } from 'd3-sankey';
 import { ModeManagerService } from '../services/mode-manager.service';
 
 interface SankeyNode {
@@ -17,6 +17,9 @@ interface SankeyLink {
   value: number;
   color: string;
 }
+
+type ProcessedSankeyNode = D3SankeyNode<SankeyNode, SankeyLink>;
+type ProcessedSankeyLink = D3SankeyLink<SankeyNode, SankeyLink>;
 
 @Component({
   selector: 'app-sankey-diagram',
@@ -220,20 +223,20 @@ export class SankeyDiagramComponent implements OnInit, OnDestroy, AfterViewInit 
       .data(layoutLinks)
       .join('path')
       .attr('class', 'link')
-      .attr('d', sankeyLinkHorizontal())
-      .attr('stroke', d => d.color || '#ff00ff')
-      .attr('stroke-width', d => Math.max(1, d.width))
+      .attr('d', sankeyLinkHorizontal() as any)
+      .attr('stroke', (d: any) => d.color || '#ff00ff')
+      .attr('stroke-width', (d: any) => Math.max(1, d.width ?? 1))
       .attr('fill', 'none')
       .attr('stroke-opacity', 0.6)
-      .on('mouseover', (event, d: any) => {
-        d3.select(event.currentTarget)
+      .on('mouseover', (event: MouseEvent, d: any) => {
+        d3.select(event.currentTarget as Element)
           .attr('stroke-opacity', 0.8)
-          .attr('stroke-width', (d: any) => Math.max(2, d.width));
+          .attr('stroke-width', () => Math.max(2, d.width ?? 2));
       })
-      .on('mouseout', (event, d: any) => {
-        d3.select(event.currentTarget)
+      .on('mouseout', (event: MouseEvent, d: any) => {
+        d3.select(event.currentTarget as Element)
           .attr('stroke-opacity', 0.6)
-          .attr('stroke-width', (d: any) => Math.max(1, d.width));
+          .attr('stroke-width', () => Math.max(1, d.width ?? 1));
       });
 
     // Create nodes
@@ -244,29 +247,29 @@ export class SankeyDiagramComponent implements OnInit, OnDestroy, AfterViewInit 
       .attr('class', 'node');
 
     node.append('rect')
-      .attr('x', d => d.x0)
-      .attr('y', d => d.y0)
-      .attr('height', d => d.y1 - d.y0)
-      .attr('width', d => d.x1 - d.x0)
-      .attr('fill', d => d.color || '#ff00ff')
+      .attr('x', (d: any) => d.x0 ?? 0)
+      .attr('y', (d: any) => d.y0 ?? 0)
+      .attr('height', (d: any) => (d.y1 ?? 0) - (d.y0 ?? 0))
+      .attr('width', (d: any) => (d.x1 ?? 0) - (d.x0 ?? 0))
+      .attr('fill', (d: any) => d.color || '#ff00ff')
       .attr('stroke', '#333')
       .attr('stroke-width', 1);
 
     node.append('text')
-      .attr('x', d => d.x0 < this.width / 2 ? d.x1 + 6 : d.x0 - 6)
-      .attr('y', d => (d.y1 + d.y0) / 2)
+      .attr('x', (d: any) => (d.x0 ?? 0) < this.width / 2 ? (d.x1 ?? 0) + 6 : (d.x0 ?? 0) - 6)
+      .attr('y', (d: any) => ((d.y1 ?? 0) + (d.y0 ?? 0)) / 2)
       .attr('dy', '0.35em')
-      .attr('text-anchor', d => d.x0 < this.width / 2 ? 'start' : 'end')
-      .text(d => d.name)
+      .attr('text-anchor', (d: any) => (d.x0 ?? 0) < this.width / 2 ? 'start' : 'end')
+      .text((d: any) => d.name)
       .attr('font-size', '12px')
       .attr('fill', '#ffffff');
 
     // Add tooltip
     link.append('title')
-      .text(d => `${d.source.name} → ${d.target.name}\n${d.value} 单位`);
+      .text((d: any) => `${d.source.name} → ${d.target.name}\n${d.value} 单位`);
 
     node.append('title')
-      .text(d => `${d.name}\n${d.value} 单位`);
+      .text((d: any) => `${d.name}\n${d.value} 单位`);
   }
 
   updateData() {

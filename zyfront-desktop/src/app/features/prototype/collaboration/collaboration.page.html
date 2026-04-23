@@ -13,10 +13,9 @@
           </div>
         </div>
         <div class="arena-top-nav">
-          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'arena'" (click)="switchTab('arena')">智能体看板</button>
-          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'cognitive'" (click)="switchTab('cognitive')">可视化编排</button>
-          <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'monitor'" (click)="switchTab('monitor')">智能体管理</button>
-        </div>
+        <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'arena'" (click)="switchTab('arena')">智能体看板</button>
+        <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'cognitive'" (click)="switchTab('cognitive')">可视化编排</button>
+      </div>
       </header>
 
       <!-- Main Content -->
@@ -104,31 +103,6 @@
                 <app-agent-node [agent]="agent"></app-agent-node>
               </div>
 
-              <div class="perf-section">
-                <div class="perf-header">
-                  <span class="perf-icon">⚡</span>
-                  <span>系统状态 · {{ modeStatus() }}</span>
-                </div>
-                <div class="perf-grid">
-                  <div class="perf-item">
-                    <span class="perf-label">CPU</span>
-                    <span class="perf-value perf-value-red">{{ monitorValue('cpu') }}%</span>
-                  </div>
-                  <div class="perf-item">
-                    <span class="perf-label">GPU</span>
-                    <span class="perf-value perf-value-green">{{ monitorValue('gpu') }}%</span>
-                  </div>
-                  <div class="perf-item">
-                    <span class="perf-label">NET</span>
-                    <span class="perf-value perf-value-blue">{{ monitorValue('network') }}%</span>
-                  </div>
-                  <div class="perf-item">
-                    <span class="perf-label">MEM</span>
-                    <span class="perf-value perf-value-yellow">{{ monitorValue('memory') }}%</span>
-                  </div>
-                </div>
-              </div>
-
               <div class="pixel-panel">
                 <div class="panel-header panel-header-purple">
                   <span class="panel-title">运行概览</span>
@@ -161,7 +135,48 @@
         <ng-container *ngIf="activeTab() === 'cognitive'">
           <!-- Center Stage - Visual Orchestration Canvas (Full Width) -->
           <main class="arena-main" style="width: 100%; max-width: 100%; grid-column: 1 / -1;">
-            <div class="cognitive-container" style="height: 100%; width: 100%; display: flex; flex-direction: column;">
+            <div class="cognitive-container" style="height: 100%; width: 100%; display: flex; flex-direction: column; gap: 16px; padding: 16px;">
+              <!-- Agent Resource Table -->
+              <div class="pixel-panel table-panel">
+                <div class="panel-header panel-header-cyan">
+                  <span class="panel-title">AGENT</span>
+                  <span class="panel-badge">智能体管理</span>
+                  <div class="table-actions">
+                    <button class="table-btn table-btn-blue" (click)="openAgentBuildModal()">新建Agent</button>
+                    <button class="table-btn table-btn-green" (click)="openTeamBuildModal()">新建团队</button>
+                    <button class="table-btn table-btn-green" (click)="loadPersistentTeams()">加载持久化团队</button>
+                  </div>
+                </div>
+                <table class="resource-table">
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th>角色</th>
+                      <th>团队</th>
+                      <th>提示词</th>
+                      <th>状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr *ngFor="let agent of agents">
+                      <td><span class="role-name">{{ agent.name }}</span></td>
+                      <td><span class="role-dot" [class.role-red]="agent.role === 'architect'" [class.role-blue]="agent.role === 'analyst'" [class.role-green]="agent.role === 'developer'" [class.role-yellow]="agent.role === 'tester'" [class.role-cyan]="agent.role === 'devops'" [class.role-pink]="agent.role === 'product'"></span> <span class="role-name" [class.role-red]="agent.role === 'architect'" [class.role-blue]="agent.role === 'analyst'" [class.role-green]="agent.role === 'developer'" [class.role-yellow]="agent.role === 'tester'" [class.role-cyan]="agent.role === 'devops'" [class.role-pink]="agent.role === 'product'">{{ getRoleName(agent.role) }}</span></td>
+                      <td>{{ getAgentTeamName(agent.id) }}</td>
+                      <td><span class="prompt-preview" [title]="agent.prompt || ''">{{ agent.prompt ? (agent.prompt.length > 30 ? agent.prompt.slice(0, 30) + '...' : agent.prompt) : '未配置' }}</span></td>
+                      <td><span [class.status-running]="agent.status === 'running'" [class.status-idle]="agent.status === 'idle'" [class.status-busy]="agent.status === 'busy'" [class.status-error]="agent.status === 'error'">{{ agent.status | uppercase }}</span></td>
+                      <td>
+                        <button class="op-btn op-btn-edit" (click)="openAgentEditModal(agent)">编辑</button>
+                        <button class="op-btn op-btn-delete" (click)="deleteAgent(agent.id)">删除</button>
+                      </td>
+                    </tr>
+                    <tr *ngIf="agents.length === 0">
+                      <td colspan="6" style="text-align: center; padding: 20px; color: #666;">暂无智能体，请点击"新建Agent"创建或加载持久化团队</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
               <!-- Orchestration Canvas -->
               <div class="pixel-panel" style="flex: 1; display: flex; flex-direction: column; width: 100%;">
                 <div class="panel-header panel-header-purple">
@@ -187,7 +202,7 @@
                 </div>
                 <app-orchestration-canvas 
                   [agents]="agents" 
-                  [tasks]="taskOrchestrationList"
+                  [tasks]="taskOrchestrationList()"
                   [mode]="stateService.mode()"
                   (taskStarted)="onTaskStarted($event)"
                   (taskCompleted)="onTaskCompleted($event)"
@@ -200,232 +215,7 @@
 
 
 
-        <!-- ============ MONITOR VIEW ============ -->
-        <ng-container *ngIf="activeTab() === 'monitor'">
-          <!-- Center Stage - Monitor Console -->
-          <main class="arena-main">
-            <div class="monitor-main-content">
-              <!-- System Load -->
-              <div class="pixel-panel load-panel">
-                <div class="panel-header panel-header-red">
-                  <span class="panel-icon">□</span>
-                  <span class="panel-title">系统整体负载</span>
-                  <span class="panel-subtitle">{{ currentModeSummary() }}</span>
-                </div>
-                <div class="system-load">
-                  <div class="load-item">
-                    <div class="load-header">
-                      <span class="load-label">CPU</span>
-                      <span class="load-value load-value-red">{{ monitorValue('cpu') }}%</span>
-                    </div>
-                    <div class="load-bar">
-                      <div class="load-bar-fill load-bar-red" [style.width.%]="monitorValue('cpu')"></div>
-                    </div>
-                  </div>
-                  <div class="load-item">
-                    <div class="load-header">
-                      <span class="load-label">内存</span>
-                      <span class="load-value load-value-yellow">{{ monitorValue('memory') }}%</span>
-                    </div>
-                    <div class="load-bar">
-                      <div class="load-bar-fill load-bar-yellow" [style.width.%]="monitorValue('memory')"></div>
-                    </div>
-                  </div>
-                  <div class="load-item">
-                    <div class="load-header">
-                      <span class="load-label">网络</span>
-                      <span class="load-value load-value-blue">{{ monitorValue('network') }}%</span>
-                    </div>
-                    <div class="load-bar">
-                      <div class="load-bar-fill load-bar-blue" [style.width.%]="monitorValue('network')"></div>
-                    </div>
-                  </div>
-                  <div class="load-item">
-                    <div class="load-header">
-                      <span class="load-label">GPU (渲染)</span>
-                      <span class="load-value load-value-green">{{ monitorValue('gpu') }}%</span>
-                    </div>
-                    <div class="load-bar">
-                      <div class="load-bar-fill load-bar-green" [style.width.%]="monitorValue('gpu')"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
 
-              <!-- Agent Resource Table -->
-              <div class="pixel-panel table-panel">
-                <div class="panel-header panel-header-cyan">
-                  <span class="panel-title">AGENT</span>
-                  <span class="panel-badge">资源使用（实时）</span>
-                  <div class="table-actions">
-                    <button class="table-btn table-btn-blue" (click)="openAgentBuildModal()">新建Agent</button>
-                    <button class="table-btn table-btn-green" (click)="openTeamBuildModal()">新建团队</button>
-                    <button class="table-btn table-btn-green" (click)="suggestScale()">扩容建议</button>
-                    <button class="table-btn table-btn-red" (click)="openAlertSettings()">资源告警设置</button>
-                  </div>
-                </div>
-                <table class="resource-table">
-                  <thead>
-                    <tr>
-                      <th>AGENT 角色</th>
-                      <th>技能/插件</th>
-                      <th>CPU</th>
-                      <th>内存</th>
-                      <th>TOKEN</th>
-                      <th>状态</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr *ngFor="let agent of agents">
-                      <td><span class="role-dot" [class.role-red]="agent.role === 'architect'" [class.role-blue]="agent.role === 'analyst'" [class.role-green]="agent.role === 'developer'" [class.role-yellow]="agent.role === 'tester'" [class.role-cyan]="agent.role === 'devops'" [class.role-pink]="agent.role === 'product'"></span> <span class="role-name" [class.role-red]="agent.role === 'architect'" [class.role-blue]="agent.role === 'analyst'" [class.role-green]="agent.role === 'developer'" [class.role-yellow]="agent.role === 'tester'" [class.role-cyan]="agent.role === 'devops'" [class.role-pink]="agent.role === 'product'">{{ getRoleName(agent.role) }}</span></td>
-                      <td><span class="skill-badge" [class.skill-badge-red]="agent.role === 'architect'" [class.skill-badge-blue]="agent.role === 'analyst'" [class.skill-badge-green]="agent.role === 'developer'" [class.skill-badge-yellow]="agent.role === 'tester'" [class.skill-badge-cyan]="agent.role === 'devops'" [class.skill-badge-pink]="agent.role === 'product'">{{ agent.skills.length }}技能</span> <span class="check-mark" *ngIf="agent.skills.length > 0">✓</span><span class="x-mark" *ngIf="agent.skills.length === 0">✕</span></td>
-                      <td>{{ agent.load }}%</td>
-                      <td>{{ getAgentMemory(agent) }}MB</td>
-                      <td>{{ getAgentToken(agent) }}k</td>
-                      <td><span [class.status-running]="agent.status === 'running'" [class.status-idle]="agent.status === 'idle'" [class.status-busy]="agent.status === 'busy'" [class.status-error]="agent.status === 'error'">{{ agent.status | uppercase }}</span></td>
-                      <td>
-                        <button class="op-btn" (click)="adjustAgentLoad(agent.id, 2)">+</button>
-                        <button class="op-btn" (click)="adjustAgentLoad(agent.id, -2)">-</button>
-                      </td>
-                    </tr>
-                    <tr *ngIf="agents.length === 0">
-                      <td colspan="7" style="text-align: center; padding: 20px; color: #666;">暂无智能体，请点击"新建Agent"创建</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <!-- Token Trend & Config -->
-              <div class="monitor-bottom-row">
-                <div class="pixel-panel token-panel">
-                  <div class="panel-header panel-header-yellow">
-                    <span class="panel-title">Token</span>
-                    <span class="panel-badge">消耗趋势</span>
-                  </div>
-                  <div class="token-chart">
-                    <div class="token-placeholder"></div>
-                  </div>
-                </div>
-
-                <div class="pixel-panel config-panel">
-                  <div class="panel-header panel-header-purple">
-                    <span class="panel-title">恢复入口</span>
-                    <span class="panel-badge">重连 / 重试 / 回退</span>
-                  </div>
-                  <div class="config-content">
-                    <div class="config-item">
-                      <span class="config-label">优先级策略</span>
-                    </div>
-                    <div class="config-select">
-                      <span>响应优先 (Latency Focus)</span>
-                      <span class="select-arrow">▾</span>
-                    </div>
-                    <div class="config-buttons">
-                      <button class="config-btn config-btn-blue" (click)="reconnectSessions()">重连会话</button>
-                      <button class="config-btn config-btn-purple" (click)="redistribute()">重新分配</button>
-                    </div>
-                    <div class="config-cost">
-                      <div class="cost-label">恢复状态</div>
-                      <div class="cost-value">可恢复</div>
-                      <div class="cost-rate">最近同步 14ms</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Skills & Plugins -->
-              <div class="pixel-panel skills-panel">
-                <div class="panel-header">
-                  <span class="panel-title">技能与插件配置中心</span>
-                  <span class="panel-badge">(SKILLS & PLUGINS)</span>
-                  <div class="skills-actions">
-                    <span class="toggle-label">全局插件开关:</span>
-                    <span class="toggle-switch toggle-on">
-                      <span class="toggle-knob"></span>
-                      ON
-                    </span>
-                    <button class="sync-btn" (click)="syncLocal()">同步至本地 (LOCAL STORAGE)</button>
-                  </div>
-                </div>
-                <div class="skills-grid">
-                  <div class="skills-section">
-                    <div class="section-header">
-                      <span class="section-title">通用技能库</span>
-                      <span class="section-badge">(REPO)</span>
-                    </div>
-                  </div>
-                  <div class="skills-section">
-                    <div class="section-header">
-                      <span class="section-title">自定义技能</span>
-                      <button class="add-btn" (click)="openAgentBuildModal()">+ 新增</button>
-                    </div>
-                  </div>
-                  <div class="skills-section">
-                    <div class="section-header">
-                      <span class="section-title">插件市场</span>
-                      <span class="section-badge">(PLUGINS)</span>
-                    </div>
-                  </div>
-                  <div class="skills-section">
-                    <div class="section-header">
-                      <span class="section-title">AGENT</span>
-                      <span class="section-badge">专属技能组合</span>
-                      <span class="section-badge">(CUSTOM)</span>
-                      <div class="agent-select">
-                        <span>架构师 (ARCHITECT)</span>
-                        <span class="select-arrow">▾</span>
-                      </div>
-                    </div>
-                    <div class="plugin-status">插件应用状态</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </main>
-
-          <!-- Right Panel -->
-          <aside class="arena-sidebar-right">
-            <!-- Mode Selector -->
-            <app-mode-selector></app-mode-selector>
-
-            <!-- Agent Status Panel -->
-            <div class="pixel-panel">
-              <div class="panel-header panel-header-cyan">
-                <span class="panel-title">AGENT</span>
-                <span class="panel-subtitle">实时负载</span>
-              </div>
-              <div class="agent-list" *ngFor="let agent of agents">
-                <app-agent-node [agent]="agent"></app-agent-node>
-              </div>
-
-              <div class="perf-section">
-                <div class="perf-header">
-                  <span class="perf-icon">⚡</span>
-                  <span>SYSTEM PERFORMANCE</span>
-                </div>
-                <div class="perf-grid">
-                  <div class="perf-item">
-                    <span class="perf-label">CPU</span>
-                    <span class="perf-value perf-value-red">82%</span>
-                  </div>
-                  <div class="perf-item">
-                    <span class="perf-label">GPU</span>
-                    <span class="perf-value perf-value-green">35%</span>
-                  </div>
-                  <div class="perf-item">
-                    <span class="perf-label">NET</span>
-                    <span class="perf-value perf-value-blue">1.2GB/s</span>
-                  </div>
-                  <div class="perf-item">
-                    <span class="perf-label">MEM</span>
-                    <span class="perf-value perf-value-yellow">64%</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </aside>
-        </ng-container>
       </div>
 
       <!-- Footer -->
@@ -506,10 +296,48 @@
             <option value="battle">对抗模式</option>
           </select>
         </div>
+        <div class="form-group">
+          <label>提示词</label>
+          <textarea [(ngModel)]="agentBuildForm.prompt" placeholder="输入智能体提示词（系统提示）" class="form-textarea" rows="4"></textarea>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" (click)="closeAgentBuildModal()">取消</button>
         <button class="btn btn-primary" (click)="submitAgentBuild()">创建智能体</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" *ngIf="showAgentEditModal()" (click)="closeAgentEditModal()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2>编辑智能体</h2>
+        <button class="modal-close" (click)="closeAgentEditModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>智能体名称</label>
+          <input type="text" [(ngModel)]="agentEditForm.name" placeholder="输入智能体名称" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>角色类型</label>
+          <select [(ngModel)]="agentEditForm.role" class="form-select">
+            <option value="architect">架构师</option>
+            <option value="analyst">分析师</option>
+            <option value="developer">开发者</option>
+            <option value="tester">测试员</option>
+            <option value="devops">运维</option>
+            <option value="product">产品</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>提示词</label>
+          <textarea [(ngModel)]="agentEditForm.prompt" placeholder="输入智能体提示词（系统提示）" class="form-textarea" rows="6"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeAgentEditModal()">取消</button>
+        <button class="btn btn-primary" (click)="submitAgentEdit()">保存</button>
       </div>
     </div>
   </div>
@@ -601,9 +429,9 @@
           <button class="btn btn-primary" (click)="addTask()">添加任务</button>
         </div>
 
-        <div class="task-list" *ngIf="taskOrchestrationList.length > 0">
+        <div class="task-list" *ngIf="taskOrchestrationList().length > 0">
           <h3>任务列表</h3>
-          <div class="task-item" *ngFor="let task of taskOrchestrationList">
+          <div class="task-item" *ngFor="let task of taskOrchestrationList()">
             <div class="task-info">
               <div class="task-title">{{ task.title }}</div>
               <div class="task-desc">{{ task.description }}</div>
@@ -693,6 +521,4 @@
     </div>
   </div>
 
-  <!-- Multi-Agent Sidebar -->
-  <app-multi-agent-sidebar [visible]="true"></app-multi-agent-sidebar>
 </section>

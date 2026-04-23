@@ -2927,6 +2927,89 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return Math.max(1, lines);
   }
 
+  /**
+   * 将思考内容用 Unicode 边框包裹，生成类似 Claude Code 的长方形框效果。
+   * 布局：
+   *   ┌─ [已思考 #N] ──────────────────────────┐
+   *   │ 思考内容第一行                            │
+   *   │ 思考内容第二行                            │
+   *   └──────────────────────────────────────────┘
+   */
+  private frameThinkingContent(blockId: number, text: string, cols: number): string {
+    const innerWidth = Math.max(20, cols - 4);
+    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '').split('\n');
+
+    // 标题行
+    const title = `[已思考 #${blockId}]`;
+    const titleDisplayWidth = this.stringDisplayWidth(title);
+    const rightDashes = Math.max(1, innerWidth - titleDisplayWidth - 3);
+    const topLine = `\x1b[90m┌─ \x1b[0m${title}\x1b[90m ${'─'.repeat(rightDashes)}┐\x1b[0m`;
+
+    // 内容行：逐行包装
+    const contentLines: string[] = [];
+    for (const rawLine of lines) {
+      const displayW = this.stringDisplayWidth(rawLine);
+      if (displayW <= innerWidth) {
+        const padLen = Math.max(0, innerWidth - displayW);
+        contentLines.push(`\x1b[90m│\x1b[0m ${rawLine}${' '.repeat(padLen)} \x1b[90m│\x1b[0m`);
+      } else {
+        const wrapped = this.wrapAnsiLine(rawLine, innerWidth);
+        for (const seg of wrapped) {
+          const segW = this.stringDisplayWidth(seg);
+          const padLen = Math.max(0, innerWidth - segW);
+          contentLines.push(`\x1b[90m│\x1b[0m ${seg}${' '.repeat(padLen)} \x1b[90m│\x1b[0m`);
+        }
+      }
+    }
+
+    // 底部线
+    const bottomLine = `\x1b[90m└${'─'.repeat(innerWidth + 2)}┘\x1b[0m`;
+
+    return [topLine, ...contentLines, bottomLine].join('\n');
+  }
+
+  /**
+   * 对可能包含 ANSI 转义序列的文本行进行折行。
+   * 返回每段不超过 maxWidth 显示宽度的字符串数组。
+   */
+  private wrapAnsiLine(line: string, maxWidth: number): string[] {
+    const result: string[] = [];
+    let current = '';
+    let currentWidth = 0;
+    let i = 0;
+    while (i < line.length) {
+      if (line[i] === '\x1b' && i + 1 < line.length && line[i + 1] === '[') {
+        const seqStart = i;
+        i += 2;
+        while (i < line.length && !((line[i] >= '@' && line[i] <= '~') || (line[i] >= 'a' && line[i] <= 'z'))) {
+          i++;
+        }
+        if (i < line.length) i++;
+        current += line.slice(seqStart, i);
+        continue;
+      }
+      const code = line.codePointAt(i) ?? 0;
+      const isWide = (code >= 0x4e00 && code <= 0x9fff) ||
+                     (code >= 0x3000 && code <= 0x303f) ||
+                     (code >= 0xff00 && code <= 0xffef) ||
+                     (code >= 0xf900 && code <= 0xfaff);
+      const charWidth = isWide ? 2 : 1;
+      if (currentWidth + charWidth > maxWidth && current.length > 0) {
+        result.push(current);
+        current = '';
+        currentWidth = 0;
+      }
+      const char = code > 0xffff ? String.fromCodePoint(code) : line[i]!;
+      current += char;
+      currentWidth += charWidth;
+      i += code > 0xffff ? 2 : 1;
+    }
+    if (current.length > 0) {
+      result.push(current);
+    }
+    return result.length > 0 ? result : [''];
+  }
+
   private truncateThinkingToFitRows(plain: string, tagEndCol0: number, cols: number, maxRows: number): string {
     if (maxRows < 1) return '…';
     if (this.countWrappedLinesFromColumn(plain, tagEndCol0, cols) <= maxRows) return plain;
@@ -3508,30 +3591,20 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const blockId =
       this.streamingThinkingBlockId !== null ? this.streamingThinkingBlockId : this.nextThinkingBlockId++;
     this.streamingThinkingBlockId = null;
-    const foldHint = `(${params.thinkingToggleShortcut} 展开/收起；${params.thinkingToggleAllShortcut} 全部展开/收起；可选中 [已思考#N] 行指定块)`;
-    const foldSuffixAnsi = ` … \x1b[2m${foldHint}\x1b[0m`;
     const cols = Math.max(40, this.xterm.cols);
-    const tagEndCol0 = Math.min(cols - 1, this.stringDisplayWidth(`[已思考 #${blockId}]`));
-    const hintPhysicalRows = this.countWrappedLinesFromColumn(` … ${foldHint}`, tagEndCol0, cols);
+    // 生成固定大小的思考内容框（不再支持折叠/展开）
+    const plainText = th && params.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(th) : (th || '');
+    const framedBody = plainText ? this.frameThinkingContent(blockId, plainText, cols) : '';
+    // 记录思考块信息
     this.thinkingBlocksById.set(blockId, {
       text: params.thinking,
       hasNonChinese: params.thinkingHasNonChinese,
-      foldSuffixAnsi,
-      hintPhysicalRows,
-      tagEndCol0,
+      foldSuffixAnsi: '',
+      hintPhysicalRows: 1,
+      tagEndCol0: 0,
     });
     this.latestTurnThinkingIds = [blockId];
     this.persistThinkingBlocksSession();
-
-    const firstThinkingLine = params.thinking
-      .replace(/\r/g, '')
-      .split('\n')
-      .map((line) => line.trim())
-      .find((line) => line.length > 0) ?? '';
-    const interruptedSuffix = firstThinkingLine ? ` … ${firstThinkingLine}` : ' …';
-    const interruptedFoldBody = `\r\n\x1b[90m[已思考 #${blockId}]\x1b[0m\x1b[2m${interruptedSuffix}\x1b[0m`;
-    const normalFoldBody = `\r\n\x1b[90m[已思考 #${blockId}]\x1b[0m${foldSuffixAnsi}`;
-    const foldBody = params.interrupted ? interruptedFoldBody : normalFoldBody;
 
     const erase = `\x1b[${lines}A\x1b[0J`;
     const xterm = this.xterm;
@@ -3560,8 +3633,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         }
       }
 
-      // [Thinking]/[Answer] 紧跟在 user/skill 行后，位于同一块展示区域
-      xterm.write(foldBody.replaceAll('\n', '\r\n'));
+      // 固定显示思考内容框
+      if (framedBody) {
+        xterm.write('\r\n');
+        xterm.write(framedBody.replaceAll('\n', '\r\n'));
+      }
 
       for (const echo of echoes) {
         xterm.write(echo.replaceAll('\n', '\r\n'));
@@ -3771,17 +3847,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     this.xterm.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== 'keydown') return true;
-      const cfg = this.readModelRequestUiConfig();
-      if (this.matchesShortcut(event, cfg.thinkingToggleShortcut)) {
-        event.preventDefault();
-        if (!this.terminalBusy()) this.toggleThinkingCollapse();
-        return false;
-      }
-      if (this.matchesShortcut(event, cfg.thinkingToggleAllShortcut)) {
-        event.preventDefault();
-        if (!this.terminalBusy()) this.toggleThinkingCollapseAll();
-        return false;
-      }
+      // 思考折叠/展开快捷键已禁用（思考内容固定显示）
       return true;
     });
 

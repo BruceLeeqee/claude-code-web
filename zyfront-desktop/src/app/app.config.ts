@@ -2,6 +2,7 @@
  * 应用级配置：注册路由与 Claude Core（API、默认会话、代理到本地 bridge）。
  */
 import { ApplicationConfig } from '@angular/core';
+import { RouteReuseStrategy } from '@angular/router';
 import { provideAnimations } from '@angular/platform-browser/animations';
 import { provideRouter } from '@angular/router';
 import { NZ_ICONS } from 'ng-zorro-antd/icon';
@@ -39,10 +40,12 @@ import {
 
 import { routes } from './app.routes';
 import { provideClaudeCore } from './core/zyfront-core.providers';
+import { CustomRouteReuseStrategy } from './core/route-reuse.strategy';
 
 export const appConfig: ApplicationConfig = {
   providers: [
     provideRouter(routes),
+    { provide: RouteReuseStrategy, useClass: CustomRouteReuseStrategy },
     provideAnimations(),
     {
       provide: NZ_ICONS,

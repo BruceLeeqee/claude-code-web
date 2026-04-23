@@ -77,25 +77,24 @@ export class PromptMemoryBuilderService {
   async buildFullPromptForInput(sessionId: string, userQuery: string, systemPrompt = ''): Promise<string> {
     await this.directoryManager.ensureVaultReady();
 
+    // 并行加载所有记忆层，避免串行 I/O 延迟
+    const [userMemory, feedbackMemory, projectMemory, referenceMemory, sessionShortTermMemory, conversationHistory] =
+      await Promise.all([
+        this.readMemoryBucket('agent-long-user', '===== USER MEMORY =====', DEFAULT_BUDGETS.user),
+        this.readMemoryBucket('agent-long-feedback', '===== FEEDBACK MEMORY =====', DEFAULT_BUDGETS.feedback),
+        this.readMemoryBucket('agent-long-project', '===== PROJECT MEMORY =====', DEFAULT_BUDGETS.project),
+        this.readMemoryBucket('agent-long-reference', '===== REFERENCE MEMORY =====', DEFAULT_BUDGETS.reference),
+        this.buildSessionShortTermSummary(sessionId),
+        this.buildConversationHistory(sessionId),
+      ]);
+
     const layers: PromptMemoryLayers = {
-      userMemory: await this.readMemoryBucket('agent-long-user', '===== USER MEMORY =====', DEFAULT_BUDGETS.user),
-      feedbackMemory: await this.readMemoryBucket(
-        'agent-long-feedback',
-        '===== FEEDBACK MEMORY =====',
-        DEFAULT_BUDGETS.feedback,
-      ),
-      projectMemory: await this.readMemoryBucket(
-        'agent-long-project',
-        '===== PROJECT MEMORY =====',
-        DEFAULT_BUDGETS.project,
-      ),
-      referenceMemory: await this.readMemoryBucket(
-        'agent-long-reference',
-        '===== REFERENCE MEMORY =====',
-        DEFAULT_BUDGETS.reference,
-      ),
-      sessionShortTermMemory: await this.buildSessionShortTermSummary(sessionId),
-      conversationHistory: await this.buildConversationHistory(sessionId),
+      userMemory,
+      feedbackMemory,
+      projectMemory,
+      referenceMemory,
+      sessionShortTermMemory,
+      conversationHistory,
       userQuery: {
         title: '===== USER QUERY =====',
         text: this.enforceCharBudget(userQuery.trim(), DEFAULT_BUDGETS.query.maxChars),
@@ -235,17 +234,21 @@ export class PromptMemoryBuilderService {
 
     const seen = new Set<string>();
     const snippets: string[] = [];
-    for (const f of files) {
-      if (snippets.length >= budget.maxItems) break;
-      const relPath = `${relDir}/${f.name}`;
-      const read = await window.zytrader.fs.read(relPath, { scope: 'vault' });
+
+    // 并行读取所有候选文件，再按顺序处理去重
+    const readResults = await Promise.all(
+      files.map((f) => window.zytrader.fs.read(`${relDir}/${f.name}`, { scope: 'vault' })),
+    );
+
+    for (let i = 0; i < readResults.length && snippets.length < budget.maxItems; i++) {
+      const read = readResults[i]!;
       if (!read.ok) continue;
       const compact = this.compactMemoryText(read.content);
       if (!compact) continue;
       const dedupKey = this.hashText(compact);
       if (seen.has(dedupKey)) continue;
       seen.add(dedupKey);
-      snippets.push(`- [${f.name}] ${compact}`);
+      snippets.push(`- [${files[i]!.name}] ${compact}`);
     }
 
     const merged = snippets.length > 0 ? snippets.join('\n') : '(no memory)';
@@ -280,8 +283,14 @@ export class PromptMemoryBuilderService {
     if (!listed.ok) return { title, text: '(no short-term memory)' };
 
     const rows: Array<{ updateTime: string; summary: string }> = [];
-    for (const e of listed.entries.filter((x) => x.type === 'file' && /\.json$/i.test(x.name))) {
-      const read = await window.zytrader.fs.read(`${relDir}/${e.name}`, { scope: 'vault' });
+    const jsonFiles = listed.entries.filter((x) => x.type === 'file' && /\.json$/i.test(x.name));
+
+    // 并行读取所有 JSON 文件
+    const jsonResults = await Promise.all(
+      jsonFiles.map((e) => window.zytrader.fs.read(`${relDir}/${e.name}`, { scope: 'vault' })),
+    );
+
+    for (const read of jsonResults) {
       if (!read.ok) continue;
       try {
         const parsed = JSON.parse(read.content) as {

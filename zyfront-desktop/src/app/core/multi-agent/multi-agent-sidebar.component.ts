@@ -540,6 +540,9 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     this.agentThinkingMap.clear();
     this.agentOutputMap.clear();
     this.taskOutputMap.clear();
+    this.agentDescriptors.set(new Map());
+    this.agentStates.set(new Map());
+    this.agents.set([]);
     this.planModeTrigger.resetExecutionState();
 
     try {
@@ -606,14 +609,26 @@ export class MultiAgentSidebarComponent implements OnDestroy {
       if (output.agentIntents.length > 0) {
         const roleToAgentId = new Map<string, string>();
         const createdRoles = new Set<string>();
+        const existingAgents = this.agents();
 
         for (const intent of output.agentIntents) {
           if (createdRoles.has(intent.suggestedRole)) {
             continue;
           }
+          
+          let agentId: string;
+          const existingAgent = existingAgents.find(a => a.role === intent.suggestedRole);
+          
+          if (existingAgent) {
+            agentId = existingAgent.agentId;
+            roleToAgentId.set(intent.suggestedRole, agentId);
+            createdRoles.add(intent.suggestedRole);
+            continue;
+          }
+          
           createdRoles.add(intent.suggestedRole);
           
-          const agentId = `agent-${intent.suggestedRole}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          agentId = `agent-${intent.suggestedRole}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
           roleToAgentId.set(intent.suggestedRole, agentId);
 
           const descriptor: AgentDescriptor = {
@@ -928,8 +943,8 @@ export class MultiAgentSidebarComponent implements OnDestroy {
 
   private getAgentNameByRole(role: string): string {
     const roleNames: Record<string, string> = {
-      leader: '团队领导',
-      planner: '架构师',
+      leader: '超体',
+      planner: '超体',
       executor: '执行者',
       reviewer: '评审员',
       researcher: '研究员',

@@ -16,21 +16,22 @@ describe('AutoOrchestrationService', () => {
   it('should analyze goals', () => {
     const plan = service.analyzeGoal('开发一个Web应用');
     expect(plan).toBeTruthy();
-    expect(plan.goalType).toBeTruthy();
+    expect(plan.type).toBeTruthy();
   });
 
   it('should generate teams', () => {
-    const team = service.generateTeam('collaboration');
+    const analysis = service.analyzeGoal('协作开发一个Web应用');
+    const team = service.generateTeam(analysis);
     expect(team).toBeTruthy();
-    expect(team.agents.length).toBeGreaterThan(0);
+    expect(team.length).toBeGreaterThan(0);
   });
 
   it('should split tasks', () => {
     const testAgents = [
-      { id: 'agent1', name: 'Agent1', role: 'developer' },
-      { id: 'agent2', name: 'Agent2', role: 'tester' },
+      { id: 'agent1', name: 'Agent1', role: 'developer', skills: [], strategy: 'balanced' },
+      { id: 'agent2', name: 'Agent2', role: 'tester', skills: [], strategy: 'balanced' },
     ];
-    const tasks = service.splitTasks('测试任务', testAgents as any);
+    const tasks = service.splitTasks('测试任务', testAgents as any, 'medium');
     expect(tasks.length).toBeGreaterThan(0);
   });
 });

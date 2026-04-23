@@ -128,7 +128,7 @@ export class AnimationService {
     this.activeAnimations.delete(id);
   }
 
-  private animate(id: string) {
+  private animate(id: string): void {
     const animation = this.activeAnimations.get(id);
     if (!animation) return;
 

@@ -10,6 +10,7 @@ export interface CollaborationAgentVm {
   load: number;
   skills: string[];
   teamRole?: 'affirmative' | 'negative' | 'judge';
+  prompt?: string;
 }
 
 export interface CollaborationTeamVm {
@@ -38,7 +39,7 @@ export interface CollaborationTaskVm {
 }
 
 export interface CollaborationStateSnapshot {
-  activeTab: 'arena' | 'network' | 'cognitive' | 'monitor';
+  activeTab: 'arena' | 'network' | 'cognitive';
   mode: CollaborationMode;
   modeLabel: string;
   modeDescription: string;
@@ -76,21 +77,13 @@ export interface CollaborationStateSnapshot {
   };
   tasks: CollaborationTaskVm[];
   agents: CollaborationAgentVm[];
-  monitor: {
-    cpu: number;
-    memory: number;
-    network: number;
-    gpu: number;
-    tokenTrend: string;
-    recoveryStatus: string;
-  };
   pageStatus: TeamLifecycleStatus | SessionLifecycleStatus | TaskLifecycleStatus;
 }
 
 @Injectable({ providedIn: 'root' })
 export class CollaborationStateService {
   private readonly state = signal<CollaborationStateSnapshot>({
-    activeTab: 'monitor',
+    activeTab: 'cognitive',
     mode: 'battle',
     modeLabel: '对抗模式',
     modeDescription: '智能体之间的辩论和竞争',
@@ -128,14 +121,6 @@ export class CollaborationStateService {
     },
     tasks: [],
     agents: [],
-    monitor: {
-      cpu: 0,
-      memory: 0,
-      network: 0,
-      gpu: 0,
-      tokenTrend: 'stable',
-      recoveryStatus: '正常',
-    },
     pageStatus: 'stopped',
   });
 
@@ -152,7 +137,6 @@ export class CollaborationStateService {
   readonly battleStage = computed(() => this.state().battleStage);
   readonly tasks = computed(() => this.state().tasks);
   readonly agents = computed(() => this.state().agents);
-  readonly monitor = computed(() => this.state().monitor);
 
   setActiveTab(tab: CollaborationStateSnapshot['activeTab']): void {
     this.state.update(state => ({ ...state, activeTab: tab }));
@@ -182,10 +166,6 @@ export class CollaborationStateService {
 
   updateBattleState(partial: Partial<CollaborationStateSnapshot['battleStage']>): void {
     this.state.update(state => ({ ...state, battleStage: { ...state.battleStage, ...partial } }));
-  }
-
-  updateMonitor(partial: Partial<CollaborationStateSnapshot['monitor']>): void {
-    this.state.update(state => ({ ...state, monitor: { ...state.monitor, ...partial } }));
   }
 
   updateCollaborationSummary(partial: Partial<CollaborationStateSnapshot['collaborationSummary']>): void {
@@ -254,6 +234,26 @@ export class CollaborationStateService {
     }));
   }
 
+  updateAgent(agentId: string, updates: Partial<CollaborationAgentVm>): void {
+    this.state.update(state => ({
+      ...state,
+      agents: state.agents.map(agent =>
+        agent.id === agentId ? { ...agent, ...updates } : agent
+      ),
+    }));
+  }
+
+  removeAgent(agentId: string): void {
+    this.state.update(state => ({
+      ...state,
+      agents: state.agents.filter(agent => agent.id !== agentId),
+      runtime: {
+        ...state.runtime,
+        agentCount: Math.max(0, state.agents.length - 1),
+      },
+    }));
+  }
+
   removeTask(taskId: string): void {
     this.state.update(state => ({
       ...state,
@@ -299,14 +299,6 @@ export class CollaborationStateService {
       },
       tasks: [],
       agents: [],
-      monitor: {
-        cpu: 0,
-        memory: 0,
-        network: 0,
-        gpu: 0,
-        tokenTrend: 'stable',
-        recoveryStatus: '正常',
-      },
     }));
   }
 }

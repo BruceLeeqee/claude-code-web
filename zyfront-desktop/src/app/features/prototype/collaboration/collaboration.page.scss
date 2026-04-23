@@ -2045,14 +2045,14 @@
 }
 
 .op-btn {
-  width: 22px;
   height: 22px;
   border: 2px solid #444;
   background: #000;
   color: #888;
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
   margin-right: 4px;
+  padding: 0 8px;
   transition: all 0.2s;
 }
 
@@ -2060,6 +2060,40 @@
   border-color: #00ff00;
   color: #00ff00;
   box-shadow: 0 0 4px rgba(0, 255, 0, 0.5);
+}
+
+.op-btn-edit {
+  border-color: #4a9eff;
+  color: #4a9eff;
+}
+
+.op-btn-edit:hover {
+  border-color: #4a9eff;
+  color: #fff;
+  background: #4a9eff;
+  box-shadow: 0 0 4px rgba(74, 158, 255, 0.5);
+}
+
+.op-btn-delete {
+  border-color: #ff4a4a;
+  color: #ff4a4a;
+}
+
+.op-btn-delete:hover {
+  border-color: #ff4a4a;
+  color: #fff;
+  background: #ff4a4a;
+  box-shadow: 0 0 4px rgba(255, 74, 74, 0.5);
+}
+
+.prompt-preview {
+  font-size: 11px;
+  color: #aaa;
+  max-width: 200px;
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 // Token & Config Row

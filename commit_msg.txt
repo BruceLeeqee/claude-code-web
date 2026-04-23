@@ -1,22 +1,26 @@
-feat(workbench): 简化 Workbench 样式并优化 Multi-Agent 侧边栏布局
+feat(workbench): 优化命令路由与协作模块
 
 【背景】
-- Workbench 页面 SCSS 过于臃肿（2767 行），影响维护效率
-- Multi-Agent 侧边栏样式和交互需要优化
+- 原有命令路由架构不够灵活，指令注册机制需改进
+- 协作模块交互流程存在优化空间
 
 【本次改动】
-- 精简 workbench.page.scss（从 2767 行大幅减少）
-- 重构 multi-agent sidebar 组件样式和布局
-- 新增 workbench/components/、services/、types/ 目录结构
-- 更新 workbench 页面 HTML 结构
-- 优化 global-shell-frame 组件
+- 优化 command-router.service.ts 命令路由逻辑
+- 改进 task-panel.component.ts 任务面板交互
+- 完善 directive-registry.ts 指令注册机制
+- 升级 collaboration.page.ts 协作流程实现
+- 清理冗余文档文件（7个已废弃文档）
+- 更新依赖包版本（package.json/yarn.lock）
 
 【影响范围】
-- zyfront-desktop workbench 模块
-- zyfront-desktop multi-agent 模块
+- workbench 命令系统
+- collaboration 协作模块
+- 依赖管理
 
 【验证】
 - 本地编译通过
+- 类型检查通过
 
 【风险与回滚】
-- 低风险，可通过 git revert 恢复
+- 低风险，依赖更新为常规升级
+- 回滚只需 git revert
