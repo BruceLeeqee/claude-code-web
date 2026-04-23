@@ -39,6 +39,14 @@ import type { ChatMessage, CoordinationMode, CoordinationStep, StreamChunk } fro
 import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from '../../../core/zyfront-core.providers';
 import { TerminalMemoryGraphService } from '../../../core/terminal-memory-graph.service';
 import { CommandRouterService } from './command-router.service';
+import { CommandProcessingService } from './command-processing.service';
+import { CommandExecutorService } from './command-executor.service';
+import { InputPreprocessorService } from './input-preprocessor.service';
+import { WorkbenchAssistantFlowService } from './workbench-assistant-flow.service';
+import { WorkbenchAssistantStreamService } from './workbench-assistant-stream.service';
+import { WorkbenchAssistantStreamCoordinatorService } from './workbench-assistant-stream-coordinator.service';
+import { WorkbenchAssistantModeExecutorService } from './workbench-assistant-mode-executor.service';
+import { WorkbenchAssistantModeFlowService } from './workbench-assistant-mode-flow.service';
 import { DIRECTIVE_REGISTRY, isCoordinationMode, parseDirective, getModeDirectives, type DirectiveDefinition } from './directive-registry';
 import { Subscription } from 'rxjs';
 import { type TurnContext } from '../../../core/memory/memory.types';
@@ -49,6 +57,13 @@ import { MultiAgentSidebarComponent } from '../../../core/multi-agent/multi-agen
 import { WorkbenchModeService } from '../../../core/multi-agent/services/workbench-mode.service';
 import { MultiAgentEventBusService } from '../../../core/multi-agent/multi-agent.event-bus.service';
 import { EVENT_TYPES } from '../../../core/multi-agent/multi-agent.events';
+import { TerminalSessionHostService } from './services/terminal/terminal-session-host.service';
+import { ThinkingBlockStateMachineService } from './services/terminal/thinking-block-state-machine.service';
+import { TerminalBlockRendererService } from './services/terminal/terminal-block-renderer.service';
+import { SessionReplayCoordinatorService } from './services/terminal/session-replay-coordinator.service';
+import { TurnMetadataService } from './services/terminal/turn-metadata.service';
+import { CommandPresentationService } from './services/terminal/command-presentation.service';
+import { TerminalDisplayDebugService } from './services/terminal/terminal-display-debug.service';
 
 type MultiAgentTimelineTier = 'info' | 'success' | 'warning' | 'error';
 
@@ -164,8 +179,8 @@ function stripAssistantContentForHistoryReplay(content: string): string {
   t = t.replace(/<analysis>[\s\S]*?<\/analysis>/gi, '');
   t = t.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
   t = t.replace(/```(?:thinking|reasoning|analysis)[\s\S]*?```/gi, '');
-  // 与主终端 [回答] 头重复时去掉，回放已用 [助手] 前缀
-  t = t.replace(/^\[回答\]\s*/m, '');
+  // 与主终端 [回答]/[超体]/[架构师] 头重复时去掉，回放已用 [助手] 前缀
+  t = t.replace(/^\[(?:回答|超体|架构师)\]\s*/m, '');
   const lines = t.split('\n');
   const kept: string[] = [];
   for (const line of lines) {
@@ -289,6 +304,15 @@ interface GitCommitLine {
   subject: string;
   author: string;
   date: string;
+}
+
+/** 思考块元数据：与终端 buffer 解耦的纯数据模型 */
+interface ThinkingBlockRecord {
+  text: string;
+  hasNonChinese: boolean;
+  foldSuffixAnsi: string;
+  hintPhysicalRows: number;
+  tagEndCol0: number;
 }
 
 /** 从助手正文中抽取计划步骤（编号列表、Markdown 列表、「步骤n：」） */
@@ -439,6 +463,21 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly multiAgent = inject(MultiAgentOrchestratorService);
   private readonly workbenchMode = inject(WorkbenchModeService);
   private readonly multiAgentEventBus = inject(MultiAgentEventBusService);
+  private readonly terminalHost = inject(TerminalSessionHostService);
+  private readonly thinkingStateMachine = inject(ThinkingBlockStateMachineService);
+  private readonly blockRenderer = inject(TerminalBlockRendererService);
+  private readonly replayCoordinator = inject(SessionReplayCoordinatorService);
+  private readonly turnMetadata = inject(TurnMetadataService);
+  private readonly commandPresentation = inject(CommandPresentationService);
+  private readonly displayDebug = inject(TerminalDisplayDebugService);
+  private readonly commandProcessing = inject(CommandProcessingService);
+  private readonly commandExecutor = inject(CommandExecutorService);
+  private readonly inputPreprocessor = inject(InputPreprocessorService);
+  private readonly assistantFlow = inject(WorkbenchAssistantFlowService);
+  private readonly assistantStream = inject(WorkbenchAssistantStreamService);
+  private readonly assistantStreamCoordinator = inject(WorkbenchAssistantStreamCoordinatorService);
+  private readonly assistantModeExecutor = inject(WorkbenchAssistantModeExecutorService);
+  private readonly assistantModeFlow = inject(WorkbenchAssistantModeFlowService);
 
   protected readonly llmAvailable = signal(this.hasLlmConfigured());
 
@@ -568,6 +607,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private historyNavIndex: number | null = null;
   /** 输入 / 指令时：下一行显示同前缀补全，避免刷屏 */
   private slashHintRowActive = false;
+  /** 当前 slash hint 占用的物理行数（用于清除时恢复终端） */
+  private slashHintRowCount = 0;
 
   /** 流式对话取消（与 zyfront-core assistant.stream 的 cancel 对应） */
   private streamStop?: () => void;
@@ -607,16 +648,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private assistantStreamOutputStartMarker?: IMarker;
   /** 折叠态 Thinking 块编号 → 原文与折叠尾（供行内替换展开/收起） */
   private nextThinkingBlockId = 1;
-  private thinkingBlocksById = new Map<
-    number,
-    {
-      text: string;
-      hasNonChinese: boolean;
-      foldSuffixAnsi: string;
-      hintPhysicalRows: number;
-      tagEndCol0: number;
-    }
-  >();
+  private thinkingBlocksById = new Map<number, ThinkingBlockRecord>();
   /** 折叠行写入后注册的 buffer 标记（保留给潜在装饰层/兼容；主路径为行内缓冲区替换） */
   private thinkingBlockMarkers: { id: number; marker: IMarker }[] = [];
   private thinkingAllExpanded = false;
@@ -634,6 +666,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private detachSkillRootWatcher?: () => void;
   /** 递增以取消尚未完成的「延迟挂装饰」动画帧回调 */
   private thinkingOverlayAttachGen = 0;
+  /** 连续换行过滤状态 */
+  private lastAnswerCharWasNewline = false;
+  private consecutiveNewlineCount = 0;
+  /** 是否已至少完成一轮对话（用于决定是否在 [用户] 前画分隔线） */
+  private hasCompletedTurn = false;
   private directiveTabCycle = 0;
 
   protected readonly leftPanelVisible = signal(true);
@@ -2372,9 +2409,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.aiXtermWrite(`${cleaned.replaceAll('\n', '\r\n')}\r\n`);
         continue;
       }
-      if (row.role === 'tool') {
-        this.aiXtermWrite(`\x1b[36m[步骤]\x1b[0m ${text.replaceAll('\n', ' ')}\r\n`);
-      }
+      // tool 角色内容保存但不展示，历史回放只展示用户输入和助手回答
     }
 
     this.writeMainTerminalPrompt();
@@ -2833,7 +2868,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const thinkingEligible = cfg.showThinking && !cfg.thinkingVerboseMode;
     if (thinkingEligible) {
       const id = this.ensureStreamingThinkingBlockId();
-      body += `\r\n\x1b[90m[思考中 #${id}]\x1b[0m `;
+      body += `\r\n\x1b[90m[Thinking #${id}]\x1b[0m `;
       this.thinkingHeaderShown = true;
     }
     this.aiXtermWrite(body);
@@ -2930,24 +2965,31 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   /**
    * 将思考内容用 Unicode 边框包裹，生成类似 Claude Code 的长方形框效果。
    * 布局：
-   *   ┌─ [已思考 #N] ──────────────────────────┐
+   *   ┄┄┄ [已思考 #N] ┄┄┄┄┄┄┄┄
    *   │ 思考内容第一行                            │
    *   │ 思考内容第二行                            │
-   *   └──────────────────────────────────────────┘
+   *   ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
    */
   private frameThinkingContent(blockId: number, text: string, cols: number): string {
+    const MAX_CONTENT_ROWS = 6;
     const innerWidth = Math.max(20, cols - 4);
     const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '').split('\n');
 
-    // 标题行
-    const title = `[已思考 #${blockId}]`;
-    const titleDisplayWidth = this.stringDisplayWidth(title);
-    const rightDashes = Math.max(1, innerWidth - titleDisplayWidth - 3);
-    const topLine = `\x1b[90m┌─ \x1b[0m${title}\x1b[90m ${'─'.repeat(rightDashes)}┐\x1b[0m`;
+    // 统一边框风格（参考 Claude Code）：上/下用 ┄ 虚线，左/右用 │ 轻实线
+    const title = `\x1b[90m[Thinking #${blockId}]\x1b[0m`;
+    const titlePlainLen = `[Thinking #${blockId}]`.length;
+    const leftDashes = 2;
+    const rightDashes = Math.max(1, innerWidth - titlePlainLen - leftDashes);
+    const topLine = `\x1b[90m┄${'┄'.repeat(leftDashes)} ${title} ${'┄'.repeat(rightDashes)}┄\x1b[0m`;
 
-    // 内容行：逐行包装
+    // 内容行：逐行包装，限制最大行数，左右使用 │ 轻实线边框
     const contentLines: string[] = [];
+    let truncated = false;
     for (const rawLine of lines) {
+      if (contentLines.length >= MAX_CONTENT_ROWS) {
+        truncated = true;
+        break;
+      }
       const displayW = this.stringDisplayWidth(rawLine);
       if (displayW <= innerWidth) {
         const padLen = Math.max(0, innerWidth - displayW);
@@ -2955,6 +2997,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       } else {
         const wrapped = this.wrapAnsiLine(rawLine, innerWidth);
         for (const seg of wrapped) {
+          if (contentLines.length >= MAX_CONTENT_ROWS) {
+            truncated = true;
+            break;
+          }
           const segW = this.stringDisplayWidth(seg);
           const padLen = Math.max(0, innerWidth - segW);
           contentLines.push(`\x1b[90m│\x1b[0m ${seg}${' '.repeat(padLen)} \x1b[90m│\x1b[0m`);
@@ -2962,8 +3008,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
     }
 
-    // 底部线
-    const bottomLine = `\x1b[90m└${'─'.repeat(innerWidth + 2)}┘\x1b[0m`;
+    // 底部线：如果被截断，显示省略提示
+    const bottomLine = truncated
+      ? `\x1b[90m┄${'┄'.repeat(innerWidth + 2)}┄ \x1b[2m···\x1b[0m`
+      : `\x1b[90m┄${'┄'.repeat(innerWidth + 2)}┄\x1b[0m`;
 
     return [topLine, ...contentLines, bottomLine].join('\n');
   }
@@ -3173,6 +3221,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.thinkingInlineExpandedIds.clear();
     this.thinkingBlockMarkers = [];
     this.nextThinkingBlockId = 1;
+    // 同步重置思考块状态机
+    this.thinkingStateMachine.reset();
     try {
       sessionStorage.removeItem(WORKBENCH_THINKING_BLOCKS_SESSION_KEY);
     } catch {
@@ -3201,19 +3251,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     } catch {
       /* ignore */
     }
+    // 同步合并到思考块状态机
+    this.thinkingStateMachine.mergeFromSession();
   }
 
   private parseStoredThinkingBlock(
     v: unknown,
-  ):
-    | {
-        text: string;
-        hasNonChinese: boolean;
-        foldSuffixAnsi: string;
-        hintPhysicalRows: number;
-        tagEndCol0: number;
-      }
-    | undefined {
+  ): ThinkingBlockRecord | undefined {
     if (!v || typeof v !== 'object') return undefined;
     const r = v as Record<string, unknown>;
     if (typeof r['text'] !== 'string') return undefined;
@@ -3246,6 +3290,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     } catch {
       /* ignore */
     }
+    // 同步持久化到思考块状态机
+    this.thinkingStateMachine.persistToSession();
   }
 
   private pruneDisposedThinkingMarkers(): void {
@@ -3438,6 +3484,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.thinkingBlockMarkers.push({ id, marker });
     }
     if (this.thinkingBlockMarkers.length > 80) this.thinkingBlockMarkers = this.thinkingBlockMarkers.slice(-80);
+    // 同步到思考块状态机
+    this.thinkingStateMachine.upsertMarker(id, marker);
   }
 
   /** 在折叠行对应的 buffer 位置上挂装饰层展示全文（无 ANSI）；需 marker 已绑定有效 buffer 行 */
@@ -3559,41 +3607,43 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.streamingThinkingBlockId = null;
       return;
     }
-    const hasCjk = /[\u4e00-\u9fff]/.test(th);
-    const slack = hasCjk ? 14 : 6;
     const buf = this.xterm.buffer.normal;
     // 与 xterm registerMarker 一致：marker.line 为 buffer 绝对行号，等价于 baseY+cursorY（非 viewportY+cursorY）
     const cursorAbs = buf.baseY + buf.cursorY;
     const mk = this.assistantStreamOutputStartMarker;
     /**
-     * 擦除上移行数必须与真实 buffer 区间一致。streamConsumedLines 用「按列宽折行」估算物理行，
-     * 长段不换行时会被严重高估，若再与 perRoundMax=base+8 联动会导致 CUU 过大、把 [用户] 画到缓冲区顶部。
-     * 因此：优先用 marker 与光标的实际跨度，并对总行数做硬上限（与终端高度挂钩）。
+     * 擦除行数必须精确：仅擦除本轮 marker 起到光标止的内容。
+     * 过去用 streamConsumedLines + 余量作为安全网，导致多轮对话时上一轮的 [用户]/[超体] 被擦掉。
+     * 现在严格以 marker 为锚点：marker 定位了本轮流式输出的起始行，
+     * 上移到 marker 行后用 \x1b[0J 擦到屏幕底即可，无需额外上移。
+     * 仅在 marker 不可用时才退化到 streamConsumedLines 估算。
      */
     const rows = Math.max(1, this.xterm.rows);
-    const maxErase = Math.max(200, rows * 40);
-    const cappedBase = Math.min(Math.max(0, base), maxErase);
-    const fallbackBudget = Math.max(1, Math.min(cappedBase + Math.min(4, slack), maxErase));
-    let lines: number;
+    const maxErase = rows * 4; // 硬上限防止单轮极端长输出溢出
+    let linesToErase: number;
     if (mk && !mk.isDisposed && mk.line >= 0) {
       const top = mk.line;
       const span = cursorAbs - top + 1;
       if (span > 0) {
-        lines = Math.max(1, Math.min(span + Math.min(3, slack), maxErase));
+        // 精确擦除：仅上移到 marker 行，不加余量，避免破坏上一轮内容
+        linesToErase = Math.min(span, maxErase);
       } else {
-        lines = fallbackBudget;
+        // marker 在光标下方（异常），用极小回退
+        linesToErase = Math.min(Math.max(1, base), maxErase);
       }
     } else {
-      lines = fallbackBudget;
+      // 无 marker：退化到估算，但仍做上限保护
+      linesToErase = Math.min(Math.max(1, base), maxErase);
     }
     this.disposeAssistantStreamOutputStartMarker();
 
     const blockId =
       this.streamingThinkingBlockId !== null ? this.streamingThinkingBlockId : this.nextThinkingBlockId++;
     this.streamingThinkingBlockId = null;
+    const promptText = params.userPrompt.trim();
     const cols = Math.max(40, this.xterm.cols);
     // 生成固定大小的思考内容框（不再支持折叠/展开）
-    const plainText = th && params.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(th) : (th || '');
+    const plainText = params.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(params.thinking) : params.thinking.trim();
     const framedBody = plainText ? this.frameThinkingContent(blockId, plainText, cols) : '';
     // 记录思考块信息
     this.thinkingBlocksById.set(blockId, {
@@ -3604,39 +3654,57 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       tagEndCol0: 0,
     });
     this.latestTurnThinkingIds = [blockId];
+
+    const firstThinkingLine = params.thinking
+      .replace(/\r/g, '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? '';
+
+    // 同步注册到思考块状态机
+    this.thinkingStateMachine.registerBlock({
+      sessionId: SESSION_ID,
+      turnId: `turn-${Date.now().toString(36)}`,
+      text: params.thinking,
+      summary: firstThinkingLine ? `思考 #${blockId}: ${firstThinkingLine.slice(0, 60)}` : `思考 #${blockId}`,
+      foldSuffixAnsi: '',
+      tagEndCol0: 0,
+      hasNonChinese: params.thinkingHasNonChinese,
+      collapsedRows: 1,
+      expandedRows: 1,
+    });
+
     this.persistThinkingBlocksSession();
 
-    const erase = `\x1b[${lines}A\x1b[0J`;
+    // 擦除：上移到 marker 行，然后 \x1b[0J 清到屏幕底
+    const erase = `\x1b[${linesToErase}A\x1b[0J`;
     const xterm = this.xterm;
     const echoes = [...this.streamToolEchoes];
     const answer = params.answer;
     const layoutSplit = params.layoutSplitThinkingAnswer;
-    const promptText = params.userPrompt.trim();
 
     const tail = (): void => {
       if (promptText) {
         const skillSuffix = this.currentTurnHitSkillLabel
           ? ` \x1b[30;43m[Skill: ${this.currentTurnHitSkillLabel}]\x1b[0m`
           : '';
-        // 先整行清空再写，避免 CUU 落在欢迎语行时与「主终端：shell」拼在同一行
         xterm.write(`\r\x1b[2K\x1b[36m[用户]\x1b[0m ${promptText.replaceAll('\n', '\r\n')}${skillSuffix}`);
+      }
+
+      // 固定显示思考内容框（不可折叠）
+      if (th && framedBody) {
+        xterm.write('\r\n');
+        xterm.write(framedBody.replaceAll('\n', '\r\n'));
       }
 
       if (this.composerDraft().trim()) {
         xterm.write(`\r\n\x1b[90m[草稿]\x1b[0m ${this.composerDraft().trim().replaceAll('\n', '\r\n')}`);
       }
 
-      // 顺序：User -> Skill -> Thinking -> Answer
       if (!this.currentTurnSkillEchoedToXterm) {
         for (const skillLine of this.currentTurnSkillLines) {
           xterm.write(`\r\n${skillLine}`);
         }
-      }
-
-      // 固定显示思考内容框
-      if (framedBody) {
-        xterm.write('\r\n');
-        xterm.write(framedBody.replaceAll('\n', '\r\n'));
       }
 
       for (const echo of echoes) {
@@ -3646,14 +3714,16 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         return;
       }
       if (answer) {
+        xterm.write('\r\n');
         if (layoutSplit) {
-          xterm.write(`\r\n\x1b[35m[回答]\x1b[0m `);
-        } else {
-          // 与装饰锚定行错开，避免无 [Answer] 头时正文压在展开层所在行上
-          xterm.write('\r\n');
+          const answerLabel = this.workbenchMode.isDevMode() ? '架构师' : '超体';
+          xterm.write(`\x1b[35m[${answerLabel}]\x1b[0m `);
         }
         xterm.write(answer.replaceAll('\n', '\r\n'));
       }
+
+      // 安全网：清除从当前光标到屏幕底部的一切残留
+      xterm.write('\x1b[J');
     };
 
     xterm.write(erase, () => {
@@ -3688,6 +3758,91 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return this.streamingThinkingBlockId;
   }
 
+  private createStreamRenderState(): {
+    thinkingBuffer: string;
+    thinkingPrintedLen: number;
+    thinkingHasNonChinese: boolean;
+    thinkingHeaderShown: boolean;
+    answerHeaderShown: boolean;
+    streamRouteDeltaToThinking: boolean;
+    streamRequestStartMs: number;
+  } {
+    return {
+      thinkingBuffer: this.thinkingBuffer,
+      thinkingPrintedLen: this.thinkingPrintedLen,
+      thinkingHasNonChinese: this.thinkingHasNonChinese,
+      thinkingHeaderShown: this.thinkingHeaderShown,
+      answerHeaderShown: this.answerHeaderShown,
+      streamRouteDeltaToThinking: this.streamRouteDeltaToThinking,
+      streamRequestStartMs: this.streamRequestStartMs,
+    };
+  }
+
+  private syncStreamRenderState(next: {
+    thinkingBuffer: string;
+    thinkingPrintedLen: number;
+    thinkingHasNonChinese: boolean;
+    thinkingHeaderShown: boolean;
+    answerHeaderShown: boolean;
+    streamRouteDeltaToThinking: boolean;
+    streamRequestStartMs: number;
+  }): void {
+    this.thinkingBuffer = next.thinkingBuffer;
+    this.thinkingPrintedLen = next.thinkingPrintedLen;
+    this.thinkingHasNonChinese = next.thinkingHasNonChinese;
+    this.thinkingHeaderShown = next.thinkingHeaderShown;
+    this.answerHeaderShown = next.answerHeaderShown;
+    this.streamRouteDeltaToThinking = next.streamRouteDeltaToThinking;
+    this.streamRequestStartMs = next.streamRequestStartMs;
+  }
+
+  private renderThinkingHeader(blockId: number): void {
+    const thHeader = `\r\n\x1b[90m[Thinking #${blockId}]\x1b[0m `;
+    this.aiXtermWrite(thHeader);
+    this.bumpStreamLineBudgetForWrite(thHeader);
+    this.ensureAssistantStreamOutputStartMarker();
+  }
+
+  private renderAnswerHeader(): void {
+    const label = this.workbenchMode.isDevMode() ? '架构师' : '超体';
+    const hdr = `\r\n\x1b[35m[${label}]\x1b[0m `;
+    this.aiXtermWrite(hdr);
+    this.bumpStreamLineBudgetForWrite(hdr);
+    this.ensureAssistantStreamOutputStartMarker();
+  }
+
+  private renderToolLine(line: string): void {
+    this.aiXtermWrite(line);
+    this.streamToolEchoes.push(line);
+    this.bumpStreamLineBudgetForWrite(line);
+    this.ensureAssistantStreamOutputStartMarker();
+  }
+
+  private filterConsecutiveNewlines(text: string): string {
+    if (!text) return text;
+    
+    let result = '';
+    for (const char of text) {
+      if (char === '\n' || char === '\r') {
+        if (!this.lastAnswerCharWasNewline) {
+          result += char;
+          this.lastAnswerCharWasNewline = true;
+          this.consecutiveNewlineCount = 1;
+        } else {
+          this.consecutiveNewlineCount++;
+          if (this.consecutiveNewlineCount <= 2) {
+            result += char;
+          }
+        }
+      } else {
+        result += char;
+        this.lastAnswerCharWasNewline = false;
+        this.consecutiveNewlineCount = 0;
+      }
+    }
+    return result;
+  }
+
   /** 将一段文本写入本轮 thinking 缓冲并按流式规则刷终端（含 [Thinking#N] 头） */
   private appendThinkingStreamDelta(
     textDelta: string,
@@ -3700,7 +3855,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
     if (!this.thinkingHeaderShown) {
       const id = this.ensureStreamingThinkingBlockId();
-      const thHeader = `\r\n\x1b[90m[思考中 #${id}]\x1b[0m `;
+      const thHeader = `\r\n\x1b[90m[Thinking #${id}]\x1b[0m `;
       this.aiXtermWrite(thHeader);
       this.bumpStreamLineBudgetForWrite(thHeader);
       this.thinkingHeaderShown = true;
@@ -3719,86 +3874,66 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private handleStreamChunk(value: StreamChunk): void {
     const cfg = this.readModelRequestUiConfig();
-
-    if (value.type === 'delta') {
-      const routeThinking = cfg.showThinking && cfg.layoutSplitThinkingAnswer && this.streamRouteDeltaToThinking;
-      if (routeThinking) {
-        this.appendThinkingStreamDelta(value.textDelta, cfg);
-        return;
-      }
-      this.roundAnswerAccumulator += value.textDelta;
-      if (cfg.layoutSplitThinkingAnswer && !this.answerHeaderShown) {
-        const hdr = `\r\n\x1b[35m[回答]\x1b[0m `;
-        this.aiXtermWrite(hdr);
-        this.bumpStreamLineBudgetForWrite(hdr);
-        this.answerHeaderShown = true;
-        this.ensureAssistantStreamOutputStartMarker();
-      }
-      if (!this.assistantStreamOutputStartMarker) {
-        this.ensureAssistantStreamOutputStartMarker();
-      }
-      this.aiXtermWrite(value.textDelta);
-      this.bumpStreamLineBudgetForWrite(value.textDelta);
-      return;
-    }
-    if (value.type === 'thinking_delta') {
-      if (!cfg.showThinking) return;
-      this.appendThinkingStreamDelta(value.textDelta, cfg);
-      return;
-    }
-    if (value.type === 'tool_call') {
-      this.streamRouteDeltaToThinking = false;
-      this.toolCallCount.update((v) => v + 1);
-      const name = value.toolCall.toolName ?? 'tool';
-      this.bumpPlanOnToolStart();
-      this.pushToolMemory(`步骤：准备执行 ${name}`);
-      if (cfg.showToolActivity) {
-        const line = `\r\n\x1b[90m[Tool]\x1b[0m ${name} ...\r\n`;
-        this.aiXtermWrite(line);
-        this.streamToolEchoes.push(line);
-        this.bumpStreamLineBudgetForWrite(line);
-        this.ensureAssistantStreamOutputStartMarker();
-      }
-      return;
-    }
-    if (value.type === 'tool_result') {
-      const { ok, error } = value.toolResult;
-      this.bumpPlanOnToolDone(ok);
-      if (ok) {
-        this.pushToolMemory('步骤完成');
-        if (cfg.showToolActivity) {
-          const line = `\x1b[90m[Tool]\x1b[0m done\r\n`;
-          this.aiXtermWrite(line);
-          this.streamToolEchoes.push(line);
-          this.bumpStreamLineBudgetForWrite(line);
-          this.ensureAssistantStreamOutputStartMarker();
-        }
-      } else {
-        const detail = error ? `：${error.slice(0, 200)}` : '';
-        this.pushToolMemory(`步骤失败${detail.slice(0, 80)}`);
-        if (cfg.showToolActivity) {
-          const line = `\x1b[90m[Tool]\x1b[0m failed${detail}\r\n`;
-          this.aiXtermWrite(line);
-          this.streamToolEchoes.push(line);
-          this.bumpStreamLineBudgetForWrite(line);
-          this.ensureAssistantStreamOutputStartMarker();
-        }
-      }
-      return;
-    }
-    if (value.type === 'done') {
-      if (value.usage) {
-        const model = this.runtime.client.getModel().model;
-        this.usageLedger.record(value.usage, model, Date.now() - this.streamRequestStartMs);
-      }
-      return;
-    }
-    if (value.type === 'anthropic_turn') {
-      return;
-    }
-    if (value.type === 'error') {
-      return;
-    }
+    const state = this.createStreamRenderState();
+    const next = this.assistantStreamCoordinator.handleChunk(
+      state,
+      {
+        showThinking: cfg.showThinking,
+        layoutSplitThinkingAnswer: cfg.layoutSplitThinkingAnswer,
+        showToolActivity: cfg.showToolActivity,
+      },
+      value,
+      {
+        write: (text) => this.aiXtermWrite(text),
+        budget: (text) => this.bumpStreamLineBudgetForWrite(text),
+        ensureMarker: () => this.ensureAssistantStreamOutputStartMarker(),
+        onThinkingBlockStart: (blockId) => this.renderThinkingHeader(blockId),
+        onToolMemory: (text) => this.pushToolMemory(text),
+        onToolStart: (name) => {
+          this.streamRouteDeltaToThinking = false;
+          this.toolCallCount.update((v) => v + 1);
+          this.bumpPlanOnToolStart();
+          this.pushToolMemory(`步骤：准备执行 ${name}`);
+          if (cfg.showToolActivity) {
+            this.renderToolLine(`\r\n\x1b[90m[Tool]\x1b[0m ${name} ...\r\n`);
+          }
+        },
+        onToolDone: (ok, error) => {
+          this.bumpPlanOnToolDone(ok);
+          if (ok) {
+            this.pushToolMemory('步骤完成');
+            if (cfg.showToolActivity) {
+              this.renderToolLine(`\x1b[90m[Tool]\x1b[0m done\r\n`);
+            }
+          } else {
+            const detail = error ? `：${error.slice(0, 200)}` : '';
+            this.pushToolMemory(`步骤失败${detail.slice(0, 80)}`);
+            if (cfg.showToolActivity) {
+              this.renderToolLine(`\x1b[90m[Tool]\x1b[0m failed${detail}\r\n`);
+            }
+          }
+        },
+        onAnswerText: (text) => {
+          this.roundAnswerAccumulator += text;
+          if (cfg.layoutSplitThinkingAnswer && !this.answerHeaderShown) {
+            this.renderAnswerHeader();
+            this.answerHeaderShown = true;
+          }
+          if (!this.assistantStreamOutputStartMarker) this.ensureAssistantStreamOutputStartMarker();
+          
+          const filteredText = this.filterConsecutiveNewlines(text);
+          if (filteredText) {
+            this.aiXtermWrite(filteredText);
+            this.bumpStreamLineBudgetForWrite(filteredText);
+          }
+        },
+      },
+      () => this.ensureStreamingThinkingBlockId(),
+      (text) => this.sanitizeThinkingForDisplay(text),
+      (text) => this.highlightThinkingSteps(text),
+      () => this.runtime.client.getModel().model,
+    );
+    this.syncStreamRenderState(next);
   }
 
   private initAiXterm(): void {
@@ -3900,11 +4035,36 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
       if (e.ctrlKey && e.code === 'KeyF') {
         e.preventDefault();
-        const cfg = this.readModelRequestUiConfig();
         this.aiXtermWrite(
-          `\r\n\x1b[33m[提示]\x1b[0m Ctrl+C 中断 · ${cfg.thinkingToggleShortcut} 展开/收起思考（可选中选块；无选区时切换最近一轮）· ${cfg.thinkingToggleAllShortcut} 全部展开/收起 · Ctrl+Shift+C 复制 · Ctrl+Shift+V 粘贴 · 右键：有选区复制/无选区粘贴 · Ctrl+L 清屏 · Shift+Tab 切换模式\r\n`,
+          `\r\n\x1b[33m[提示]\x1b[0m Ctrl+C 中断 · Ctrl+Shift+C 复制 · Ctrl+Shift+V 粘贴 · 右键：有选区复制/无选区粘贴 · Ctrl+L 清屏 · Shift+Tab 切换模式\r\n`,
         );
         this.refreshMainTerminalPromptLine();
+        return;
+      }
+      if (e.ctrlKey && e.code === 'KeyO') {
+        // Ctrl+O: 不再处理思考折叠/展开
+        return;
+      }
+      // Meta+J / Alt+J: 切换 shell 面板（M1: 终端宿主抽象）
+      if ((e.metaKey || e.altKey) && e.code === 'KeyJ') {
+        e.preventDefault();
+        this.terminalHost.toggleShellPanel();
+        return;
+      }
+      // Ctrl+Shift+R: 切换回放模式（M4: 历史回放）
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyR') {
+        e.preventDefault();
+        if (this.replayCoordinator.isReplaying()) {
+          this.replayCoordinator.toggleReplayMode();
+        }
+        return;
+      }
+      // Ctrl+Shift+D: 导出调试报告（M6: 稳定性与体验收敛）
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyD') {
+        e.preventDefault();
+        const report = this.displayDebug.exportReportAsText(SESSION_ID);
+        this.aiXtermWrite(`\r\n\x1b[90m${report.replaceAll('\n', '\r\n')}\x1b[0m\r\n`);
+        this.refreshMainTerminalPromptLine({ scrollToBottom: false });
         return;
       }
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
@@ -3959,9 +4119,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.aiXtermWrite(`\x1b[32m>\x1b[0m ${content}\r\n`);
         } else if (m.role === 'assistant') {
           this.aiXtermWrite(`\x1b[35m[助手]\x1b[0m\r\n${content}\r\n`);
-        } else if (m.role === 'tool') {
-          this.aiXtermWrite(`\x1b[36m[步骤]\x1b[0m ${content.replace(/\r?\n/g, ' ')}\r\n`);
         }
+        // tool 角色内容保存但不展示，历史回放只展示用户输入和助手回答
       }
     } catch {
       // ignore history replay failures
@@ -3969,7 +4128,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private writeMainTerminalPrompt(): void {
-    this.aiXtermWrite(`\r\n\x1b[36m[用户]\x1b[0m `);
+    const cols = Math.max(40, this.xterm?.cols ?? 80);
+    // 对话间虚线分隔（参考 Claude Code 风格），首轮之前不画线
+    if (this.hasCompletedTurn) {
+      const sepWidth = Math.min(cols, 60);
+      const sep = `\x1b[90m${'┄'.repeat(sepWidth)}\x1b[0m`;
+      this.aiXtermWrite(`\r\n${sep}\r\n\x1b[36m[用户]\x1b[0m `);
+    } else {
+      this.aiXtermWrite(`\r\n\x1b[36m[用户]\x1b[0m `);
+    }
   }
 
   /**
@@ -4063,8 +4230,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private clearSlashHintRow(): void {
     if (!this.slashHintRowActive) return;
-    this.xterm?.write('\x1b[s\r\n\x1b[2K\x1b[u');
+    const rows = this.slashHintRowCount;
+    // 保存光标 -> 下移 1 行到提示首行 -> 清除 N 行 -> 恢复光标
+    this.xterm?.write(`\x1b[s\x1b[1B` +
+      Array.from({ length: rows }, () => '\x1b[2K\x1b[1B').join('') +
+      `\x1b[${rows + 1}A\x1b[u`);
     this.slashHintRowActive = false;
+    this.slashHintRowCount = 0;
   }
 
   /** ?????????????emoji????????? xterm ???? */
@@ -4081,7 +4253,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  /** 输入 `/` 前缀时：在下一行实时刷新「同前缀指令」，不追加多行说明 */
+  /** 输入 `/` 前缀时：在下一行实时刷新「同前缀指令」纵向排列 */
   private syncSlashCompletionRow(): void {
     const line = this.mainLineBuffer;
     const show = line.startsWith('/') && !line.includes(' ');
@@ -4089,13 +4261,24 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.clearSlashHintRow();
       return;
     }
+    // 先清除旧提示
+    const wasActive = this.slashHintRowActive;
+    const oldRows = this.slashHintRowCount;
+    if (wasActive && oldRows > 0) {
+      this.xterm?.write(`\x1b[s\x1b[1B` +
+        Array.from({ length: oldRows }, () => '\x1b[2K\x1b[1B').join('') +
+        `\x1b[${oldRows + 1}A\x1b[u`);
+      this.slashHintRowActive = false;
+    }
+
     const matches = this.visibleDirectives().filter((d) => d.name.startsWith(line));
     const hint =
       matches.length > 0
-        ? `\x1b[90m${matches.map((d) => d.name).join('  ')}\x1b[0m`
+        ? matches.map((d) => `\x1b[90m  ${d.name}\x1b[0m`).join('\r\n')
         : '\x1b[90m(无匹配)\x1b[0m';
     this.xterm?.write(`\x1b[s\r\n\x1b[2K${hint}\x1b[u`);
     this.slashHintRowActive = true;
+    this.slashHintRowCount = matches.length > 0 ? matches.length : 1;
   }
 
   /** Ctrl+C：取消流式请求；空闲时清空当前输入行 */
@@ -4333,7 +4516,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private async dispatchMainTerminalLine(raw: string): Promise<void> {
     const t = raw.trim();
     if (!t) {
-      this.writeMainTerminalPrompt();
+      this.aiXtermWrite(`\r\x1b[2K\x1b[36m[用户]\x1b[0m `);
       return;
     }
     if (this.terminalBusy()) {
@@ -4343,23 +4526,48 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
 
     this.pushHistory(t);
-    // 自然语言路径：回车后由 commitMainTerminalUserRowForStreamRound 固化 [用户] 行；收尾由 finalize 折叠思考块
-    const route = this.router.route(t);
+
+    const processed = await this.commandProcessing.process(t, {
+      sessionId: SESSION_ID,
+      mode: this.runtime.coordinator.getState().mode,
+      source: 'user',
+    }, {
+      source: 'user',
+      preservePrefixes: false,
+      allowBridgeSlashCommands: true,
+    });
 
     try {
-      if (route === 'directive') {
-        await this.runDirective(t);
+      if (processed.executionResult.responseType === 'directive') {
+        await this.runDirective(processed.preprocessed.normalized);
         return;
       }
-      if (route === 'natural') {
-        const natural = t.startsWith('?') ? t.slice(1).trim() : t;
-        // 不再隐藏输入行：保持 [用户] 行固定在原位置，后续 [思考中]/[回答] 从其下方继续输出
+      if (processed.executionResult.responseType === 'shell') {
+        const shell = processed.executionResult.metadata?.['command']
+          ? String(processed.executionResult.metadata['command'])
+          : (processed.preprocessed.normalized.startsWith('!')
+            ? processed.preprocessed.normalized.slice(1).trim()
+            : processed.preprocessed.normalized);
+        await this.runShell(shell);
+        return;
+      }
+      if (processed.executionResult.responseType === 'fallback') {
+        const natural = processed.executionResult.content;
         await this.askAssistant(natural);
         return;
       }
-      await this.runShell(t.startsWith('!') ? t.slice(1).trim() : t);
-    } finally {
-      if (!this.terminalBusy()) this.writeMainTerminalPrompt();
+      if (processed.routeResult.route === 'natural') {
+        const natural = processed.preprocessed.normalized.startsWith('?')
+          ? processed.preprocessed.normalized.slice(1).trim()
+          : processed.preprocessed.normalized;
+        await this.askAssistant(natural);
+        return;
+      }
+      await this.askAssistant(processed.preprocessed.normalized);
+    } catch (error) {
+      this.aiXtermWrite(`\r\n\x1b[31m[error]\x1b[0m ${error}\r\n`);
+      this.terminalBusy.set(false);
+      this.writeMainTerminalPrompt();
     }
   }
 
@@ -4465,153 +4673,47 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private async runDirective(raw: string): Promise<void> {
-    const parsed = parseDirective(raw);
+    const result = await this.commandExecutor.execute({
+      raw,
+      context: {
+        source: 'user',
+        sessionId: SESSION_ID,
+        mode: this.runtime.coordinator.getState().mode,
+      },
+      options: {
+        bridgeOrigin: true,
+      },
+    });
 
-    if (!parsed.def) {
-      this.aiXtermWrite(`\r\n[warn] 未知指令：${parsed.name}\r\n`);
-      return;
+    this.aiXtermWrite(`\r\n\x1b[36m[directive]\x1b[0m ${result.displayType} ${result.success ? 'ok' : 'error'}\r\n`);
+    if (result.content) {
+      // content 可能已含 \r\n（如 formatGroupedHelp），仅将孤立 \n 替换为 \r\n
+      const normalized = result.content.includes('\r\n')
+        ? result.content
+        : result.content.replaceAll('\n', '\r\n');
+      this.aiXtermWrite(normalized + '\r\n');
     }
 
-    switch (parsed.def.kind) {
-      case 'help':
-        this.aiXtermWrite('\r\n[help] 可用指令（自然语言直接回车即可提问助手）：\r\n');
-        this.visibleDirectives().forEach((d) => this.aiXtermWrite(` - ${d.name.padEnd(20)} ${d.desc}\r\n`));
-        return;
-
-      case 'plugin_list': {
-        const plugins = this.runtime.plugins.list();
-        this.aiXtermWrite(`\r\n[plugins] count=${plugins.length}\r\n`);
-        plugins.forEach((p: { id: string; version: string }) => this.aiXtermWrite(` - ${p.id} :: v${p.version}\r\n`));
-        return;
-      }
-
-      case 'mode': {
-        const modeDirectives = getModeDirectives();
-        const currentMode = this.workbenchMode.currentMode();
-        this.aiXtermWrite('\r\n[mode] 可用模式切换指令：\r\n');
-        modeDirectives.forEach(d => {
-          const isCurrent = d.name === `/mode-${currentMode}`;
-          const marker = isCurrent ? ' \x1b[32m(当前)\x1b[0m' : '';
-          this.aiXtermWrite(`  ${d.name.padEnd(15)} ${d.desc}${marker}\r\n`);
-        });
-        return;
-      }
-
-      case 'mode_solo': {
-        const switched = this.workbenchMode.switchMode('solo', '用户指令切换');
-        if (switched) {
-          this.aiXtermWrite('\r\n\x1b[32m[ok]\x1b[0m 已切换到单智能体模式（默认）\r\n');
-          this.aiXtermWrite('\x1b[90m单个智能体负责日常任务执行，适合简单对话和快速问答。\x1b[0m\r\n');
-        } else {
-          this.aiXtermWrite('\r\n\x1b[33m[info]\x1b[0m 已经是单智能体模式\r\n');
+    if (result.metadata?.['mode']) {
+      const mode = String(result.metadata['mode']);
+      if (mode === 'solo') {
+        this.workbenchMode.switchMode('solo', '用户指令切换');
+      } else if (mode === 'plan') {
+        this.workbenchMode.switchMode('plan', '用户指令切换');
+      } else if (mode === 'dev') {
+        this.workbenchMode.switchMode('dev', '用户指令切换');
+        try {
+          await this.workbenchMode.initializeDevTeam();
+        } catch (e) {
+          this.aiXtermWrite(`\r\n\x1b[31m[error]\x1b[0m 初始化开发团队失败: ${e}\r\n`);
         }
-        return;
       }
+    }
 
-      case 'mode_plan': {
-        const switched = this.workbenchMode.switchMode('plan', '用户指令切换');
-        if (switched) {
-          this.aiXtermWrite('\r\n\x1b[32m[ok]\x1b[0m 已切换到计划模式\r\n');
-          this.aiXtermWrite('\x1b[90m根据用户提示词生成详细计划文档，不执行实际操作。\x1b[0m\r\n');
-          this.aiXtermWrite('\x1b[90m输入自然语言描述任务，系统将生成结构化的计划文档。\x1b[0m\r\n');
-        } else {
-          this.aiXtermWrite('\r\n\x1b[33m[info]\x1b[0m 已经是计划模式\r\n');
-        }
-        return;
-      }
-
-      case 'mode_dev': {
-        const switched = this.workbenchMode.switchMode('dev', '用户指令切换');
-        if (switched) {
-          this.aiXtermWrite('\r\n\x1b[32m[ok]\x1b[0m 已切换到开发者模式\r\n');
-          this.aiXtermWrite('\x1b[90m正在实例化开发团队...\x1b[0m\r\n');
-          try {
-            const devTeam = await this.workbenchMode.initializeDevTeam();
-            this.aiXtermWrite('\x1b[90m开发团队已就绪：\x1b[0m\r\n');
-            this.aiXtermWrite(`  \x1b[36m架构师\x1b[0m - 负责系统架构设计和技术决策\r\n`);
-            this.aiXtermWrite(`  \x1b[36m前端开发\x1b[0m - 负责前端界面和交互实现\r\n`);
-            this.aiXtermWrite(`  \x1b[36m后端开发\x1b[0m - 负责后端服务和API实现\r\n`);
-            this.aiXtermWrite(`  \x1b[36m测试工程师\x1b[0m - 负责测试用例和质量验证\r\n`);
-            this.aiXtermWrite('\x1b[90m采用主从多智能体模式，中央 Planner 统一协调任务。\x1b[0m\r\n');
-          } catch (error) {
-            this.aiXtermWrite(`\r\n\x1b[31m[error]\x1b[0m 初始化开发团队失败: ${error}\r\n`);
-          }
-        } else {
-          this.aiXtermWrite('\r\n\x1b[33m[info]\x1b[0m 已经是开发者模式\r\n');
-        }
-        return;
-      }
-
-      case 'status': {
-        const state = this.runtime.coordinator.getState();
-        this.aiXtermWrite(
-          `\r\n[status] mode=${state.mode} steps=${state.steps.length} done=${this.stepDone()} running=${this.stepInProgress()} toolCalls=${this.toolCallCount()} cost=$${this.sessionCostUsd().toFixed(4)}\r\n`,
-        );
-        return;
-      }
-
-      case 'superpower': {
-        await this.askAssistant('请根据当前 workspace 根目录，简要分析项目结构与关键入口。', {
-          skipTerminalUserLineAnchor: true,
-        });
-        return;
-      }
-
-      case 'doctor': {
-        const listFn = (window as unknown as {
-          __zyfrontListRuntimeTools?: () => Array<Record<string, unknown>>;
-        }).__zyfrontListRuntimeTools;
-        const tools = typeof listFn === 'function' ? listFn() : [];
-
-        const degraded = new Set([
-          'web.search',
-          'ask.question',
-          'files.edit',
-          'files.glob',
-          'files.grep',
-          'skill.run',
-          'lsp.query',
-          'mcp.list_resources',
-          'mcp.read_resource',
-          'workflow.run',
-          'remote.trigger',
-          'monitor.snapshot',
-          'worktree.enter',
-          'worktree.exit',
-          'terminal.capture',
-          'ctx.inspect',
-          'agent.run',
-          'notify.push',
-          'userfile.send',
-          'pr.subscribe',
-        ]);
-
-        const total = tools.length;
-        const degradedCount = tools.filter((t) => degraded.has(String(t['name'] ?? ''))).length;
-        const nativeCount = Math.max(0, total - degradedCount);
-
-        this.aiXtermWrite(`\r\n[doctor] total=${total} native=${nativeCount} degraded=${degradedCount}\r\n`);
-        tools
-          .slice()
-          .sort((a, b) => String(a['name'] ?? '').localeCompare(String(b['name'] ?? '')))
-          .forEach((t) => {
-            const name = String(t['name'] ?? '');
-            const cap = degraded.has(name) ? 'degraded' : 'native';
-            this.aiXtermWrite(` - ${name.padEnd(24)} ${cap}\r\n`);
-          });
-        return;
-      }
-
-      case 'plugin_run': {
-        if (!parsed.args) {
-          this.aiXtermWrite(`\r\n[error] ${parsed.def.usage ?? '/plugin:run <shell command>'}\r\n`);
-          return;
-        }
-        const start = performance.now();
-        await this.runShell(parsed.args);
-        const ms = Math.round(performance.now() - start);
-        this.aiXtermWrite(`\r\n[plugin:run] done in ${ms}ms\r\n`);
-        return;
+    if (result.responseType === 'shell') {
+      const command = String(result.metadata?.['command'] ?? '');
+      if (command) {
+        await this.runShell(command);
       }
     }
   }
@@ -4847,184 +4949,128 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     raw: string,
     opts?: { skipTerminalUserLineAnchor?: boolean },
   ): Promise<void> {
-    const trimmed = raw.trim();
-    if (!trimmed) {
-      this.aiXtermWrite('\r\n\x1b[31m[error]\x1b[0m 请输入内容。\r\n');
-      return;
-    }
-
-    const currentMode = this.workbenchMode.currentMode();
-
-    if (currentMode === 'plan') {
-      await this.executePlanMode(trimmed, opts);
-      return;
-    }
-
-    if (currentMode === 'dev') {
-      await this.executeDevMode(trimmed, opts);
-      return;
-    }
-
-    // Trigger task decomposition for the multi-agent sidebar
-    if (this.multiAgentSidebar) {
-      this.multiAgentSidebar.processRequest(trimmed).catch(err => {
-        console.warn('[MultiAgent] Task decomposition failed:', err);
-      });
-    }
-
-    if (!this.appSettings.value.apiKey?.trim()) {
-      this.aiXtermWrite(
-        '\r\n\x1b[31m[error]\x1b[0m 未配置 API Key。\x1b[90m 请打开「API 设置」填写密钥后再试。\x1b[0m\r\n',
-      );
-      return;
-    }
-
-    this.streamInterruptRequested = false;
-    this.resetThinkingStreamState();
-    this.mergeThinkingBlocksFromSession();
-    // 默认不把普通 delta 归入 Thinking，避免无 tool_call 的轮次把 Answer 吞掉
-    this.streamRouteDeltaToThinking = false;
-    this.terminalBusy.set(true);
-    this.streamRequestStartMs = Date.now();
-
-    const cfg = this.readModelRequestUiConfig();
-    this.commitMainTerminalUserRowForStreamRound(trimmed, cfg, {
-      skipTerminalUserLineAnchor: opts?.skipTerminalUserLineAnchor,
-    });
-    const { effectiveUserInput, hitSkills, debugReason, diagnostics } = await this.enrichPromptWithInstalledSkill(trimmed);
-    this.currentTurnHitSkillLabel =
-      hitSkills.length > 0 ? hitSkills.map((s) => `${s.name} (${s.id})`).join('，') : null;
-
-    this.currentTurnSkillEchoedToXterm = false;
-    this.currentTurnSkillLines = [];
-    if (cfg.showSkillHitBanner) {
-      this.currentTurnSkillLines.push('\x1b[90m[Skill]\x1b[0m 检测摘要（实际最多注入 3 条至模型）：');
-      const shown = diagnostics.slice(0, MAX_SKILL_DIAGNOSTIC_LINES_IN_BANNER);
-      for (const line of shown) {
-        this.currentTurnSkillLines.push(`  ${line}`);
-      }
-      if (diagnostics.length > shown.length) {
-        this.currentTurnSkillLines.push(
-          `  \x1b[90m… 其余 ${diagnostics.length - shown.length} 条已省略（列表仅展示；未省略项仍参与评分）\x1b[0m`,
-        );
-      }
-      if (hitSkills.length > 0) {
-        this.currentTurnSkillLines.push(`\x1b[32m[Skill]\x1b[0m 命中：${this.currentTurnHitSkillLabel}`);
-      } else {
-        this.currentTurnSkillLines.push(`\x1b[33m[Skill]\x1b[0m 未命中：${debugReason}`);
-      }
-      for (const skillLine of this.currentTurnSkillLines) {
-        const w = `\r\n${skillLine}`;
-        this.aiXtermWrite(w);
-        this.bumpStreamLineBudgetForWrite(w);
-      }
-      this.currentTurnSkillEchoedToXterm = true;
-    }
-    const hasZytrader = typeof (window as unknown as { zytrader?: unknown }).zytrader !== 'undefined';
-    const runtimeSystemPrompt = hasZytrader ? WORKBENCH_ELECTRON_TOOLS_SYSTEM_PROMPT : '';
-    const fullPrompt = await this.promptMemoryBuilder.buildFullPromptForInput(
-      SESSION_ID,
-      effectiveUserInput,
-      runtimeSystemPrompt,
-    );
-    const buildReport = this.promptMemoryBuilder.getLastBuildReport(SESSION_ID);
-    if (buildReport) {
-      const layerBrief = buildReport.layers
-        .map((x) => `${x.name}:${x.charsAfter}${x.truncated ? 'T' : ''}`)
-        .join(' | ');
-      const truncatedLayers = buildReport.layers.filter((x) => x.truncated).map((x) => x.name);
-      const summary = `\r\n[MemoryBuild] total=${buildReport.totalChars} ${layerBrief}`;
-      this.aiXtermWrite(`\r\n\x1b[90m[MemoryBuild]\x1b[0m total=${buildReport.totalChars} ${layerBrief}`);
-      this.bumpStreamLineBudgetForWrite(summary);
-      if (truncatedLayers.length > 0) {
-        const detail = `\r\n\x1b[33m[MemoryBuild]\x1b[0m truncated=${truncatedLayers.join(',')}`;
-        this.aiXtermWrite(detail);
-        this.bumpStreamLineBudgetForWrite(detail.replace(/\x1b\[[0-9;]*m/g, ''));
-      }
-    }
-    const { stream, cancel } = this.runtime.assistant.stream(SESSION_ID, {
-      userInput: fullPrompt,
-      config: this.runtime.client.getModel(),
-    });
-    this.streamStop = cancel;
-    const reader = stream.getReader();
-    this.streamReader = reader;
-
-    let streamFailed = false;
-    try {
-      while (true) {
-        let chunk: ReadableStreamReadResult<StreamChunk>;
-        try {
-          chunk = await reader.read();
-        } catch {
-          if (!this.streamInterruptRequested) {
-            streamFailed = true;
-            this.aiXtermWrite('\r\n[error] 流被异常终止\r\n');
+    await this.assistantModeExecutor.execute(
+      {
+        sessionId: SESSION_ID,
+        rawInput: raw,
+        skipTerminalUserLineAnchor: opts?.skipTerminalUserLineAnchor,
+      },
+      {
+        write: (text) => this.aiXtermWrite(text),
+        warn: (text) => this.aiXtermWrite(text),
+        error: (text) => {
+          this.aiXtermWrite(text);
+          this.terminalBusy.set(false);
+          this.writeMainTerminalPrompt();
+        },
+        commitUserRow: (prompt, skip) => this.commitMainTerminalUserRowForStreamRound(prompt, this.readModelRequestUiConfig(), { skipTerminalUserLineAnchor: skip }),
+        onBeforeNormal: (prepared) => {
+          this.streamInterruptRequested = false;
+          this.resetThinkingStreamState();
+          this.mergeThinkingBlocksFromSession();
+          this.streamRouteDeltaToThinking = false;
+          this.terminalBusy.set(true);
+          this.streamRequestStartMs = Date.now();
+          this.ensureStreamingThinkingBlockId();
+          // 更新侧边栏默认智能体状态 & 触发任务分拆
+          if (this.multiAgentSidebar) {
+            this.multiAgentSidebar.setDefaultAgentStatus('thinking');
+            this.multiAgentSidebar.processRequest(prepared.prompt || '').catch(() => {});
           }
-          break;
-        }
-        const { done, value } = chunk;
-        if (done) break;
-        if (value.type === 'error' && value.error) {
-          streamFailed = true;
-          this.aiXtermWrite(`\r\n[error] ${value.error}${this.hintIfUnauthorized(value.error)}`);
-        } else {
-          this.handleStreamChunk(value);
-        }
-      }
-    } catch (error) {
-      streamFailed = true;
-      const msg = error instanceof Error ? error.message : '未知错误';
-      this.aiXtermWrite(`\r\n[error] ${msg}${this.hintIfUnauthorized(msg)}\r\n`);
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        /* ignore */
-      }
-      this.streamReader = null;
-      this.streamStop = undefined;
-      this.terminalBusy.set(false);
-
-      const cfgSnap = this.readModelRequestUiConfig();
-      const thinkingSnap = this.thinkingBuffer;
-      const thinkingHasNc = this.thinkingHasNonChinese;
-      const answerSnap = this.roundAnswerAccumulator;
-
-      const hadThinkingRound =
-        Boolean(thinkingSnap.trim()) ||
-        (Boolean(cfgSnap.showThinking) && this.thinkingHeaderShown && !cfgSnap.thinkingVerboseMode);
-
-      if (!streamFailed && hadThinkingRound && !(cfgSnap.showThinking && cfgSnap.thinkingVerboseMode)) {
-        this.finalizeAssistantStreamUi({
-          ok: true,
-          interrupted: this.streamInterruptRequested,
-          userPrompt: trimmed,
-          thinking: thinkingSnap,
-          thinkingHasNonChinese: thinkingHasNc,
-          answer: answerSnap,
-          layoutSplitThinkingAnswer: cfgSnap.layoutSplitThinkingAnswer,
-          thinkingToggleShortcut: cfgSnap.thinkingToggleShortcut,
-          thinkingToggleAllShortcut: cfgSnap.thinkingToggleAllShortcut,
-        });
-      }
-
-      this.resetThinkingStreamState();
-
-      if (this.streamInterruptRequested) {
-        this.aiXtermWrite('\r\n\x1b[33m[已中断]\x1b[0m\r\n');
-        this.streamInterruptRequested = false;
-      } else if (!streamFailed) {
-        await this.appendRecentTurnAfterSuccess(trimmed);
-        try {
-          await this.triggerMemoryPipelineFromHistory(trimmed);
-        } catch {
-          /* 记忆管道失败不向主终端刷屏 */
-        }
-        await this.syncPlanStepsFromLastAssistant();
-        this.syncCoordinatorState();
-      }
-    }
+        },
+        onBeforePlan: () => {
+          this.streamInterruptRequested = false;
+          this.terminalBusy.set(true);
+          this.streamRequestStartMs = Date.now();
+        },
+        onBeforeDev: () => {
+          this.streamInterruptRequested = false;
+          this.resetThinkingStreamState();
+          this.mergeThinkingBlocksFromSession();
+          this.streamRouteDeltaToThinking = false;
+          this.terminalBusy.set(true);
+          this.streamRequestStartMs = Date.now();
+          this.ensureStreamingThinkingBlockId();
+        },
+        onNormalDelta: (text, chunk) => {
+          this.handleStreamChunk(chunk);
+        },
+        onDevDelta: (text, chunk) => {
+          this.handleStreamChunk(chunk);
+        },
+        onPlanDone: (text) => {
+          if (text.trim()) {
+            this.workbenchMode.setPlanDocument(text.trim());
+            this.aiXtermWrite('\r\n\r\n\x1b[32m[计划文档已生成]\x1b[0m 计划已保存，可随时查看或修改。\r\n');
+          }
+          this.hasCompletedTurn = true;
+          this.terminalBusy.set(false);
+          if (this.multiAgentSidebar) {
+            this.multiAgentSidebar.setDefaultAgentStatus('idle');
+          }
+          this.writeMainTerminalPrompt();
+        },
+        onNormalDone: async () => {
+          const cfg = this.readModelRequestUiConfig();
+          this.finalizeAssistantStreamUi({
+            ok: true,
+            interrupted: this.streamInterruptRequested,
+            userPrompt: raw,
+            thinking: this.thinkingBuffer,
+            thinkingHasNonChinese: this.thinkingHasNonChinese,
+            answer: this.roundAnswerAccumulator,
+            layoutSplitThinkingAnswer: cfg.layoutSplitThinkingAnswer,
+            thinkingToggleShortcut: cfg.thinkingToggleShortcut,
+            thinkingToggleAllShortcut: cfg.thinkingToggleAllShortcut,
+          });
+          await this.appendRecentTurnAfterSuccess(raw);
+          try {
+            await this.triggerMemoryPipelineFromHistory(raw);
+          } catch {
+            /* ignore */
+          }
+          await this.syncPlanStepsFromLastAssistant();
+          this.syncCoordinatorState();
+          this.hasCompletedTurn = true;
+          this.terminalBusy.set(false);
+          if (this.multiAgentSidebar) {
+            this.multiAgentSidebar.setDefaultAgentStatus('idle');
+          }
+          this.writeMainTerminalPrompt();
+        },
+        onDevDone: async () => {
+          const cfg = this.readModelRequestUiConfig();
+          this.finalizeAssistantStreamUi({
+            ok: true,
+            interrupted: this.streamInterruptRequested,
+            userPrompt: raw,
+            thinking: this.thinkingBuffer,
+            thinkingHasNonChinese: this.thinkingHasNonChinese,
+            answer: this.roundAnswerAccumulator,
+            layoutSplitThinkingAnswer: cfg.layoutSplitThinkingAnswer,
+            thinkingToggleShortcut: cfg.thinkingToggleShortcut,
+            thinkingToggleAllShortcut: cfg.thinkingToggleAllShortcut,
+          });
+          await this.appendRecentTurnAfterSuccess(raw);
+          try {
+            await this.triggerMemoryPipelineFromHistory(raw);
+          } catch {
+            /* ignore */
+          }
+          await this.syncPlanStepsFromLastAssistant();
+          this.syncCoordinatorState();
+          this.hasCompletedTurn = true;
+          this.terminalBusy.set(false);
+          this.writeMainTerminalPrompt();
+        },
+      },
+      typeof (window as unknown as { zytrader?: unknown }).zytrader !== 'undefined'
+        ? WORKBENCH_ELECTRON_TOOLS_SYSTEM_PROMPT
+        : '',
+      Boolean(this.appSettings.value.apiKey?.trim()),
+      () => this.runtime.client.getModel(),
+      () => this.streamRequestStartMs,
+    );
   }
 
   private async executePlanMode(
@@ -5144,6 +5190,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.aiXtermWrite('\r\n\r\n\x1b[32m[计划文档已生成]\x1b[0m 计划已保存，可随时查看或修改。\r\n');
       }
 
+      if (!streamFailed) this.hasCompletedTurn = true;
       this.writeMainTerminalPrompt();
     }
   }
@@ -5172,8 +5219,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.aiXtermWrite('\x1b[90m│ 执行串行，能力并行                                        │\x1b[0m\r\n');
     this.aiXtermWrite('\x1b[90m└──────────────────────────────────────────────────────────┘\x1b[0m\r\n');
     this.aiXtermWrite('\r\n');
-
-    this.aiXtermWrite('\x1b[36m[架构师]\x1b[0m 正在分析任务需求...\r\n');
 
     const agentIdMap: Record<string, string> = {
       '架构师': devTeam.architect.agentId,
@@ -5290,42 +5335,68 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         }
         const { done, value } = chunk;
         if (done) break;
+
         if (value.type === 'error' && value.error) {
           streamFailed = true;
           this.aiXtermWrite(`\r\n[error] ${value.error}${this.hintIfUnauthorized(value.error)}`);
+        } else if (value.type === 'thinking_delta' && value.textDelta) {
+          // 思考内容路由到思考过程框，不混入回答
+          const cfg = this.readModelRequestUiConfig();
+          if (cfg.showThinking && !this.thinkingHeaderShown) {
+            this.renderThinkingHeader(this.ensureStreamingThinkingBlockId());
+            this.thinkingHeaderShown = true;
+          }
+          if (cfg.showThinking) {
+            this.thinkingBuffer += value.textDelta;
+            const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
+            if (rest) {
+              const visible = this.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(rest) : rest;
+              const out = this.highlightThinkingSteps(visible);
+              this.aiXtermWrite(out);
+              this.bumpStreamLineBudgetForWrite(out);
+              this.thinkingPrintedLen = this.thinkingBuffer.length;
+            }
+          }
         } else if (value.type === 'delta' && value.textDelta) {
-          const text = value.textDelta;
-          
+          let text = value.textDelta;
+
+          // 检测 [agent] 标签切换，同时从文本中剔除避免重复
           for (const [agent, color] of Object.entries(agentColors)) {
-            if (text.includes(`[${agent}]`) && lastAgent !== agent) {
+            const tag = `[${agent}]`;
+            if (text.includes(tag) && lastAgent !== agent) {
               if (currentThinkingAgent && currentThinkingAgent !== agent) {
                 const prevAgentId = agentIdMap[currentThinkingAgent];
                 if (prevAgentId) {
                   this.emitAgentOutput(prevAgentId, `已完成任务`);
                 }
               }
-              
+
               lastAgent = agent;
               currentThinkingAgent = agent;
-              this.aiXtermWrite(`\r\n\x1b[${color}m[${agent}]\x1b[0m `);
-              
+              // 写一次彩色标签作为段落标题
+              this.aiXtermWrite(`\r\n\x1b[${color}m${tag}\x1b[0m `);
+
               const agentId = agentIdMap[agent];
               if (agentId) {
                 this.emitAgentThinking(agentId, `正在执行任务...`);
               }
-              break;
+
+              // 从当前文本中剔除刚检测到的标签，避免后续重复输出
+              text = text.replace(tag, '');
             }
           }
-          
+
           this.roundAnswerAccumulator += text;
           const colored = text
-            .replace(/\[架构师\]/g, '\x1b[36m[架构师]\x1b[0m')
+            .replace(/\[架构师\]/g, '\x1b[35m[架构师]\x1b[0m')
             .replace(/\[前端开发\]/g, '\x1b[32m[前端开发]\x1b[0m')
             .replace(/\[后端开发\]/g, '\x1b[33m[后端开发]\x1b[0m')
-            .replace(/\[测试工程师\]/g, '\x1b[35m[测试工程师]\x1b[0m')
+            .replace(/\[测试工程师\]/g, '\x1b[36m[测试工程师]\x1b[0m')
             .replace(/分配给:/g, '\x1b[90m分配给:\x1b[0m\x1b[1m')
             .replace(/(前端开发|后端开发|测试工程师|架构师)\x1b\[0m\x1b\[1m/g, '$1\x1b[0m');
-          this.aiXtermWrite(colored);
+          if (colored) {
+            this.aiXtermWrite(colored);
+          }
         }
       }
     } catch (error) {
@@ -5346,7 +5417,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.aiXtermWrite('\r\n\x1b[33m[已中断]\x1b[0m\r\n');
         this.streamInterruptRequested = false;
       } else if (!streamFailed) {
-        this.aiXtermWrite('\r\n\r\n\x1b[32m[架构师]\x1b[0m 任务执行完成\r\n');
+        this.aiXtermWrite('\r\n\r\n\x1b[35m[架构师]\x1b[0m 任务执行完成\r\n');
         
         if (currentThinkingAgent) {
           const agentId = agentIdMap[currentThinkingAgent];
@@ -5363,6 +5434,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.syncCoordinatorState();
       }
 
+      if (!streamFailed) this.hasCompletedTurn = true;
       this.writeMainTerminalPrompt();
     }
   }
@@ -5572,6 +5644,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         void window.zytrader.terminal.write({ id, data: '\r' });
       }
     }, 300);
+    setTimeout(() => {
+      const id = this.activePsSessionId();
+      if (id) {
+        void window.zytrader.terminal.write({ id, data: 'Set-Location .\r' });
+      }
+    }, 600);
   }
 
   protected switchPsSession(id: string): void {
@@ -5750,6 +5828,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return text
       .replace(/(第\s*[一二三四五六七八九十\d]+\s*步)/g, '\x1b[36m$1\x1b[0m')
       .replace(/(step\s*\d+)/gi, '\x1b[36m$1\x1b[0m');
+  }
+
+  private decorateDevModeText(text: string): string {
+    if (!text) return text;
+    return text
+      .replace(/\[架构师\]/g, '\x1b[35m[架构师]\x1b[0m')
+      .replace(/\[前端开发\]/g, '\x1b[34m[前端开发]\x1b[0m')
+      .replace(/\[后端开发\]/g, '\x1b[33m[后端开发]\x1b[0m')
+      .replace(/\[测试工程师\]/g, '\x1b[32m[测试工程师]\x1b[0m');
   }
 
   private sanitizeThinkingForDisplay(text: string): string {

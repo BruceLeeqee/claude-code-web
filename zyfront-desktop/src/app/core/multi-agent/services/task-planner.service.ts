@@ -373,7 +373,7 @@ export class TaskPlannerService {
     score += this.analyzeBusinessComplexity(request, factors);
     score += this.analyzeProjectScope(request, factors);
 
-    const level = score <= 2 ? 'simple' : score <= 5 ? 'medium' : 'complex';
+    const level = score <= 1 ? 'simple' : score <= 4 ? 'medium' : 'complex';
     const estimatedSubtasks = level === 'simple' ? 1 : level === 'medium' ? 3 : 6;
     const requiresMultipleAgents = level !== 'simple' || factors.length > 2;
     const estimatedDurationMs = level === 'simple' ? 5 * 60 * 1000 : level === 'medium' ? 15 * 60 * 1000 : 60 * 60 * 1000;
@@ -419,6 +419,21 @@ export class TaskPlannerService {
     if (/架构|设计|方案/i.test(request)) {
       score += 2;
       factors.push('涉及架构设计');
+    }
+
+    if (/拆分|提取|分离|抽取|组件化|模块化/i.test(request)) {
+      score += 2;
+      factors.push('涉及代码拆分/组件提取');
+    }
+
+    if (/任务列表|时间线|卡片|sidebar|侧边栏|面板/i.test(request)) {
+      score += 1;
+      factors.push('涉及 UI 组件');
+    }
+
+    if (/服务|service|handler|eventbus|事件|订阅/i.test(request)) {
+      score += 1;
+      factors.push('涉及服务层/事件处理');
     }
 
     return score;
@@ -711,8 +726,9 @@ export class TaskPlannerService {
     const hasImplementation = /实现|编码|开发|implement|code|develop|编写|创建|构建/i.test(request);
     const hasDesign = /设计|架构|方案|design|architecture/i.test(request);
     const hasTesting = /测试|验证|test|verify/i.test(request);
-    const hasRefactor = /重构|优化|改进|refactor|optimize|improve/i.test(request);
+    const isRefactor = /重构|优化|改进|refactor|optimize|improve/i.test(request);
     const hasFix = /修复|解决|fix|solve|bug|问题/i.test(request);
+    const hasExtract = /拆分|提取|分离|抽取|组件化|模块化|extract|split/i.test(request);
 
     if (isProjectAnalysis) {
       phases.push(
@@ -734,13 +750,46 @@ export class TaskPlannerService {
       return phases;
     }
 
-    if (hasRefactor) {
+    if (isRefactor) {
       phases.push(
         { title: '现状评估', description: '评估当前代码状态和问题', type: 'analysis' },
         { title: '重构方案设计', description: '设计重构方案和步骤', type: 'planning' },
         { title: '重构实施', description: '执行代码重构', type: 'coding' },
         { title: '回归测试', description: '验证重构后功能正确性', type: 'testing' },
       );
+      return phases;
+    }
+
+    if (hasExtract) {
+      const hasComponent = /组件|component|卡片|card|列表|list|timeline/i.test(request);
+      const hasService = /服务|service|handler|逻辑|logic|事件|event|bus/i.test(request);
+      const hasStyle = /样式|style|scss|css|ui|界面|外观/i.test(request);
+
+      if (hasComponent) {
+        phases.push(
+          { title: '分析现有组件结构', description: '识别待拆分的组件边界和职责', type: 'analysis' },
+          { title: '拆分时间线/列表子组件', description: '将任务时间线项抽离为独立组件', type: 'coding' },
+          { title: '拆分智能体卡片组件', description: '将智能体展示卡片独立为可复用组件', type: 'coding' },
+        );
+      }
+      if (hasService || (!hasComponent && hasExtract)) {
+        phases.push(
+          { title: '提取事件处理服务', description: '将事件订阅和处理逻辑抽取到独立 Service', type: 'coding' },
+          { title: '简化主组件可读性', description: '清理主组件，只保留组合逻辑', type: 'coding' },
+        );
+      }
+      if (hasStyle) {
+        phases.push(
+          { title: '拆分样式文件', description: '将内联样式或大样式块按职责分离', type: 'coding' },
+        );
+      }
+      if (phases.length === 0) {
+        phases.push(
+          { title: '分析代码结构', description: '识别可拆分的模块和边界', type: 'analysis' },
+          { title: '执行代码拆分', description: '按职责将代码拆分为独立模块', type: 'coding' },
+          { title: '验证拆分结果', description: '确认各模块独立可运行，功能不变', type: 'testing' },
+        );
+      }
       return phases;
     }
 

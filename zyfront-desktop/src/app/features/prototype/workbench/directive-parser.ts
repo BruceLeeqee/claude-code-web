@@ -146,6 +146,12 @@ export function formatDirectiveHelp(def: DirectiveDefinition): string {
 }
 
 export function formatGroupedHelp(): string {
+  const CYAN = '\x1b[36m';
+  const GREEN = '\x1b[32m';
+  const DIM = '\x1b[2m';
+  const BOLD = '\x1b[1m';
+  const RESET = '\x1b[0m';
+
   const groups = new Map<string, DirectiveDefinition[]>();
 
   for (const def of DIRECTIVE_REGISTRY) {
@@ -167,23 +173,21 @@ export function formatGroupedHelp(): string {
   };
 
   const lines: string[] = [];
-  lines.push('# 可用命令列表\n');
+  lines.push(`${BOLD}${CYAN}可用命令列表${RESET}`);
 
   for (const [group, defs] of groups) {
-    lines.push(`## ${groupNames[group] || group}\n`);
-    for (const def of defs) {
-      lines.push(`- **${def.name}** — ${def.desc}`);
-      if (def.aliases && def.aliases.length > 0) {
-        lines.push(`  别名: ${def.aliases.join(', ')}`);
-      }
-      if (def.usage) {
-        lines.push(`  用法: \`${def.usage}\``);
-      }
-    }
     lines.push('');
+    lines.push(`  ${CYAN}${groupNames[group] || group}${RESET}`);
+    for (const def of defs) {
+      const aliases = def.aliases?.length
+        ? ` ${DIM}(${def.aliases.join(', ')})${RESET}`
+        : '';
+      lines.push(`    ${GREEN}${def.name}${RESET}${aliases}`);
+      lines.push(`    ${DIM}${def.desc}${RESET}`);
+    }
   }
 
-  return lines.join('\n');
+  return lines.join('\r\n');
 }
 
 export function resolveCommandName(input: string): string | null {

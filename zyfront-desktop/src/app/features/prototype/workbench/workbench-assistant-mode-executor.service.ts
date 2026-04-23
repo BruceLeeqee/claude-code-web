@@ -19,7 +19,7 @@ export interface AssistantModeExecutorCallbacks {
   onBeforePlan?: (prepared: AssistantModePreparation) => void;
   onBeforeDev?: (prepared: AssistantModePreparation) => void;
   onNormalDelta: (text: string, chunk: StreamChunk) => void;
-  onDevDelta: (text: string) => void;
+  onDevDelta: (text: string, chunk: StreamChunk) => void;
   onPlanDone: (text: string) => void;
   onNormalDone: (text: string) => Promise<void> | void;
   onDevDone: (text: string) => Promise<void> | void;
@@ -170,7 +170,7 @@ export class WorkbenchAssistantModeExecutorService {
         model: getModel().model,
       },
       {
-        onDelta: callbacks.onDevDelta,
+        onDelta: (text, chunk) => callbacks.onDevDelta(text, chunk),
         onError: callbacks.error,
         onDone: async (result) => {
           if (result.failed) return;

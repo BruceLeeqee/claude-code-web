@@ -21,25 +21,10 @@ import { EVENT_TYPES, MultiAgentEvent, TaskPlannedPayload, AgentCreatedPayload, 
 import { Subscription } from 'rxjs';
 import { filter } from 'rxjs/operators';
 
-interface SubTask {
-  text: string;
-  completed: boolean;
-  tag?: string;
-}
-
 interface TaskNodeVm {
   taskId: string;
   title: string;
-  description: string;
-  taskType: string;
-  priority: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
-  assignedAgentId?: string;
-  dependencies: string[];
-  depth: number;
-  progress?: number;
-  output?: string;
-  subtasks?: SubTask[];
   currentStep?: string;
 }
 
@@ -53,6 +38,8 @@ interface AgentVm {
   lastHeartbeat: number;
   thinking?: string;
   output?: string;
+  note?: string;
+  isDefault?: boolean;
 }
 
 @Component({
@@ -99,6 +86,13 @@ export class MultiAgentSidebarComponent implements OnDestroy {
   protected readonly currentRequest = signal('');
   protected readonly taskListExpanded = signal(true);
 
+  /** 默认智能体 ID */
+  private static readonly DEFAULT_AGENT_ID = 'agent-default-chaoti';
+
+  /** 编辑中的 agent 备注 */
+  protected readonly editingNoteAgentId = signal<string | null>(null);
+  protected readonly noteDraft = signal('');
+
   private subscriptions: Subscription[] = [];
   private taskProgressMap = new Map<string, number>();
   private taskOutputMap = new Map<string, string>();
@@ -116,34 +110,19 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     if (!graph) return [];
 
     const nodes: TaskNodeVm[] = [];
-    const taskMap = graph.tasks;
     const depths = this.calculateDepths(graph);
 
-    Object.values(taskMap).forEach((task: TaskNode) => {
+    Object.values(graph.tasks).forEach((task: TaskNode) => {
       if (!visibleIds.has(task.taskId)) return;
-      const subtasks = this.generateSubTasksForType(task.type);
-      const currentStep = task.status === 'running' 
-        ? this.getCurrentStepText(task.type)
-        : undefined;
-        
       nodes.push({
         taskId: task.taskId,
         title: task.title,
-        description: task.description,
-        taskType: task.type,
-        priority: task.priority,
         status: task.status as TaskNodeVm['status'],
-        assignedAgentId: task.assignedAgentId,
-        dependencies: task.dependencies,
-        depth: depths[task.taskId] || 0,
-        progress: this.taskProgressMap.get(task.taskId),
-        output: this.taskOutputMap.get(task.taskId),
-        subtasks,
-        currentStep,
+        currentStep: task.status === 'running' ? this.getCurrentStepText(task.type) : undefined,
       });
     });
 
-    return nodes.sort((a, b) => a.depth - b.depth);
+    return nodes.sort((a, b) => (depths[a.taskId] || 0) - (depths[b.taskId] || 0));
   });
 
   protected readonly completedTaskCount = computed(() => {
@@ -153,6 +132,7 @@ export class MultiAgentSidebarComponent implements OnDestroy {
 
   constructor() {
     this.subscribeToEvents();
+    this.ensureDefaultAgent();
   }
 
   ngOnDestroy(): void {
@@ -413,6 +393,7 @@ export class MultiAgentSidebarComponent implements OnDestroy {
         lastHeartbeat: state?.lastSeenAt || Date.now(),
         thinking: thinkingContent,
         output: outputContent,
+        isDefault: agentId === MultiAgentSidebarComponent.DEFAULT_AGENT_ID,
       });
     });
 
@@ -540,8 +521,21 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     this.agentThinkingMap.clear();
     this.agentOutputMap.clear();
     this.taskOutputMap.clear();
-    this.agentDescriptors.set(new Map());
-    this.agentStates.set(new Map());
+
+    // 保留默认智能体，清除其余
+    const defaultId = MultiAgentSidebarComponent.DEFAULT_AGENT_ID;
+    const defaultDesc = this.agentDescriptors().get(defaultId);
+    const defaultState = this.agentStates().get(defaultId);
+    const newDescMap = new Map<string, AgentDescriptor>();
+    const newStateMap = new Map<string, AgentRuntimeState>();
+    if (defaultDesc) newDescMap.set(defaultId, defaultDesc);
+    if (defaultState) {
+      defaultState.status = 'idle';
+      defaultState.lastStateChangeAt = Date.now();
+      newStateMap.set(defaultId, defaultState);
+    }
+    this.agentDescriptors.set(newDescMap);
+    this.agentStates.set(newStateMap);
     this.agents.set([]);
     this.planModeTrigger.resetExecutionState();
 
@@ -944,11 +938,12 @@ export class MultiAgentSidebarComponent implements OnDestroy {
   private getAgentNameByRole(role: string): string {
     const roleNames: Record<string, string> = {
       leader: '超体',
-      planner: '超体',
+      planner: '规划师',
       executor: '执行者',
       reviewer: '评审员',
       researcher: '研究员',
       validator: '验证员',
+      coordinator: '协调员',
     };
     return roleNames[role] || role;
   }
@@ -968,62 +963,6 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     return mapping[type] || 'executor';
   }
 
-  private generateSubTasksForType(type: string): SubTask[] {
-    const subTasksByType: Record<string, SubTask[]> = {
-      research: [
-        { text: '分析项目结构', completed: true, tag: 'DevOps' },
-        { text: '识别关键模块', completed: true, tag: 'DevOps' },
-        { text: '收集技术文档', completed: false },
-      ],
-      analysis: [
-        { text: '数据收集', completed: true },
-        { text: '问题分析', completed: true },
-        { text: '方案评估', completed: false },
-      ],
-      planning: [
-        { text: '需求分析', completed: true },
-        { text: '架构设计', completed: false },
-        { text: '任务拆分', completed: false },
-      ],
-      coding: [
-        { text: '接口定义', completed: true },
-        { text: '核心逻辑实现', completed: false },
-        { text: '单元测试', completed: false },
-      ],
-      testing: [
-        { text: '测试用例编写', completed: true },
-        { text: '集成测试', completed: false },
-        { text: '性能测试', completed: false },
-      ],
-      documentation: [
-        { text: 'API 文档', completed: true },
-        { text: '使用指南', completed: false },
-        { text: '示例代码', completed: false },
-      ],
-      review: [
-        { text: '代码审查', completed: true },
-        { text: '安全审计', completed: false },
-        { text: '性能审查', completed: false },
-      ],
-      debugging: [
-        { text: '问题复现', completed: true },
-        { text: '根因定位', completed: false },
-        { text: '修复方案', completed: false },
-      ],
-      coordination: [
-        { text: '任务分配', completed: true },
-        { text: '进度同步', completed: false },
-        { text: '资源调度', completed: false },
-      ],
-    };
-    
-    return subTasksByType[type] || [
-      { text: '任务准备', completed: true },
-      { text: '任务执行', completed: false },
-      { text: '结果验证', completed: false },
-    ];
-  }
-
   private getCurrentStepText(type: string): string {
     const stepsByType: Record<string, string> = {
       research: '正在分析项目结构和关键模块...',
@@ -1038,5 +977,97 @@ export class MultiAgentSidebarComponent implements OnDestroy {
     };
     
     return stepsByType[type] || '正在执行任务...';
+  }
+
+  /** 确保默认智能体（超体）始终存在 */
+  private ensureDefaultAgent(): void {
+    const id = MultiAgentSidebarComponent.DEFAULT_AGENT_ID;
+    if (this.agents().some(a => a.agentId === id)) return;
+
+    this.agentDescriptors.update(map => {
+      const newMap = new Map(map);
+      newMap.set(id, {
+        agentId: id,
+        agentName: '超体',
+        role: 'leader',
+        teamId: 'default',
+        sessionId: 'default',
+        modelId: 'claude-3-5-sonnet-latest',
+        backendType: 'in-process',
+        permissions: [],
+        createdAt: Date.now(),
+        createdBy: 'user',
+        lifetimePolicy: 'permanent',
+      });
+      return newMap;
+    });
+
+    this.agentStates.update(map => {
+      const newMap = new Map(map);
+      newMap.set(id, {
+        agentId: id,
+        status: 'idle',
+        lastSeenAt: Date.now(),
+        heartbeatInterval: 30000,
+        activeTaskIds: [],
+        recoveryAttempts: 0,
+        totalMessagesProcessed: 0,
+        totalTokensUsed: 0,
+        startedAt: Date.now(),
+        lastStateChangeAt: Date.now(),
+      });
+      return newMap;
+    });
+
+    this.refreshAgents();
+  }
+
+  /** 更新默认智能体运行状态 */
+  setDefaultAgentStatus(status: 'idle' | 'running' | 'thinking'): void {
+    const id = MultiAgentSidebarComponent.DEFAULT_AGENT_ID;
+    const agent = this.agents().find(a => a.agentId === id);
+    if (!agent) return;
+
+    this.agentStates.update(map => {
+      const newMap = new Map(map);
+      const state = newMap.get(id);
+      if (state) {
+        state.status = status as any;
+        state.lastStateChangeAt = Date.now();
+        if (status === 'thinking') {
+          state.lastSeenAt = Date.now();
+        }
+      }
+      return newMap;
+    });
+    this.refreshAgents();
+  }
+
+  /** 开始编辑 agent 备注 */
+  startEditNote(agentId: string): void {
+    const agent = this.agents().find(a => a.agentId === agentId);
+    this.noteDraft.set(agent?.note ?? '');
+    this.editingNoteAgentId.set(agentId);
+  }
+
+  /** 保存 agent 备注 */
+  saveNote(agentId: string): void {
+    const note = this.noteDraft().trim();
+    this.agents.update(agents => agents.map(a =>
+      a.agentId === agentId ? { ...a, note } : a
+    ));
+    this.editingNoteAgentId.set(null);
+    this.noteDraft.set('');
+  }
+
+  /** 取消编辑备注 */
+  cancelEditNote(): void {
+    this.editingNoteAgentId.set(null);
+    this.noteDraft.set('');
+  }
+
+  /** 判断 agent 是否为默认智能体 */
+  isDefaultAgent(agentId: string): boolean {
+    return agentId === MultiAgentSidebarComponent.DEFAULT_AGENT_ID;
   }
 }
