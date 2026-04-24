@@ -1,0 +1,73 @@
+<div class="debug-tab">
+  <div class="debug-tab-header">
+    <div class="debug-tab-heading">
+      <div class="debug-tab-title">{{ payload.tabTitle }}</div>
+      <div class="debug-tab-meta">
+        <span>domain: {{ payload.domain }}</span>
+        <span>action: {{ payload.action || 'latest' }}</span>
+        <span>session: {{ sessionId || payload.sessionId }}</span>
+        <span>generated: {{ payload.generatedAt | date:'yyyy-MM-dd HH:mm:ss' }}</span>
+      </div>
+    </div>
+    <div class="debug-tab-toolbar">
+      <input class="debug-session-input" [value]="sessionId || payload.sessionId" (change)="pin(($any($event.target)).value)" placeholder="固定 sessionId" />
+      <button nz-button nzType="default" (click)="refresh.emit()">刷新</button>
+      <button nz-button nzType="default" (click)="copyText()">复制</button>
+    </div>
+  </div>
+
+  <div class="debug-tab-body">
+    <section class="debug-section">
+      <div class="section-title">来源</div>
+      <div class="kv-row"><span>source</span><span>{{ viewModel.source }}</span></div>
+    </section>
+
+    <section class="debug-section">
+      <div class="section-title">Header</div>
+      <div class="kv-row" *ngFor="let item of viewModel.header">
+        <span>{{ item.label }}</span>
+        <span>{{ item.value }}</span>
+      </div>
+    </section>
+
+    <section class="debug-section" *ngFor="let section of viewModel.sections">
+      <div class="section-title">{{ section.title }}</div>
+      <ng-container *ngIf="isRowsSection(section)">
+        <div class="kv-row" *ngFor="let item of section.items">
+          <span class="mono">{{ item.label }}</span>
+          <span>{{ item.value }}</span>
+        </div>
+      </ng-container>
+      <ng-container *ngIf="isTextSection(section)">
+        <pre class="section-pre">{{ section.items }}</pre>
+      </ng-container>
+    </section>
+  </div>
+
+  <div class="debug-tab-footer">
+    <div class="kv-row" *ngFor="let item of viewModel.footer">
+      <span>{{ item.label }}</span>
+      <span>{{ item.value }}</span>
+    </div>
+  </div>
+
+  <!-- 命令输出历史 -->
+  <div class="debug-command-history" *ngIf="commandHistory.length > 0">
+    <div class="debug-cmd-entry" *ngFor="let entry of commandHistory" [class.error]="!entry.success">
+      <div class="debug-cmd-input"><span class="prompt-mark">&gt;</span> {{ entry.input }}</div>
+      <pre class="debug-cmd-output">{{ entry.output }}</pre>
+    </div>
+  </div>
+
+  <!-- 命令输入行 -->
+  <div class="debug-command-input-row">
+    <span class="prompt-mark">&gt;</span>
+    <input
+      class="debug-cmd-input"
+      type="text"
+      [(ngModel)]="commandInput"
+      (keydown)="onCommandKeydown($event)"
+      placeholder="/debug prompt | /debug memory | /debug workbench"
+    />
+  </div>
+</div>

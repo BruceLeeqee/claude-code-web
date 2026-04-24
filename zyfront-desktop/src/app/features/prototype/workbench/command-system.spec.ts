@@ -2,6 +2,8 @@ import { CommandRouterService, type RouteResult } from './command-router.service
 import { parseDirectiveWithValidation, parseSlashCommand, formatGroupedHelp, getCommandSuggestions } from './directive-parser';
 import { InputPreprocessorService, type PreprocessedInput } from './input-preprocessor.service';
 import { CommandExecutorService } from './command-executor.service';
+import { LoopCommandService } from './debug/loop-command.service';
+import { parseLoopCommand } from './debug/loop-command-parser';
 
 interface TestCase {
   input: string;
@@ -28,6 +30,8 @@ describe('CommandRouterService', () => {
     const testCases: TestCase[] = [
       { input: '/help', expectedRoute: 'directive', description: 'Slash command' },
       { input: '/mode-solo', expectedRoute: 'directive', description: 'Mode command' },
+      { input: '/loop build the workbench loop', expectedRoute: 'directive', description: 'Loop command' },
+      { input: '/task team=dev objective=实现登录页', expectedRoute: 'directive', description: 'Task dispatch command' },
       { input: '/plugin:list', expectedRoute: 'directive', description: 'Plugin command with colon' },
       { input: '!ls -la', expectedRoute: 'shell', description: 'Exclamation prefix forces shell' },
       { input: '?What is the weather', expectedRoute: 'natural', description: 'Question mark prefix forces natural' },
@@ -186,6 +190,13 @@ describe('DirectiveRegistry and Parser', () => {
         expectedCommand: '/plugin:list',
         expectedArgs: 'arg1 arg2',
         description: 'Command with arguments',
+      },
+      {
+        input: '/task team=dev objective=实现登录页',
+        shouldSucceed: true,
+        expectedCommand: '/task',
+        expectedArgs: 'team=dev objective=实现登录页',
+        description: 'Task command with routing args',
       },
       {
         input: '/unknowncmd',
@@ -378,5 +389,30 @@ describe('Integration', () => {
       expect(execResult.success).toBe(false);
       expect(execResult.content).toContain('Remote Control');
     });
+  });
+});
+
+describe('Loop Command Parser', () => {
+  it('should parse schedule interval from --every', () => {
+    const parsed = parseLoopCommand('/loop 修复回归测试 --every=15s');
+    expect(parsed).not.toBeNull();
+    expect(parsed?.objective).toBe('修复回归测试');
+    expect(parsed?.scheduleEveryMs).toBe(15_000);
+  });
+
+  it('should parse max iterations and keep objective clean', () => {
+    const parsed = parseLoopCommand('/loop 优化工作流 --max-iterations=8 --every=1m');
+    expect(parsed).not.toBeNull();
+    expect(parsed?.objective).toBe('优化工作流');
+    expect(parsed?.maxIterations).toBe(8);
+    expect(parsed?.scheduleEveryMs).toBe(60_000);
+  });
+
+  it('should parse team and task type flags', () => {
+    const parsed = parseLoopCommand('/loop 实现登录页 --team=dev --task-type=development');
+    expect(parsed).not.toBeNull();
+    expect(parsed?.objective).toBe('实现登录页');
+    expect(parsed?.teamName).toBe('dev');
+    expect(parsed?.taskType).toBe('development');
   });
 });

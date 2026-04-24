@@ -19,7 +19,11 @@
     "dev": "concurrently -k \"npm:serve\" \"npm:electron:dev\"",
     "electron:dev": "cross-env NODE_ENV=development electron .",
     "electron:start": "npm run build && electron .",
-    "electron:build": "npm run build && cross-env ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ electron-builder"
+    "electron:build": "npm run build && cross-env ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ electron-builder",
+    "check": "node scripts/check.mjs",
+    "api:check": "node scripts/api-check.mjs",
+    "data:check": "node scripts/data-check.mjs",
+    "ui:check": "node scripts/ui-check.mjs"
   },
   "build": {
     "appId": "com.zyfront.desktop",

@@ -198,7 +198,90 @@
               </div>
             </section>
 
-            <section class="file-editor-stack" [class.is-hidden]="activeTab() === 'Terminal - Main' || previewKind() !== 'code'">
+            <!-- 通用终端面板（Debug / Loop） -->
+            <section class="debug-panel" *ngIf="isTerminalTab(activeTab())" (click)="focusDebugTerminal()">
+              <!-- Loop Tab：带工具栏的双模式视图 -->
+              <div *ngIf="isLoopTab(activeTab())" class="loop-panel">
+                <!-- 工具栏 -->
+                <div class="loop-toolbar">
+                  <div class="loop-toolbar-left">
+                    <span class="loop-status-badge" [class]="getLoopStatusClass()">
+                      {{ currentLoopState()?.status ?? 'idle' }}
+                    </span>
+                    <span class="loop-iteration-info">
+                      轮次 {{ currentLoopState()?.iteration ?? 0 }}/{{ currentLoopState()?.maxIterations ?? 12 }}
+                    </span>
+                    <span class="loop-objective" *ngIf="currentLoopState()?.objective" title="{{ currentLoopState()!.objective }}">
+                      {{ currentLoopState()!.objective }}
+                    </span>
+                  </div>
+                  <div class="loop-toolbar-right">
+                    <button type="button" class="loop-view-btn"
+                      [class.active]="loopViewMode() === 'cards'"
+                      (click)="toggleLoopViewMode()"
+                      title="卡片视图">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                      卡片
+                    </button>
+                    <button type="button" class="loop-view-btn"
+                      [class.active]="loopViewMode() === 'terminal'"
+                      (click)="toggleLoopViewMode()"
+                      title="终端视图">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                      终端
+                    </button>
+                    <button type="button" class="loop-action-btn loop-step-btn" (click)="executeLoopStepFromToolbar()" title="执行下一步">
+                      ▶ Step
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 卡片视图：每行4个任务卡片 -->
+                <div class="loop-cards-view" *ngIf="loopViewMode() === 'cards' && currentLoopState()?.currentPlan?.length">
+                  <div class="loop-card" *ngFor="let step of currentLoopState()!.currentPlan; let i = index"
+                    [class.card-done]="step.status === 'done'"
+                    [class.card-running]="step.status === 'running'"
+                    [class.card-failed]="step.status === 'failed'"
+                    [class.card-skipped]="step.status === 'skipped'">
+                    <div class="card-header">
+                      <span class="card-index">{{ i + 1 }}</span>
+                      <span class="card-type">{{ step.type }}</span>
+                      <span class="card-risk risk-{{ step.riskLevel }}">{{ step.riskLevel }}</span>
+                    </div>
+                    <div class="card-title">{{ step.title }}</div>
+                    <div class="card-footer">
+                      <span class="card-status" [class]="'status-' + step.status">{{ step.status }}</span>
+                      <span class="card-deps" *ngIf="step.dependencies.length > 0" title="依赖: {{ step.dependencies.join(', ') }}">
+                        Deps: {{ step.dependencies.length }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 卡片空状态 -->
+                <div class="loop-empty-state" *ngIf="loopViewMode() === 'cards' && (!currentLoopState() || !currentLoopState()!.currentPlan?.length)">
+                  <div class="empty-icon">📋</div>
+                  <div>暂无执行计划</div>
+                  <div class="empty-hint">在主终端输入 /loop 开始新任务</div>
+                </div>
+
+                <!-- 验证矩阵卡片区域（卡片视图底部） -->
+                <div class="loop-verification-grid" *ngIf="loopViewMode() === 'cards' && currentLoopState()?.verificationMatrix?.length">
+                  <div class="verif-card" *ngFor="let v of currentLoopState()!.verificationMatrix"
+                    [class.verif-passed]="v.passed" [class.verif-failed]="!v.passed">
+                    <span class="verif-dim">{{ v.dimension }}</span>
+                    <span class="verif-result">{{ v.passed ? '✓' : '✗' }} {{ v.passed ? '通过' : v.note || '未通过' }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Debug Tab 或 Loop 终端视图：xterm -->
+              <div class="debug-terminal-body" *ngIf="!isLoopTab(activeTab()) || loopViewMode() === 'terminal'">
+                <div #debugXtermHost class="debug-xterm-host"></div>
+              </div>
+            </section>
+
+            <section class="file-editor-stack" [class.is-hidden]="activeTab() === 'Terminal - Main' || previewKind() !== 'code' || isTerminalTab(activeTab())" [class.debug-mode]="isTerminalTab(activeTab())">
               <app-workbench-monaco-editor [value]="selectedContent()" [language]="monacoLanguage()" (valueChange)="onEditorContentChange($event)" (saveRequested)="saveCurrentFile()" (markersChange)="onEditorMarkersChange($event)" />
               <div class="editor-diagnostics" *ngIf="editorDiagnostics().length">
                 <div class="editor-diagnostics-head">问题（{{ editorDiagnostics().length }}）</div>
@@ -209,7 +292,7 @@
               </div>
             </section>
 
-            <section class="file-preview-wrap file-preview-diff" [class.is-hidden]="activeTab() === 'Terminal - Main' || previewKind() !== 'diff'" [innerHTML]="filePreviewHtml()"></section>
+            <section class="file-preview-wrap file-preview-diff" [class.is-hidden]="activeTab() === 'Terminal - Main' || previewKind() !== 'diff' || isTerminalTab(activeTab())" [innerHTML]="filePreviewHtml()"></section>
           </div>
 
           <section class="powershell-panel" *ngIf="terminalMenuVisible()" (click)="focusPowerShellTerminal()">

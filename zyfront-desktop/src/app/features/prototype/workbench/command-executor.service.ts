@@ -11,6 +11,11 @@ import {
   type DirectiveDefinition,
   getVisibleDirectives,
 } from './directive-registry';
+import { DebugCommandService } from './debug/debug-command.service';
+import { LoopCommandService } from './debug/loop-command.service';
+import { LoopExecutorService } from './debug/loop-executor.service';
+import { LoopVerifierService } from './debug/loop-verifier.service';
+import { buildLoopDebugViewModel } from './debug/loop-debug-tab.adapter';
 
 export interface ExecutionInput {
   raw: string;
@@ -45,7 +50,12 @@ export type DirectiveExecutorFn = (
 @Injectable({ providedIn: 'root' })
 export class CommandExecutorService {
   private readonly router = inject(CommandRouterService);
+  private readonly debugCommand = inject(DebugCommandService);
+  private readonly loopCommand = inject(LoopCommandService);
+  private readonly loopExecutor = inject(LoopExecutorService);
+  private readonly loopVerifier = inject(LoopVerifierService);
   private readonly directiveExecutors = new Map<string, DirectiveExecutorFn>();
+  private readonly loopTimers = new Map<string, ReturnType<typeof setInterval>>();
 
   constructor() {
     this.registerBuiltInExecutors();
@@ -79,6 +89,30 @@ export class CommandExecutorService {
         content: statusLines.join('\n'),
         shouldQuery: false,
         displayType: 'message',
+      };
+    });
+
+    this.registerDirectiveExecutor('debug', async (ctx) => {
+      const payload = await this.debugCommand.build(ctx.sessionId ?? 'workbench-terminal-ai', `/debug ${ctx.parsed.args}`.trim());
+      if (!payload) {
+        return {
+          success: false,
+          route: 'directive',
+          responseType: 'error',
+          content: '/debug <domain>  可用域: prompt, memory, workbench',
+          shouldQuery: false,
+          displayType: 'error',
+        };
+      }
+      const content = this.debugCommand.renderTabContent(payload);
+      return {
+        success: true,
+        route: 'directive',
+        responseType: 'directive',
+        content,
+        metadata: { tabKey: payload.tabKey, tabTitle: payload.tabTitle, debugPayload: payload },
+        shouldQuery: false,
+        displayType: 'success',
       };
     });
 
@@ -168,6 +202,93 @@ export class CommandExecutorService {
       };
     });
 
+    this.registerDirectiveExecutor('loop', async (ctx) => {
+      const goal = ctx.parsed.args.trim();
+      if (!goal) {
+        return {
+          success: false,
+          route: 'directive',
+          responseType: 'error',
+          content: '/loop <目标描述>',
+          shouldQuery: false,
+          displayType: 'error',
+        };
+      }
+
+      // 返回需求收集模式，让主终端通过对话澄清需求后再进入 Loop 页
+      return {
+        success: true,
+        route: 'directive',
+        responseType: 'directive',
+        content: [
+          '**`/loop` 需求分析**',
+          '',
+          `目标初稿：${goal}`,
+          '',
+          '我需要了解一些细节来制定执行计划，请回答以下问题（可逐条回复）：',
+          '',
+          '1. **任务范围**：涉及哪些文件/目录？是否有特定技术栈要求？',
+          '2. **输出格式**：期望的交付物是什么？（报告/代码/文档/配置）',
+          '3. **约束条件**：是否有时间限制、兼容性要求或禁止事项？',
+          '4. **验收标准**：如何判断任务完成？',
+          '',
+          '_回答完毕后输入 **"确认"** 或 **"开始"** 进入 Loop 执行页面。_',
+          '_输入 **"取消"** 可退出本次 loop。_',
+        ].join('\n'),
+        metadata: { mode: 'loop-gathering', goal },
+        shouldQuery: true,
+        displayType: 'message',
+      };
+    });
+
+    this.registerDirectiveExecutor('task', async (ctx) => {
+      const teamMatch = ctx.parsed.args.match(/team=([^\s]+)/i);
+      const objectiveMatch = ctx.parsed.args.match(/objective=(.+)$/i);
+      const team = teamMatch?.[1]?.trim().toLowerCase();
+      const objective = objectiveMatch?.[1]?.trim();
+      if (!team || !objective) {
+        return {
+          success: false,
+          route: 'directive',
+          responseType: 'error',
+          content: '/task team=<teamName> objective=<objective>',
+          shouldQuery: false,
+          displayType: 'error',
+        };
+      }
+
+      const sessionId = ctx.sessionId ?? 'workbench-terminal-ai';
+      const state = this.loopCommand.start(`/loop ${objective} --team=${team}`, sessionId);
+      if (!state) {
+        return {
+          success: false,
+          route: 'directive',
+          responseType: 'error',
+          content: '任务分派失败：无法创建 loop 会话',
+          shouldQuery: false,
+          displayType: 'error',
+        };
+      }
+
+      const result = await this.loopExecutor.runOnce(sessionId);
+      return {
+        success: true,
+        route: 'directive',
+        responseType: 'directive',
+        content: [
+          '**任务已派发**',
+          `团队：${team}`,
+          `目标：${state.objective}`,
+          `状态：${result.state.status}`,
+          `阶段：${result.state.phase}`,
+          `下一步：${result.state.currentPlan[0]?.title ?? '计划已收敛'}`,
+        ].join('\n'),
+        metadata: { loopState: result.state, team },
+        shouldQuery: false,
+        displayType: 'success',
+      };
+    });
+
     this.registerDirectiveExecutor('plugin_list', async (ctx) => {
       const lines = [
         '**插件列表**',
@@ -207,6 +328,75 @@ export class CommandExecutorService {
         displayType: 'error',
       };
     });
+  }
+
+  private ensureLoopSchedule(sessionId: string, everyMs?: number): boolean {
+    const currentTimer = this.loopTimers.get(sessionId);
+    if (currentTimer) {
+      clearInterval(currentTimer);
+      this.loopTimers.delete(sessionId);
+    }
+    if (!everyMs || everyMs <= 0) return false;
+
+    const timer = setInterval(() => {
+      void this.runScheduledLoopCycle(sessionId);
+    }, everyMs);
+    this.loopTimers.set(sessionId, timer);
+    return true;
+  }
+
+  private async runScheduledLoopCycle(sessionId: string): Promise<void> {
+    const state = this.loopCommand.get(sessionId);
+    if (!state) {
+      this.stopLoopSchedule(sessionId);
+      return;
+    }
+    if (['blocked', 'paused', 'completed', 'ready_for_release', 'failed'].includes(state.status)) {
+      this.stopLoopSchedule(sessionId);
+      return;
+    }
+    try {
+      await this.loopExecutor.runCycle(sessionId, 1);
+      const next = this.loopCommand.get(sessionId);
+      if (!next || ['blocked', 'paused', 'completed', 'ready_for_release', 'failed'].includes(next.status)) {
+        this.stopLoopSchedule(sessionId);
+      }
+    } catch {
+      this.stopLoopSchedule(sessionId);
+    }
+  }
+
+  private stopLoopSchedule(sessionId: string): void {
+    const timer = this.loopTimers.get(sessionId);
+    if (!timer) return;
+    clearInterval(timer);
+    this.loopTimers.delete(sessionId);
+  }
+
+  private extractEveryMs(rawArgs: string): number | undefined {
+    const match = rawArgs.match(/--every=([^\s]+)/i);
+    if (!match?.[1]) return undefined;
+    return this.parseDurationToMs(match[1]) ?? undefined;
+  }
+
+  private parseDurationToMs(raw: string): number | null {
+    const match = raw.trim().match(/^(\d+)(ms|s|m|h)?$/i);
+    if (!match?.[1]) return null;
+    const value = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(value) || value <= 0) return null;
+    const unit = (match[2] ?? 's').toLowerCase();
+    if (unit === 'ms') return value;
+    if (unit === 's') return value * 1000;
+    if (unit === 'm') return value * 60_000;
+    if (unit === 'h') return value * 3_600_000;
+    return null;
+  }
+
+  private formatDuration(ms: number): string {
+    if (ms % 3_600_000 === 0) return `${ms / 3_600_000}h`;
+    if (ms % 60_000 === 0) return `${ms / 60_000}m`;
+    if (ms % 1000 === 0) return `${ms / 1000}s`;
+    return `${ms}ms`;
   }
 
   registerDirectiveExecutor(kind: string, executor: DirectiveExecutorFn): void {

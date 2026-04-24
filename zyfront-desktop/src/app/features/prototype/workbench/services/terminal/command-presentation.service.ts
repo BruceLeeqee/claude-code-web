@@ -139,6 +139,35 @@ export class CommandPresentationService {
   }
 
   /**
+   * 格式化指令 / shell / assistant 统一执行结果
+   */
+  formatExecutionResult(
+    kind: 'directive' | 'shell' | 'assistant' | 'system' | 'error',
+    title: string,
+    success: boolean,
+    content: string,
+  ): CommandPresentation {
+    const tier: PresentationTier = success ? 'info' : 'error';
+    const headerMap: Record<typeof kind, string> = {
+      directive: '/directive',
+      shell: '/shell',
+      assistant: '/assistant',
+      system: '/system',
+      error: '/error',
+    };
+    const header = success
+      ? `${this.tierColors.info}[${headerMap[kind]} ${title}]${this.RESET}`
+      : `${this.tierColors.error}[${headerMap[kind]} ${title}]${this.RESET}`;
+    const body = content ? ` ${content.replaceAll('\n', '\r\n')}` : '';
+
+    return {
+      fragments: [{ tier, text: `${header}${body}`, standalone: true }],
+      compactSummary: `[${title}] ${success ? '成功' : '失败'}`,
+      fullText: `${header}${body}`,
+    };
+  }
+
+  /**
    * 格式化指令执行结果
    */
   formatDirectiveResult(
@@ -146,17 +175,7 @@ export class CommandPresentationService {
     success: boolean,
     content: string,
   ): CommandPresentation {
-    const tier: PresentationTier = success ? 'info' : 'error';
-    const header = success
-      ? `${this.tierColors.info}[/${directiveName}]${this.RESET}`
-      : `${this.tierColors.error}[/${directiveName}]${this.RESET}`;
-    const body = content ? ` ${content.replaceAll('\n', '\r\n')}` : '';
-
-    return {
-      fragments: [{ tier, text: `${header}${body}`, standalone: true }],
-      compactSummary: `[/${directiveName}] ${success ? '成功' : '失败'}`,
-      fullText: `${header}${body}`,
-    };
+    return this.formatExecutionResult('directive', directiveName, success, content);
   }
 
   /**

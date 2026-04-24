@@ -3,10 +3,13 @@ import type { CoordinationMode } from 'zyfront-core';
 export type DirectiveKind =
   | 'help'
   | 'status'
+  | 'debug'
   | 'mode'
   | 'mode_solo'
   | 'mode_plan'
   | 'mode_dev'
+  | 'loop'
+  | 'task'
   | 'plugin_list'
   | 'plugin_run'
   | 'superpower'
@@ -71,6 +74,16 @@ export const DIRECTIVE_REGISTRY: DirectiveDefinition[] = [
     bridgeSafe: true,
   },
   {
+    name: '/debug',
+    desc: '查看调试报告与诊断 Tab',
+    template: '/debug <domain>',
+    kind: 'debug',
+    group: 'system',
+    usage: '/debug prompt  /debug memory  /debug workbench',
+    visibleInHelp: true,
+    bridgeSafe: true,
+  },
+  {
     name: '/mode',
     desc: '切换到单智能体模式（默认）',
     template: '/mode',
@@ -97,6 +110,25 @@ export const DIRECTIVE_REGISTRY: DirectiveDefinition[] = [
     group: 'mode',
     usage: '/mode-dev 切换到开发者模式',
     visibleInHelp: true,
+  },
+  {
+    name: '/loop',
+    desc: '自动拆解并循环执行任务，直到完成或阻塞',
+    template: '/loop <goal> [--every=10s]',
+    kind: 'loop',
+    group: 'development',
+    usage: '/loop <目标描述> [--every=10s|1m|500ms]',
+    visibleInHelp: true,
+  },
+  {
+    name: '/task',
+    desc: '将任务派发给指定团队（默认触发 loop）',
+    template: '/task team=<teamName> objective=<objective>',
+    kind: 'task',
+    group: 'development',
+    usage: '/task team=dev objective=实现登录页',
+    visibleInHelp: true,
+    requiresArgs: true,
   },
   {
     name: '/plugin:list',

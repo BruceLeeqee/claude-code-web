@@ -33,6 +33,8 @@ import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.servic
 import { AgentMemoryService } from '../../../core/agent-memory.service';
 import { SkillIndexService, type SkillRecord } from '../../../core/skill-index.service';
 import { PromptMemoryBuilderService } from '../../../core/memory/prompt-memory-builder.service';
+import { PromptBuildContextService } from '../../../core/memory/prompt-build-context.service';
+import { PromptDebugReportService } from '../../../core/memory/prompt-debug-report.service';
 import { Terminal, type IDisposable, type IMarker } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import type { ChatMessage, CoordinationMode, CoordinationStep, StreamChunk } from 'zyfront-core';
@@ -64,6 +66,12 @@ import { SessionReplayCoordinatorService } from './services/terminal/session-rep
 import { TurnMetadataService } from './services/terminal/turn-metadata.service';
 import { CommandPresentationService } from './services/terminal/command-presentation.service';
 import { TerminalDisplayDebugService } from './services/terminal/terminal-display-debug.service';
+import { WorkbenchContextService } from './services/workbench-context.service';
+import { DebugTabStateService } from './debug/debug-tab-state.service';
+import { DebugCommandService } from './debug/debug-command.service';
+import { LoopCommandService } from './debug/loop-command.service';
+import { LoopExecutorService } from './debug/loop-executor.service';
+import { restoreWorkbenchSessionState } from './utils/workbench-session-restore';
 
 type MultiAgentTimelineTier = 'info' | 'success' | 'warning' | 'error';
 
@@ -391,6 +399,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   @ViewChild(MultiAgentSidebarComponent, { static: false })
   private multiAgentSidebar?: MultiAgentSidebarComponent;
 
+  @ViewChild('debugXtermHost', { static: false })
+  private debugXtermHost?: ElementRef<HTMLDivElement>;
+
   protected readonly workspaceRoot = signal('workspace');
   /** Vault 绝对路径（Electron 解析后） */
   protected readonly vaultPathLabel = signal('');
@@ -413,6 +424,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected readonly tabs = signal<string[]>(['Terminal - Main']);
   protected readonly activeTab = signal('Terminal - Main');
+  private readonly debugTabs = ['Debug / Prompt', 'Debug / Memory', 'Debug / Workbench'] as const;
   protected readonly terminalBusy = signal(false);
   protected readonly visibleTabs = computed(() => this.tabs());
 
@@ -470,8 +482,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly turnMetadata = inject(TurnMetadataService);
   private readonly commandPresentation = inject(CommandPresentationService);
   private readonly displayDebug = inject(TerminalDisplayDebugService);
+  private readonly workbenchContext = inject(WorkbenchContextService);
+  private readonly promptBuildContext = inject(PromptBuildContextService);
+  private readonly promptDebugReport = inject(PromptDebugReportService);
+  private readonly debugCommand = inject(DebugCommandService);
+  private readonly debugTabState = inject(DebugTabStateService);
   private readonly commandProcessing = inject(CommandProcessingService);
   private readonly commandExecutor = inject(CommandExecutorService);
+  private readonly loopCommand = inject(LoopCommandService);
+  private readonly loopExecutor = inject(LoopExecutorService);
   private readonly inputPreprocessor = inject(InputPreprocessorService);
   private readonly assistantFlow = inject(WorkbenchAssistantFlowService);
   private readonly assistantStream = inject(WorkbenchAssistantStreamService);
@@ -519,6 +538,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   /** Monaco TypeScript/JavaScript 诊断（当前活动代码页） */
   protected readonly editorDiagnostics = signal<WorkbenchEditorDiagnosticRow[]>([]);
   protected readonly tabContextMenu = signal<{ tab: string; x: number; y: number } | null>(null);
+  protected readonly debugTabPinnedSession = signal<Record<string, string | undefined>>({});
 
   protected readonly searchQuery = signal('');
   protected readonly searchBusy = signal(false);
@@ -577,6 +597,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private psResizeObserver?: ResizeObserver;
   private detachPsData?: () => void;
   private detachPsExit?: () => void;
+
+  /** Debug 终端 xterm 实例 */
+  private debugXterm?: Terminal;
+  private debugFitAddon?: FitAddon;
+  private debugResizeObserver?: ResizeObserver;
+  private debugLineBuffer = '';
+  private debugTerminalInitialized = false;
 
   protected readonly psSessions = signal<PsSessionVm[]>([]);
   protected readonly activePsSessionId = signal('');
@@ -750,6 +777,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   async ngAfterViewInit(): Promise<void> {
+    restoreWorkbenchSessionState();
     this.initAiXterm();
     await this.initPowerShellTerminal();
     if (!this.psTerminal) {
@@ -881,13 +909,193 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  private ensureDebugTab(domain: 'prompt' | 'memory' | 'workbench'): string {
+    const tab = `Debug / ${domain[0].toUpperCase()}${domain.slice(1)}`;
+    this.addTabIfMissing(tab);
+    return tab;
+  }
+
   protected displayTabLabel(tab: string): string {
     if (tab === 'Terminal - Main') return tab;
+    if (tab.startsWith('Debug / ')) return tab;
     let plain = tab.startsWith('↔ ') ? tab.slice(2).trim() : tab;
     if (/^(vault|workspace):/.test(plain)) {
       plain = plain.replace(/^(vault|workspace):/, '');
     }
     return plain.split('/').pop() ?? plain;
+  }
+
+  protected isDebugTab(tab: string): boolean {
+    return tab.startsWith('Debug / ');
+  }
+
+  protected isLoopTab(tab: string): boolean {
+    return tab.startsWith('Loop / ');
+  }
+
+  /** 是否为终端型 tab（debug 或 loop），共享同一个 xterm 面板 */
+  protected isTerminalTab(tab: string): boolean {
+    return this.isDebugTab(tab) || this.isLoopTab(tab);
+  }
+
+  protected debugTabViewModel(tab: string): import('./debug/debug-command.types').DebugTabViewModel | null {
+    const payload = this.currentDebugPayload();
+    if (!payload) return null;
+    // 当 activeTab 是 debug tab 时直接返回当前 payload
+    return payload.viewModel;
+  }
+
+  protected async openDebugPromptTab(): Promise<void> {
+    await this.openDebugTab('prompt', this.activeDebugSessionId());
+  }
+
+  protected async openDebugMemoryTab(): Promise<void> {
+    await this.openDebugTab('memory', this.activeDebugSessionId());
+  }
+
+  protected async openDebugWorkbenchTab(): Promise<void> {
+    await this.openDebugTab('workbench', this.activeDebugSessionId());
+  }
+
+  protected currentDebugPayload = signal<import('./debug/debug-command.types').DebugTabPayload | null>(null);
+
+  // ── Loop 需求收集 & 双模式视图状态 ──
+  /** 是否正在主终端进行 loop 需求澄清对话 */
+  protected readonly loopGatheringMode = signal(false);
+  /** loop 需求收集的原始目标 */
+  protected readonly loopGatheringGoal = signal('');
+  /** Loop 视图模式：'cards'（卡片，默认）| 'terminal'（命令行） */
+  protected readonly loopViewMode = signal<'cards' | 'terminal'>('cards');
+  /** 当前 Loop 会话状态（从 LoopCommandService 获取） */
+  protected readonly currentLoopState = signal<import('./debug/loop-command.types').LoopState | null>(null);
+
+  /** 切换 Loop 视图模式 */
+  protected toggleLoopViewMode(): void {
+    this.loopViewMode.set(this.loopViewMode() === 'cards' ? 'terminal' : 'cards');
+    if (this.loopViewMode() === 'terminal') {
+      setTimeout(() => {
+        this.initDebugXterm();
+        this.debugFitAddon?.fit();
+        this.debugXterm?.focus();
+      }, 0);
+    }
+  }
+
+  /** 刷新当前 LoopState */
+  protected refreshLoopState(): void {
+    const state = this.loopCommand.get(SESSION_ID);
+    this.currentLoopState.set(state);
+  }
+
+  /** 获取 Loop 状态 CSS class */
+  protected getLoopStatusClass(): string {
+    const status = this.currentLoopState()?.status ?? 'idle';
+    switch (status) {
+      case 'executing': return 'status-executing';
+      case 'verifying': return 'status-verifying';
+      case 'completed': return 'status-completed';
+      case 'failed': return 'status-failed';
+      case 'blocked': return 'status-blocked';
+      case 'paused': return 'status-paused';
+      case 'planning': return 'status-planning';
+      default: return 'status-idle';
+    }
+  }
+
+  /** 从工具栏执行 Loop step */
+  protected async executeLoopStepFromToolbar(): Promise<void> {
+    // 切换到终端视图以显示日志
+    this.loopViewMode.set('terminal');
+    setTimeout(async () => {
+      this.initDebugXterm();
+      this.debugXtermWrite('\x1b[33m⏳ 执行中...\x1b[0m\r\n');
+      try {
+        const result = await this.loopExecutor.runOnce(SESSION_ID);
+        const state = result.state;
+        this.debugXtermWrite(`\x1b[32m✓ 步骤完成\x1b[0m ${result.executedStep?.title ?? '无'}\r\n`);
+        this.debugXtermWrite(`  状态: ${state.status}  轮次: ${state.iteration}/${state.maxIterations}\r\n`);
+        this.debugXtermWrite(`  验证: ${result.verification.passed ? '\x1b[32m通过\x1b[0m' : '\x1b[31m未通过\x1b[0m'}\r\n`);
+        if (result.verification.blockers.length > 0) {
+          this.debugXtermWrite(`  \x1b[31m阻塞: ${result.verification.blockers.join('; ')}\x1b[0m\r\n`);
+        }
+        // 刷新卡片状态
+        this.refreshLoopState();
+      } catch (e) {
+        this.debugXtermWrite(`\x1b[31m执行失败: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`);
+      }
+      this.writeDebugTerminalPrompt();
+      this.debugFitAddon?.fit();
+    }, 100);
+  }
+
+  protected pinDebugSession(tab: string, value: string): void {
+    const domain = this.debugDomainForTab(tab);
+    if (!domain) return;
+    const next = { ...this.debugTabPinnedSession() };
+    next[domain] = value.trim() || undefined;
+    this.debugTabPinnedSession.set(next);
+    this.debugTabState.pinSession(domain, value.trim());
+  }
+
+  protected debugPinnedSession(tab: string): string {
+    const domain = this.debugDomainForTab(tab);
+    if (!domain) return '';
+    return this.debugTabPinnedSession()[domain] ?? this.debugTabState.getPinnedSession(domain) ?? '';
+  }
+
+  protected copyDebugPayload(): void {
+    const payload = this.currentDebugPayload();
+    if (!payload) return;
+    void navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+  }
+
+  protected refreshDebugTab(tab: string): void {
+    const domain = this.debugDomainForTab(tab);
+    if (!domain) return;
+    void this.openDebugTab(domain, this.debugPinnedSession(tab) || undefined, this.debugActionForTab(tab));
+  }
+
+  private debugDomainForTab(tab: string): 'prompt' | 'memory' | 'workbench' | null {
+    const m = tab.match(/^Debug \/ (Prompt|Memory|Workbench)$/i);
+    return m ? (m[1]!.toLowerCase() as 'prompt' | 'memory' | 'workbench') : null;
+  }
+
+  private debugActionForTab(tab: string): string | undefined {
+    const domain = this.debugDomainForTab(tab);
+    if (!domain) return undefined;
+    return this.debugTabState.getActiveSession(domain) ? 'latest' : undefined;
+  }
+
+  private async openDebugTab(domain: 'prompt' | 'memory' | 'workbench', sessionId?: string, action?: string): Promise<void> {
+    const target = sessionId?.trim() || this.activeDebugSessionId();
+    const input = action ? `/debug ${domain} ${action}` : `/debug ${domain}`;
+    const result = await this.commandExecutor.execute({
+      raw: input,
+      context: { source: 'user', sessionId: target || SESSION_ID },
+      options: { bridgeOrigin: true },
+    });
+    const payload = result.metadata?.['debugPayload'] as { tabKey?: string; tabTitle?: string; viewModel?: unknown; sessionId?: string } | undefined;
+    if (!payload?.tabKey) return;
+    this.currentDebugPayload.set(payload as any);
+    this.debugCommand.executeAction(target || SESSION_ID, input).catch(() => {});
+    this.addTabIfMissing(payload.tabKey);
+    const model = JSON.stringify(payload.viewModel ?? {}, null, 2);
+    this.tabEditorState.set(payload.tabKey, {
+      relPath: payload.tabKey,
+      content: model,
+      previewKind: 'code',
+      dirty: false,
+      fsScope: 'workspace',
+    });
+    this.activeTab.set(payload.tabKey);
+    this.selectedPath.set(payload.tabKey);
+    this.selectedContent.set(model);
+    this.previewKind.set('code');
+    this.editorDirty.set(false);
+  }
+
+  protected activeDebugSessionId(): string {
+    return this.debugTabPinnedSession()['prompt'] ?? this.debugTabPinnedSession()['memory'] ?? this.debugTabPinnedSession()['workbench'] ?? SESSION_ID;
   }
 
   protected tabTooltip(tab: string): string {
@@ -1697,6 +1905,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.psFitAddon?.fit();
       if (tab === 'Terminal - Main') {
         this.focusAiTerminal();
+      }
+      if (this.isTerminalTab(tab)) {
+        this.focusDebugTerminal();
       }
       if (this.terminalMenuVisible()) {
         this.focusPowerShellTerminal();
@@ -2831,6 +3042,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }, []),
     };
 
+    await this.promptBuildContext.refreshSessionMemory({
+      sessionId: turn.sessionId,
+      turnId: turn.turnId,
+      timestamp: turn.timestamp,
+      messages: turn.messages.map((m) => ({ role: m.role, content: m.content })),
+    });
     await this.agentMemory.runMemoryPipelineNow(turn);
     try {
       await this.agentMemory.appendProjectLongTermTurn(turn);
@@ -2838,11 +3055,51 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       /* 长期记忆落盘失败不阻断主流程 */
     }
     await this.refreshShortTermMemoryStats();
+    await this.refreshWorkbenchContextSnapshot();
   }
 
   private bumpStreamLineBudgetForWrite(fragment: string): void {
     if (!fragment) return;
     this.streamConsumedLines += this.countPhysicalTerminalLines(fragment.replaceAll('\n', '\r\n'));
+  }
+
+  private async capturePromptContextSnapshot(sessionId: string, userQuery: string, systemPrompt?: string): Promise<void> {
+    await this.promptBuildContext.build({
+      sessionId,
+      userQuery,
+      systemPrompt,
+      builtAt: Date.now(),
+    });
+  }
+
+  private async refreshWorkbenchContextSnapshot(): Promise<void> {
+    this.workbenchContext.capture(SESSION_ID);
+    const report = this.promptDebugReport.buildTextReport(SESSION_ID);
+    this.workbenchContext.setDebugReport(SESSION_ID, report);
+  }
+
+  private presentUnifiedCommandEntry(result: { displayType: 'message' | 'system' | 'error' | 'success'; content: string; route: string; success: boolean; shouldQuery: boolean; metadata?: Record<string, unknown> }): void {
+    const presentation = this.commandPresentation.presentAndSync(
+      result.route as 'directive' | 'shell' | 'natural' | 'error' | 'fallback',
+      result.success,
+      result.content,
+      SESSION_ID,
+    );
+
+    const fragmentText = presentation.fullText || result.content;
+    if (!fragmentText) return;
+    this.renderCommandPresentation(this.commandPresentation.formatExecutionResult(
+      result.route === 'directive' ? 'directive' : result.route === 'shell' ? 'shell' : 'assistant',
+      String(result.route),
+      result.success,
+      fragmentText,
+    ));
+  }
+
+  private renderCommandPresentation(presentation: ReturnType<CommandPresentationService['formatExecutionResult']>): void {
+    const text = presentation.fullText || presentation.compactSummary;
+    if (!text) return;
+    this.aiXtermWrite(`\r\n${text}\r\n`);
   }
 
   /**
@@ -4107,6 +4364,297 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.writeMainTerminalPrompt();
   }
 
+  // ── 通用终端面板（Debug / Loop） ────────────────────────────
+
+  /** 销毁当前终端 xterm 实例（切 tab 时调用） */
+  private disposeTabXterm(): void {
+    if (this.debugXterm) {
+      this.debugXterm.dispose();
+    }
+    this.debugXterm = undefined;
+    this.debugFitAddon = undefined;
+    this.debugResizeObserver?.disconnect();
+    this.debugResizeObserver = undefined;
+    this.debugTerminalInitialized = false;
+    this.debugLineBuffer = '';
+  }
+
+  /** 初始化终端 xterm 实例（debug 或 loop） */
+  private initDebugXterm(): void {
+    const host = this.debugXtermHost?.nativeElement;
+    if (!host) return;
+
+    // 如果 xterm 已初始化但 host 变了（*ngIf 重建 DOM），先销毁旧的
+    if (this.debugTerminalInitialized && this.debugXterm) {
+      try { this.debugXterm.dispose(); } catch { /* ignore */ }
+      this.debugXterm = undefined;
+      this.debugFitAddon = undefined;
+      this.debugResizeObserver?.disconnect();
+      this.debugResizeObserver = undefined;
+    }
+    this.debugTerminalInitialized = true;
+    this.debugLineBuffer = '';
+
+    this.debugFitAddon = new FitAddon();
+    this.debugXterm = new Terminal({
+      cursorBlink: true,
+      cursorStyle: 'bar',
+      fontFamily:
+        "'JetBrains Mono', 'Fira Code', Consolas, 'Cascadia Mono', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC', monospace",
+      fontSize: 13,
+      lineHeight: 1.4,
+      theme: {
+        background: '#0d0d12',
+        foreground: '#e2e4f0',
+        cursor: '#8b5cf6',
+        cursorAccent: '#0d0d12',
+        selectionBackground: '#2a1f4e',
+        black: '#1a1a2e',
+        red: '#ff6b9d',
+        green: '#4ade80',
+        yellow: '#fbbf24',
+        blue: '#60a5fa',
+        magenta: '#c084fc',
+        cyan: '#22d3ee',
+        white: '#f1f5f9',
+        brightBlack: '#3f3f5a',
+        brightRed: '#f472b6',
+        brightGreen: '#86efac',
+        brightYellow: '#fde68a',
+        brightBlue: '#93c5fd',
+        brightMagenta: '#d8b4fe',
+        brightCyan: '#67e8f9',
+        brightWhite: '#ffffff',
+      },
+      convertEol: true,
+      allowProposedApi: true,
+    });
+
+    this.debugXterm.loadAddon(this.debugFitAddon);
+    this.debugXterm.open(host);
+
+    this.debugXterm.onData((data) => {
+      this.feedTabTerminalInput(data);
+    });
+
+    this.debugResizeObserver = new ResizeObserver(() => {
+      this.debugFitAddon?.fit();
+    });
+    this.debugResizeObserver.observe(host);
+
+    this.printTabTerminalWelcome();
+  }
+
+  /** 根据当前 tab 类型打印欢迎信息 */
+  private printTabTerminalWelcome(): void {
+    const tab = this.activeTab();
+    if (this.isLoopTab(tab)) {
+      this.debugXtermWrite(
+        '\x1b[90mLoop 终端：支持 /loop 和 /debug 命令。\x1b[0m\r\n' +
+        '\x1b[90m  /loop step    执行下一步  /loop status  查看状态\x1b[0m\r\n' +
+        '\x1b[90m  /loop stop    暂停执行    /loop resume  恢复执行\x1b[0m\r\n' +
+        '\x1b[90m  /debug loop   查看 Loop 调试信息\x1b[0m\r\n',
+      );
+    } else {
+      this.debugXtermWrite(
+        '\x1b[90mDebug 终端：仅支持 /debug 命令。输入 /debug prompt | /debug memory | /debug workbench 查看诊断信息。\x1b[0m\r\n',
+      );
+    }
+    this.writeDebugTerminalPrompt();
+  }
+
+  /** 写入终端 */
+  private debugXtermWrite(text: string): void {
+    this.debugXterm?.write(text.replaceAll('\n', '\r\n'));
+  }
+
+  /** 终端提示符 */
+  private writeDebugTerminalPrompt(): void {
+    const tab = this.activeTab();
+    if (this.isLoopTab(tab)) {
+      this.debugXtermWrite('\x1b[36mloop>\x1b[0m ');
+    } else {
+      this.debugXtermWrite('\x1b[32m>\x1b[0m ');
+    }
+  }
+
+  /** 聚焦终端 */
+  protected focusDebugTerminal(): void {
+    if (!this.debugTerminalInitialized) {
+      setTimeout(() => {
+        this.initDebugXterm();
+        this.debugFitAddon?.fit();
+        this.debugXterm?.focus();
+      }, 0);
+    } else {
+      this.debugFitAddon?.fit();
+      this.debugXterm?.focus();
+    }
+  }
+
+  /** 处理终端输入（自动根据 tab 类型判断允许的命令） */
+  private feedTabTerminalInput(data: string): void {
+    if (!this.debugXterm) return;
+    const isLoop = this.isLoopTab(this.activeTab());
+
+    for (const ch of data) {
+      if (ch === '\r' || ch === '\n') {
+        const line = this.debugLineBuffer.trim();
+        this.debugLineBuffer = '';
+        this.debugXtermWrite('\r\n');
+
+        if (!line) {
+          this.writeDebugTerminalPrompt();
+          continue;
+        }
+
+        if (isLoop) {
+          // Loop 终端：允许 /loop 和 /debug 命令
+          if (!line.startsWith('/loop') && !line.startsWith('/debug')) {
+            this.debugXtermWrite('\x1b[31m仅支持 /loop 或 /debug 命令\x1b[0m\r\n');
+            this.writeDebugTerminalPrompt();
+            continue;
+          }
+        } else {
+          // Debug 终端：仅允许 /debug 命令
+          if (!line.startsWith('/debug')) {
+            this.debugXtermWrite('\x1b[31m仅支持 /debug 命令，例如: /debug prompt, /debug memory, /debug workbench\x1b[0m\r\n');
+            this.writeDebugTerminalPrompt();
+            continue;
+          }
+        }
+
+        void this.executeTabTerminalCommand(line);
+        continue;
+      }
+
+      if (ch === '\x7f' || ch === '\b') {
+        if (this.debugLineBuffer.length > 0) {
+          this.debugLineBuffer = this.debugLineBuffer.slice(0, -1);
+          this.debugXterm.write('\b \b');
+        }
+        continue;
+      }
+
+      if (ch === '\x03') {
+        this.debugLineBuffer = '';
+        this.debugXtermWrite('^C\r\n');
+        this.writeDebugTerminalPrompt();
+        continue;
+      }
+
+      const cp = ch.codePointAt(0);
+      if (cp !== undefined && cp < 32) continue;
+
+      this.debugLineBuffer += ch;
+      this.debugXterm.write(ch);
+    }
+  }
+
+  /** 在终端中执行命令 */
+  private async executeTabTerminalCommand(raw: string): Promise<void> {
+    const isLoop = this.isLoopTab(this.activeTab());
+
+    // Loop 终端中的 /loop step/status/stop/resume 子命令
+    if (isLoop && raw.startsWith('/loop')) {
+      await this.executeLoopTerminalCommand(raw);
+      return;
+    }
+
+    // 通用命令执行（/debug 等）
+    try {
+      const result = await this.commandExecutor.execute({
+        raw,
+        context: {
+          source: 'user',
+          sessionId: SESSION_ID,
+          mode: this.runtime.coordinator.getState().mode,
+        },
+        options: { bridgeOrigin: true },
+      });
+
+      if (result.success && result.content) {
+        this.debugXtermWrite(`${result.content}\r\n`);
+      } else if (!result.success && result.content) {
+        this.debugXtermWrite(`\x1b[31m${result.content}\x1b[0m\r\n`);
+      }
+    } catch (e) {
+      this.debugXtermWrite(`\x1b[31m执行失败: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`);
+    }
+    this.writeDebugTerminalPrompt();
+  }
+
+  /** 执行 Loop 终端命令 (/loop step/status/stop/resume) */
+  private async executeLoopTerminalCommand(raw: string): Promise<void> {
+    const parts = raw.trim().split(/\s+/);
+    const sub = parts[1]?.toLowerCase() ?? '';
+
+    try {
+      if (sub === 'step') {
+        // 执行一步
+        this.debugXtermWrite('\x1b[33m⏳ 执行中...\x1b[0m\r\n');
+        const result = await this.loopExecutor.runOnce(SESSION_ID);
+        const state = result.state;
+
+        // 显示执行结果
+        this.debugXtermWrite(`\x1b[32m✓ 步骤完成\x1b[0m ${result.executedStep?.title ?? '无'}\r\n`);
+        this.debugXtermWrite(`  状态: ${state.status}  轮次: ${state.iteration}/${state.maxIterations}\r\n`);
+        this.debugXtermWrite(`  验证: ${result.verification.passed ? '\x1b[32m通过\x1b[0m' : '\x1b[31m未通过\x1b[0m'}\r\n`);
+
+        if (result.verification.blockers.length > 0) {
+          this.debugXtermWrite(`  \x1b[31m阻塞: ${result.verification.blockers.join('; ')}\x1b[0m\r\n`);
+        }
+        if (state.currentPlan.length > 0) {
+          this.debugXtermWrite(`  下一步: ${state.currentPlan[0]!.title}\r\n`);
+        } else {
+          this.debugXtermWrite('  \x1b[33m计划已收敛\x1b[0m\r\n');
+        }
+
+        // 如果到达终态，提示用户
+        if (['completed', 'failed', 'blocked', 'ready_for_release'].includes(state.status)) {
+          this.debugXtermWrite(`\x1b[36mLoop 已到达终态: ${state.status}\x1b[0m\r\n`);
+        }
+
+        // 刷新卡片视图状态
+        this.refreshLoopState();
+      } else if (sub === 'status') {
+        // 显示当前状态（status 本身就是读取最新状态）
+        const state = this.loopCommand.get(SESSION_ID);
+        if (!state) {
+          this.debugXtermWrite('\x1b[31m无活跃 Loop 会话\x1b[0m\r\n');
+        } else {
+          this.debugXtermWrite(`目标: ${state.objective}\r\n`);
+          this.debugXtermWrite(`状态: ${state.status}  阶段: ${state.phase}  轮次: ${state.iteration}/${state.maxIterations}\r\n`);
+          this.debugXtermWrite(`团队: ${state.teamName}  类型: ${state.taskType}\r\n`);
+
+          if (state.currentPlan.length > 0) {
+            this.debugXtermWrite('\x1b[36m计划:\x1b[0m\r\n');
+            for (const s of state.currentPlan) {
+              this.debugXtermWrite(`  [${s.type}] ${s.title} (${s.status})\r\n`);
+            }
+          }
+          if (state.blockedReasons.length > 0) {
+            this.debugXtermWrite(`\x1b[31m阻塞: ${state.blockedReasons.join('; ')}\x1b[0m\r\n`);
+          }
+        }
+      } else if (sub === 'stop') {
+        this.loopCommand.update(SESSION_ID, { status: 'paused' });
+        this.debugXtermWrite('\x1b[33mLoop 已暂停\x1b[0m\r\n');
+        this.refreshLoopState();
+      } else if (sub === 'resume') {
+        this.loopCommand.update(SESSION_ID, { status: 'executing' });
+        this.debugXtermWrite('\x1b[32mLoop 已恢复\x1b[0m\r\n');
+        this.refreshLoopState();
+      } else {
+        this.debugXtermWrite(`\x1b[31m未知子命令: ${sub || '(空)'}\x1b[0m\r\n`);
+        this.debugXtermWrite('可用命令: /loop step | /loop status | /loop stop | /loop resume\r\n');
+      }
+    } catch (e) {
+      this.debugXtermWrite(`\x1b[31m执行失败: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`);
+    }
+    this.writeDebugTerminalPrompt();
+  }
+
   private async replayMainSessionHistory(): Promise<void> {
     try {
       const msgs = await this.runtime.history.list(SESSION_ID);
@@ -4525,6 +5073,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
+    // ── Loop 需求收集模式：用户正在回答需求澄清问题 ──
+    if (this.loopGatheringMode()) {
+      await this.handleLoopGatheringInput(t);
+      return;
+    }
+
     this.pushHistory(t);
 
     const processed = await this.commandProcessing.process(t, {
@@ -4538,6 +5092,26 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     });
 
     try {
+      // 检测 /loop 命令进入需求收集模式
+      if (processed.executionResult.metadata?.['mode'] === 'loop-gathering') {
+        this.loopGatheringMode.set(true);
+        this.loopGatheringGoal.set(String(processed.executionResult.metadata?.['goal'] ?? ''));
+        // 展示需求问题到主终端
+        this.presentUnifiedCommandEntry(processed.executionResult);
+        // 检测是否需要进入 loop 页（已有 tabKey 的情况走原有逻辑）
+        if (!processed.executionResult.metadata?.['tabKey']) {
+          this.writeMainTerminalPrompt();
+          return;
+        }
+      }
+
+      // debug 命令不在主终端展示任何内容（结果在独立 debug 终端 tab 中展示）
+      const isTerminalTabDirective = processed.executionResult.responseType === 'directive' &&
+        /^\/debug\b/i.test(processed.preprocessed.normalized.trim());
+      if (!isTerminalTabDirective) {
+        this.presentUnifiedCommandEntry(processed.executionResult);
+      }
+
       if (processed.executionResult.responseType === 'directive') {
         await this.runDirective(processed.preprocessed.normalized);
         return;
@@ -4672,6 +5246,72 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.cdr.markForCheck();
   }
 
+  // ── Loop 需求收集处理 ────────────────────────────────────
+
+  /** 确认关键词 */
+  private static readonly LOOP_CONFIRM_WORDS = /^(确认|开始|go|yes|ok|好|确定|继续|start|confirm)$/i;
+  /** 取消关键词 */
+  private static readonly LOOP_CANCEL_WORDS = /^(取消|cancel|退出|quit|stop|abort|no)$/i;
+
+  /** 处理 Loop 需求收集阶段的用户输入 */
+  private async handleLoopGatheringInput(input: string): Promise<void> {
+    // 显示用户输入
+    this.aiXtermWrite(`\r\n\x1b[90m[用户]\x1b[0m ${input}\r\n`);
+
+    if (WorkbenchPageComponent.LOOP_CONFIRM_WORDS.test(input)) {
+      // 用户确认 → 创建 LoopState 并进入 Loop 页
+      await this.confirmAndEnterLoop();
+      return;
+    }
+
+    if (WorkbenchPageComponent.LOOP_CANCEL_WORDS.test(input)) {
+      // 用户取消
+      this.loopGatheringMode.set(false);
+      this.loopGatheringGoal.set('');
+      this.aiXtermWrite('\x1b[33m[loop] 需求收集已取消。\x1b[0m\r\n');
+      this.writeMainTerminalPrompt();
+      return;
+    }
+
+    // 普通回答：记录并在终端显示，继续等待
+    this.aiXtermWrite('\x1b[90m[loop] 已记录。继续回答问题，或输入"确认"进入执行页面、"取消"退出。\x1b[0m\r\n');
+    this.writeMainTerminalPrompt();
+  }
+
+  /** 确认需求并创建 Loop 会话，进入 Loop tab */
+  private async confirmAndEnterLoop(): Promise<void> {
+    const goal = this.loopGatheringGoal();
+    const sessionId = SESSION_ID;
+
+    // 创建 LoopState
+    const state = this.loopCommand.start(`/loop ${goal}`, sessionId);
+    if (!state) {
+      this.loopGatheringMode.set(false);
+      this.aiXtermWrite('\x1b[31m[loop] 无法启动 Loop 会话。\x1b[0m\r\n');
+      this.writeMainTerminalPrompt();
+      return;
+    }
+
+    // 退出收集模式
+    this.loopGatheringMode.set(false);
+    this.loopGatheringGoal.set('');
+
+    // 设置当前状态供卡片视图使用
+    this.currentLoopState.set(state);
+
+    // 打开 Loop / Task tab
+    const tabKey = 'Loop / Task';
+    this.addTabIfMissing(tabKey);
+    this.activeTab.set(tabKey);
+
+    // 重置视图模式为卡片（默认）
+    this.loopViewMode.set('cards');
+
+    // 主终端提示已切换
+    this.aiXtermWrite('\x1b[36m[loop]\x1b[0m 已进入 \x1b[33mLoop 执行页面\x1b[0m（查看右侧 Tab）\r\n');
+    this.writeMainTerminalPrompt();
+  }
+
   private async runDirective(raw: string): Promise<void> {
     const result = await this.commandExecutor.execute({
       raw,
@@ -4685,13 +5325,53 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       },
     });
 
-    this.aiXtermWrite(`\r\n\x1b[36m[directive]\x1b[0m ${result.displayType} ${result.success ? 'ok' : 'error'}\r\n`);
-    if (result.content) {
-      // content 可能已含 \r\n（如 formatGroupedHelp），仅将孤立 \n 替换为 \r\n
-      const normalized = result.content.includes('\r\n')
-        ? result.content
-        : result.content.replaceAll('\n', '\r\n');
-      this.aiXtermWrite(normalized + '\r\n');
+    // 有 tabKey 的命令结果（/debug, /loop）展示到独立终端 tab，主终端不输出任何内容
+    const hasTabKey = !!result.metadata?.['tabKey'];
+    if (hasTabKey) {
+      const tabKey = String(result.metadata!['tabKey']);
+      const isLoop = this.isLoopTab(tabKey);
+
+      this.addTabIfMissing(tabKey);
+
+      if (isLoop) {
+        // Loop tab：不需要 debugPayload.viewModel，直接写入内容
+        this.activeTab.set(tabKey);
+        setTimeout(() => {
+          this.initDebugXterm();
+          if (result.content) {
+            this.debugXtermWrite(`${result.content}\r\n`);
+          }
+          this.writeDebugTerminalPrompt();
+          this.debugFitAddon?.fit();
+          this.debugXterm?.focus();
+        }, 0);
+      } else {
+        // Debug tab：需要 debugPayload.viewModel
+        const payload = result.metadata?.['debugPayload'] as import('./debug/debug-command.types').DebugTabPayload | undefined;
+        if (payload?.viewModel) {
+          this.currentDebugPayload.set(payload);
+          this.activeTab.set(tabKey);
+          setTimeout(() => {
+            this.initDebugXterm();
+            if (result.content) {
+              this.debugXtermWrite(`${result.content}\r\n`);
+            }
+            this.writeDebugTerminalPrompt();
+            this.debugFitAddon?.fit();
+            this.debugXterm?.focus();
+          }, 0);
+        }
+      }
+
+      // 主终端写新提示符
+      this.writeMainTerminalPrompt();
+    } else {
+      this.renderCommandPresentation(this.commandPresentation.formatExecutionResult(
+        'directive',
+        raw.trim().startsWith('/') ? raw.trim().slice(1).split(/\s+/)[0] ?? 'directive' : 'directive',
+        result.success,
+        result.content,
+      ));
     }
 
     if (result.metadata?.['mode']) {
@@ -4705,7 +5385,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         try {
           await this.workbenchMode.initializeDevTeam();
         } catch (e) {
-          this.aiXtermWrite(`\r\n\x1b[31m[error]\x1b[0m 初始化开发团队失败: ${e}\r\n`);
+          this.renderCommandPresentation(this.commandPresentation.formatExecutionResult('error', 'directive', false, `初始化开发团队失败: ${e}`));
         }
       }
     }
@@ -4724,9 +5404,17 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.terminalBusy.set(true);
     try {
       const r = await window.zytrader.terminal.exec(cmd, '.');
-      if (r.stdout) this.aiXtermWrite(r.stdout + (/\n$/.test(r.stdout) ? '' : '\r\n'));
-      if (r.stderr) this.aiXtermWrite(`\x1b[31m${r.stderr}\x1b[0m` + (/\n$/.test(r.stderr) ? '' : '\r\n'));
-      if (!r.ok) this.aiXtermWrite(`\x1b[33m[exit ${r.code}]\x1b[0m\r\n`);
+      const content = [
+        r.stdout?.trimEnd(),
+        r.stderr?.trimEnd() ? `STDERR:\n${r.stderr.trimEnd()}` : '',
+        !r.ok ? `[exit ${r.code}]` : '',
+      ].filter(Boolean).join('\n');
+      this.renderCommandPresentation(this.commandPresentation.formatExecutionResult(
+        'shell',
+        cmd,
+        r.ok,
+        content,
+      ));
     } finally {
       this.terminalBusy.set(false);
     }
@@ -4972,7 +5660,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.terminalBusy.set(true);
           this.streamRequestStartMs = Date.now();
           this.ensureStreamingThinkingBlockId();
-          // 更新侧边栏默认智能体状态 & 触发任务分拆
+          this.renderCommandPresentation(this.commandPresentation.formatExecutionResult('assistant', 'stream', true, '开始流式输出'));
           if (this.multiAgentSidebar) {
             this.multiAgentSidebar.setDefaultAgentStatus('thinking');
             this.multiAgentSidebar.processRequest(prepared.prompt || '').catch(() => {});
@@ -4991,6 +5679,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.terminalBusy.set(true);
           this.streamRequestStartMs = Date.now();
           this.ensureStreamingThinkingBlockId();
+          this.renderCommandPresentation(this.commandPresentation.formatExecutionResult('assistant', 'dev-stream', true, '开始开发者模式流式输出'));
         },
         onNormalDelta: (text, chunk) => {
           this.handleStreamChunk(chunk);
@@ -5001,7 +5690,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         onPlanDone: (text) => {
           if (text.trim()) {
             this.workbenchMode.setPlanDocument(text.trim());
-            this.aiXtermWrite('\r\n\r\n\x1b[32m[计划文档已生成]\x1b[0m 计划已保存，可随时查看或修改。\r\n');
+            this.renderCommandPresentation(this.commandPresentation.formatExecutionResult('system', 'plan', true, '计划文档已生成'));
           }
           this.hasCompletedTurn = true;
           this.terminalBusy.set(false);
@@ -5011,57 +5700,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.writeMainTerminalPrompt();
         },
         onNormalDone: async () => {
-          const cfg = this.readModelRequestUiConfig();
-          this.finalizeAssistantStreamUi({
-            ok: true,
-            interrupted: this.streamInterruptRequested,
-            userPrompt: raw,
-            thinking: this.thinkingBuffer,
-            thinkingHasNonChinese: this.thinkingHasNonChinese,
-            answer: this.roundAnswerAccumulator,
-            layoutSplitThinkingAnswer: cfg.layoutSplitThinkingAnswer,
-            thinkingToggleShortcut: cfg.thinkingToggleShortcut,
-            thinkingToggleAllShortcut: cfg.thinkingToggleAllShortcut,
-          });
-          await this.appendRecentTurnAfterSuccess(raw);
-          try {
-            await this.triggerMemoryPipelineFromHistory(raw);
-          } catch {
-            /* ignore */
-          }
-          await this.syncPlanStepsFromLastAssistant();
-          this.syncCoordinatorState();
-          this.hasCompletedTurn = true;
-          this.terminalBusy.set(false);
-          if (this.multiAgentSidebar) {
-            this.multiAgentSidebar.setDefaultAgentStatus('idle');
-          }
-          this.writeMainTerminalPrompt();
+          await this.finalizeStreamTurn(raw, false);
         },
         onDevDone: async () => {
-          const cfg = this.readModelRequestUiConfig();
-          this.finalizeAssistantStreamUi({
-            ok: true,
-            interrupted: this.streamInterruptRequested,
-            userPrompt: raw,
-            thinking: this.thinkingBuffer,
-            thinkingHasNonChinese: this.thinkingHasNonChinese,
-            answer: this.roundAnswerAccumulator,
-            layoutSplitThinkingAnswer: cfg.layoutSplitThinkingAnswer,
-            thinkingToggleShortcut: cfg.thinkingToggleShortcut,
-            thinkingToggleAllShortcut: cfg.thinkingToggleAllShortcut,
-          });
-          await this.appendRecentTurnAfterSuccess(raw);
-          try {
-            await this.triggerMemoryPipelineFromHistory(raw);
-          } catch {
-            /* ignore */
-          }
-          await this.syncPlanStepsFromLastAssistant();
-          this.syncCoordinatorState();
-          this.hasCompletedTurn = true;
-          this.terminalBusy.set(false);
-          this.writeMainTerminalPrompt();
+          await this.finalizeStreamTurn(raw, true);
         },
       },
       typeof (window as unknown as { zytrader?: unknown }).zytrader !== 'undefined'
@@ -5139,6 +5781,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       planPrompt,
       planSystemPrompt,
     );
+    await this.capturePromptContextSnapshot(SESSION_ID, planPrompt, planSystemPrompt);
 
     const { stream, cancel } = this.runtime.assistant.stream(SESSION_ID, {
       userInput: fullPrompt,
@@ -5191,8 +5834,40 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
 
       if (!streamFailed) this.hasCompletedTurn = true;
+      await this.refreshWorkbenchContextSnapshot();
       this.writeMainTerminalPrompt();
     }
+  }
+
+  private async finalizeStreamTurn(raw: string, isDev: boolean): Promise<void> {
+    const cfg = this.readModelRequestUiConfig();
+    this.finalizeAssistantStreamUi({
+      ok: true,
+      interrupted: this.streamInterruptRequested,
+      userPrompt: raw,
+      thinking: this.thinkingBuffer,
+      thinkingHasNonChinese: this.thinkingHasNonChinese,
+      answer: this.roundAnswerAccumulator,
+      layoutSplitThinkingAnswer: cfg.layoutSplitThinkingAnswer,
+      thinkingToggleShortcut: cfg.thinkingToggleShortcut,
+      thinkingToggleAllShortcut: cfg.thinkingToggleAllShortcut,
+    });
+    await this.appendRecentTurnAfterSuccess(raw);
+    try {
+      await this.triggerMemoryPipelineFromHistory(raw);
+    } catch {
+      /* ignore */
+    }
+    await this.syncPlanStepsFromLastAssistant();
+    this.syncCoordinatorState();
+    this.hasCompletedTurn = true;
+    this.terminalBusy.set(false);
+    if (this.multiAgentSidebar) {
+      this.multiAgentSidebar.setDefaultAgentStatus('idle');
+    }
+    this.renderCommandPresentation(this.commandPresentation.formatExecutionResult('assistant', isDev ? 'dev' : 'normal', true, '流式输出完成'));
+    await this.refreshWorkbenchContextSnapshot();
+    this.writeMainTerminalPrompt();
   }
 
   private async executeDevMode(
@@ -5302,6 +5977,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       raw,
       devSystemPrompt,
     );
+    await this.capturePromptContextSnapshot(SESSION_ID, raw, devSystemPrompt);
 
     const { stream, cancel } = this.runtime.assistant.stream(SESSION_ID, {
       userInput: fullPrompt,
@@ -5435,6 +6111,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
 
       if (!streamFailed) this.hasCompletedTurn = true;
+      await this.refreshWorkbenchContextSnapshot();
       this.writeMainTerminalPrompt();
     }
   }

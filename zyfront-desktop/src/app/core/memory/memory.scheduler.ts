@@ -19,61 +19,62 @@ export class MemorySchedulerService {
   async runOnTurnEnd(turn: TurnContext): Promise<MemoryPipelineResult[]> {
     const results: MemoryPipelineResult[] = [];
 
-    const extractGate = this.gates.evaluateExtractGate();
-    this.telemetry.track({
-      event: 'gate',
-      pipeline: 'extract',
-      gate_passed: extractGate.shouldRun,
-      skip_reason: extractGate.reason,
-      messages_seen: turn.messages.length,
-      tool_calls_seen: 0,
-      session_id: turn.sessionId,
-      turn_id: turn.turnId,
-      timestamp: Date.now(),
-    });
-
-    if (extractGate.shouldRun) {
-      results.push(await this.extractService.run(turn));
-    } else {
-      results.push({ pipeline: 'extract', status: 'skipped', reason: extractGate.reason });
-    }
-
-    const sessionGate = this.gates.evaluateSessionGate();
-    this.telemetry.track({
-      event: 'gate',
-      pipeline: 'session',
-      gate_passed: sessionGate.shouldRun,
-      skip_reason: sessionGate.reason,
-      messages_seen: turn.messages.length,
-      tool_calls_seen: 0,
-      session_id: turn.sessionId,
-      turn_id: turn.turnId,
-      timestamp: Date.now(),
-    });
-    if (sessionGate.shouldRun) {
-      results.push(await this.sessionMemoryService.run(turn));
-    } else {
-      results.push({ pipeline: 'session', status: 'skipped', reason: sessionGate.reason });
-    }
-
-    const dreamGate = this.gates.evaluateDreamGate();
-    this.telemetry.track({
-      event: 'gate',
-      pipeline: 'dream',
-      gate_passed: dreamGate.shouldRun,
-      skip_reason: dreamGate.reason,
-      messages_seen: turn.messages.length,
-      tool_calls_seen: 0,
-      session_id: turn.sessionId,
-      turn_id: turn.turnId,
-      timestamp: Date.now(),
-    });
-    if (dreamGate.shouldRun) {
-      results.push(await this.autoDreamService.run(turn));
-    } else {
-      results.push({ pipeline: 'dream', status: 'skipped', reason: dreamGate.reason });
-    }
+    results.push(await this.runPipeline(turn, 'extract', () => this.extractService.run(turn)));
+    results.push(await this.runPipeline(turn, 'session', () => this.sessionMemoryService.run(turn)));
+    results.push(await this.runPipeline(turn, 'dream', () => this.autoDreamService.run(turn)));
 
     return results;
+  }
+
+  private async runPipeline(
+    turn: TurnContext,
+    pipeline: 'extract' | 'session' | 'dream',
+    runner: () => Promise<MemoryPipelineResult>,
+  ): Promise<MemoryPipelineResult> {
+    const gate = this.evaluateGate(pipeline);
+    this.telemetry.track({
+      event: 'gate',
+      pipeline,
+      gate_passed: gate.shouldRun,
+      skip_reason: gate.reason,
+      messages_seen: turn.messages.length,
+      tool_calls_seen: 0,
+      session_id: turn.sessionId,
+      turn_id: turn.turnId,
+      timestamp: Date.now(),
+    });
+
+    if (!gate.shouldRun) {
+      return { pipeline, status: 'skipped', reason: gate.reason };
+    }
+
+    try {
+      return await runner();
+    } catch (error) {
+      this.telemetry.track({
+        event: 'error',
+        pipeline,
+        gate_passed: true,
+        skip_reason: `${pipeline}_scheduler_error`,
+        duration_ms: 0,
+        messages_seen: turn.messages.length,
+        tool_calls_seen: 0,
+        session_id: turn.sessionId,
+        turn_id: turn.turnId,
+        timestamp: Date.now(),
+      });
+      return {
+        pipeline,
+        status: 'failed',
+        reason: error instanceof Error ? error.message : 'unknown_error',
+        durationMs: 0,
+      };
+    }
+  }
+
+  private evaluateGate(pipeline: 'extract' | 'session' | 'dream') {
+    if (pipeline === 'extract') return this.gates.evaluateExtractGate();
+    if (pipeline === 'session') return this.gates.evaluateSessionGate();
+    return this.gates.evaluateDreamGate();
   }
 }

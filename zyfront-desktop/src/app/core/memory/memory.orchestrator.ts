@@ -8,7 +8,7 @@ import { MemoryTelemetryService } from './memory.telemetry';
 export class MemoryOrchestratorService {
   private inProgress = false;
   private lastRunAt?: number;
-  private lastResult?: MemoryPipelineResult;
+  private lastResults: MemoryPipelineResult[] = [];
 
   constructor(
     private readonly scheduler: MemorySchedulerService,
@@ -33,17 +33,20 @@ export class MemoryOrchestratorService {
       enabled: this.configService.getConfig().enabled,
       inProgress: this.inProgress,
       lastRunAt: this.lastRunAt,
-      lastResult: this.lastResult,
+      lastResult: this.lastResults.at(-1),
       recentEvents: this.telemetry.listRecent(50),
     };
+  }
+
+  getLastResults(): MemoryPipelineResult[] {
+    return [...this.lastResults];
   }
 
   private async runInternal(turn: TurnContext): Promise<void> {
     this.inProgress = true;
     this.lastRunAt = Date.now();
     try {
-      const results = await this.scheduler.runOnTurnEnd(turn);
-      this.lastResult = results[0];
+      this.lastResults = await this.scheduler.runOnTurnEnd(turn);
     } finally {
       this.inProgress = false;
     }
