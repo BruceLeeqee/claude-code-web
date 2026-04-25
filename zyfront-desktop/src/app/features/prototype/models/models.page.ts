@@ -13,18 +13,17 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { AppSettingsService, type AppTheme } from '../../../core/app-settings.service';
 import { LocalBridgeService } from '../../../core/local-bridge.service';
 import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
-import { MODEL_CATALOG, defaultCatalogEntry, findCatalogEntry, type ModelCatalogEntry, type ModelProvider } from '../../../core/model-catalog';
+import { MODEL_CATALOG, MODEL_ENDPOINTS, defaultCatalogEntry, findCatalogEntry, type ModelCatalogEntry, type ModelProvider } from '../../../core/model-catalog';
 import type { AppSettings } from '../../../core/app-settings.service';
 import { DirectoryManagerService } from '../../../core/directory-manager.service';
 import { MemoryConfigService } from '../../../core/memory/memory.config';
 import { SkillIndexService } from '../../../core/skill-index.service';
 
-/** 连接「请求类型」仅三种：Anthropic 兼容（含 MiniMax 等）、OpenAI、Custom；不再单独出现 MiniMax */
-export type UiRequestKind = 'anthropic' | 'openai' | 'custom';
+/** 连接「请求类型」仅三种：Anthropic 兼容（含 MiniMax 等）、OpenAI、DeepSeek、Custom；不再单独出现 MiniMax */
+export type UiRequestKind = 'anthropic' | 'openai' | 'deepseek' | 'custom';
 
 const LAST_MODEL_TEST_KEY = 'claude-web:last-model-test';
 const CUSTOM_MODELS_KEY = 'zyfront:custom-model-ids';
-const REQUEST_CFG_JSON_KEY = 'zyfront:model-request-config-json';
 const DEFAULT_MODEL_MAX_TOKENS = 81920;
 const LEGACY_DEFAULT_MAX_TOKENS = 32;
 const LATEST_DIRECTORY_KEY_OVERRIDES: Record<string, string> = {
@@ -80,7 +79,16 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
   protected readonly modelLibraryRows = computed((): ModelCatalogEntry[] => {
     const custom = this.customModelIds().map((id) => this.fallbackEntryForId(id, 'custom'));
     const extras = custom.filter((m) => !MODEL_CATALOG.some((x) => x.id === m.id));
-    return [...MODEL_CATALOG, ...extras];
+    const all = [...MODEL_CATALOG, ...extras].filter(
+      (m) => m.provider === 'minimax' || m.provider === 'deepseek',
+    );
+    const currentModelId = this.settings().model;
+    const currentIndex = all.findIndex((m) => m.id === currentModelId);
+    if (currentIndex > 0) {
+      const [current] = all.splice(currentIndex, 1);
+      all.unshift(current!);
+    }
+    return all;
   });
 
   protected readonly chartMaxTokens = computed(() => {
@@ -132,7 +140,16 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
         { id: 'anthropic-official', label: 'Anthropic 官方', url: 'https://api.anthropic.com' },
       ];
     }
-    if (p === 'openai') return [{ id: 'openai-default', label: 'OpenAI 官方', url: 'https://api.openai.com' }];
+    if (p === 'openai') {
+      return [
+        { id: 'openai-default', label: 'OpenAI 官方', url: 'https://api.openai.com' },
+      ];
+    }
+    if (p === 'deepseek') {
+      return [
+        { id: 'deepseek-official', label: 'DeepSeek 官方 (Anthropic)', url: 'https://api.deepseek.com/anthropic' },
+      ];
+    }
     return [];
   });
 
@@ -163,22 +180,30 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     const uiKind = this.mapSettingsProviderToUi(cfg.modelProvider);
     this.requestType.set(uiKind);
     this.endpointInput.set(cfg.proxy.baseUrl || this.defaultBaseUrlForUi(uiKind));
+    this.loadModelConfigFromFile(uiKind);
+  }
+
+  private async loadModelConfigFromFile(uiKind: UiRequestKind): Promise<void> {
     try {
-      const raw = localStorage.getItem(REQUEST_CFG_JSON_KEY);
-      if (!raw?.trim()) {
+      const fn = (window as unknown as { zytrader?: { model?: { config?: { read: () => Promise<{ ok: boolean; config?: Record<string, unknown>; path?: string; error?: string }> } } } }).zytrader?.model?.config?.read;
+      if (!fn) {
+        this.requestConfigJson.set(this.defaultRequestJsonForUi(uiKind));
+        return;
+      }
+      const result = await fn();
+      if (result?.ok && result.config) {
+        const normalized = this.normalizeRequestConfig(result.config as Record<string, unknown>);
+        const text = JSON.stringify(normalized, null, 2);
+        this.requestConfigJson.set(text);
+        try {
+          localStorage.setItem('zyfront:model-request-config-json', text);
+        } catch {
+          /* ignore */
+        }
+        this.applyRequestConfigFromParsed(normalized, { syncTextarea: false });
+      } else {
         const def = this.defaultRequestJsonForUi(uiKind);
         this.requestConfigJson.set(def);
-        localStorage.setItem(REQUEST_CFG_JSON_KEY, def);
-      } else {
-        const parsed = JSON.parse(raw) as unknown;
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          const normalized = this.normalizeRequestConfig(parsed as Record<string, unknown>);
-          const text = JSON.stringify(normalized, null, 2);
-          this.requestConfigJson.set(text);
-          localStorage.setItem(REQUEST_CFG_JSON_KEY, text);
-        } else {
-          this.requestConfigJson.set(this.defaultRequestJsonForUi(uiKind));
-        }
       }
     } catch {
       this.requestConfigJson.set(this.defaultRequestJsonForUi(uiKind));
@@ -315,13 +340,31 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
 
   protected switchModel(modelId: string): void {
     const next = findCatalogEntry(modelId) ?? this.fallbackEntryForId(modelId, 'custom');
-    const storedProvider: AppSettings['modelProvider'] =
-      next.provider === 'minimax' ? 'anthropic' : next.provider;
-    this.settingsService.update({
-      model: next.id,
-      modelProvider: storedProvider,
-    });
-    this.requestType.set(this.mapSettingsProviderToUi(next.provider));
+    const storedProvider: AppSettings['modelProvider'] = next.provider;
+    const endpointConfig = MODEL_ENDPOINTS[next.provider];
+    const newBaseUrl = endpointConfig?.baseUrl ?? '';
+    const newRequestType = endpointConfig?.apiFormat === 'openai' ? 'openai' : next.provider === 'deepseek' ? 'deepseek' : 'anthropic';
+    const profileKey = `${next.provider}:${next.id}`;
+    const savedProfile = this.settings().modelProfiles?.[profileKey];
+    const newApiKey = savedProfile?.apiKey ?? this.settings().apiKey;
+    const newProxy = savedProfile?.proxy ? { ...savedProfile.proxy } : { enabled: false, baseUrl: newBaseUrl, authToken: '' };
+    if (!newProxy.baseUrl?.trim()) {
+      newProxy.baseUrl = newBaseUrl;
+    }
+    const nextJson = this.upsertRequestConfigModel(this.requestConfigJson(), next.id, storedProvider, newBaseUrl, newRequestType);
+    this.settingsService.update(
+      {
+        model: next.id,
+        modelProvider: storedProvider,
+        apiKey: newApiKey,
+        proxy: newProxy,
+      },
+      { profileKey },
+    );
+    void this.writeModelConfigToFile();
+    this.requestType.set(newRequestType);
+    this.endpointInput.set(newProxy.baseUrl || newBaseUrl);
+    this.requestConfigJson.set(nextJson);
     this.cdr.markForCheck();
   }
 
@@ -347,6 +390,7 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
       if (!p || typeof p !== 'object' || Array.isArray(p)) return;
       const parsedCfg = this.normalizeRequestConfig(p as Record<string, unknown>);
       this.applyRequestConfigFromParsed(parsedCfg, { syncTextarea: false });
+      this.writeModelConfigToFile();
     } catch {
       return;
     }
@@ -368,8 +412,22 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     const nextCost = this.resolveCostFromConfig(parsedCfg);
     const nextTheme = this.resolveThemeFromConfig(parsedCfg, this.settings().theme ?? 'dark');
 
+    let apiKeyFromJson = this.settings().apiKey ?? '';
+    const apiKeysObj = parsedCfg['api_keys'];
+    if (apiKeysObj && typeof apiKeysObj === 'object' && !Array.isArray(apiKeysObj)) {
+      const apiKeys = apiKeysObj as Record<string, Record<string, unknown>>;
+      const modelEntry = findCatalogEntry(effectiveModel) ?? cur;
+      const providerKey = modelEntry.provider === 'minimax' ? 'MiniMax' : modelEntry.provider === 'deepseek' ? 'DeepSeek' : null;
+      if (providerKey && apiKeys[providerKey]) {
+        const keyVal = apiKeys[providerKey]['api_key'];
+        if (typeof keyVal === 'string' && keyVal.trim()) {
+          apiKeyFromJson = keyVal;
+        }
+      }
+    }
+
     this.settingsService.update({
-      apiKey: this.settings().apiKey,
+      apiKey: apiKeyFromJson,
       model: effectiveModel,
       modelProvider: provider,
       proxy: {
@@ -382,7 +440,6 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
       theme: nextTheme,
     });
     try {
-      localStorage.setItem(REQUEST_CFG_JSON_KEY, JSON.stringify(parsedCfg, null, 2));
       if (opts.syncTextarea) {
         this.requestConfigJson.set(JSON.stringify(parsedCfg, null, 2));
       }
@@ -391,17 +448,98 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     }
   }
 
+  private async writeModelConfigToFile(): Promise<boolean> {
+    try {
+      const raw = this.requestConfigJson().trim();
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const fn = (window as unknown as { zytrader?: { model?: { config?: { write: (c: Record<string, unknown>) => Promise<{ ok: boolean; path?: string; error?: string }> } } } }).zytrader?.model?.config?.write;
+      if (!fn) return false;
+      const result = await fn(parsed);
+      if (result?.ok === true) {
+        try {
+          localStorage.setItem('zyfront:model-request-config-json', raw);
+        } catch {
+          /* ignore */
+        }
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   protected save(): void {
     this.validationMessage.set('');
     const parsedCfg = this.parseRequestJsonOrSetError();
     if (!parsedCfg) return;
     this.applyRequestConfigFromParsed(parsedCfg, { syncTextarea: true });
-    this.saveFeedback.set('saved');
-    this.cdr.markForCheck();
-    window.setTimeout(() => {
-      this.saveFeedback.set('idle');
+    this.writeModelConfigToFile().then(() => {
+      this.saveFeedback.set('saved');
       this.cdr.markForCheck();
-    }, 2000);
+      window.setTimeout(() => {
+        this.saveFeedback.set('idle');
+        this.cdr.markForCheck();
+      }, 2000);
+    });
+  }
+
+  /**
+   * 保存 JSON 配置到本地存储和应用设置
+   * 验证输入内容，解析并规范化 JSON，然后应用到应用配置中
+   */
+  protected saveJsonConfig(): void {
+    // 获取并清理输入的 JSON 字符串
+    const raw = this.requestConfigJson().trim();
+    if (!raw) {
+      this.validationMessage.set('配置内容为空');
+      return;
+    }
+    try {
+      // 解析 JSON 字符串为对象
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      // 验证解析结果是否为有效的对象（非数组）
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        this.validationMessage.set('配置 JSON 必须是对象');
+        return;
+      }
+      // 规范化配置对象，填充默认值并处理字段
+      const normalized = this.normalizeRequestConfig(parsed);
+      // 应用解析后的配置到应用设置，同步更新文本框内容
+      this.applyRequestConfigFromParsed(normalized, { syncTextarea: true });
+      // 写入文件系统
+      this.writeModelConfigToFile().then((ok) => {
+        if (ok) {
+          this.validationMessage.set('');
+          this.saveFeedback.set('saved');
+          this.cdr.markForCheck();
+          window.setTimeout(() => {
+            this.saveFeedback.set('idle');
+            this.cdr.markForCheck();
+          }, 2000);
+        } else {
+          this.validationMessage.set('配置文件写入失败');
+        }
+      });
+    } catch {
+      // 捕获 JSON 解析异常
+      this.validationMessage.set('配置 JSON 格式不正确');
+    }
+  }
+
+
+  protected formatJsonConfig(): void {
+    const raw = this.requestConfigJson().trim();
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      const formatted = JSON.stringify(parsed, null, 2);
+      this.requestConfigJson.set(formatted);
+      this.validationMessage.set('');
+    } catch {
+      this.validationMessage.set('无法格式化：JSON 格式不正确');
+    }
   }
 
   protected resetDefaults(): void {
@@ -409,11 +547,45 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     const ui: UiRequestKind = 'anthropic';
     this.requestType.set(ui);
     this.endpointInput.set(this.defaultBaseUrlForUi(ui));
-    this.requestConfigJson.set(this.defaultRequestJsonForUi(ui));
+    const defJson = this.defaultRequestJsonForUi(ui);
+    this.requestConfigJson.set(defJson);
     this.validationMessage.set('');
     this.testStatus.set('idle');
     this.testMessage.set('已恢复默认配置');
     this.cdr.markForCheck();
+    this.writeModelConfigToFile();
+  }
+
+  protected clearCache(): void {
+    try {
+      // 清空所有 localStorage 相关的配置
+      const keysToRemove = [
+        LAST_MODEL_TEST_KEY,
+        'zyfront:app-settings',
+        'zyfront:runtime-settings',
+        'zyfront:memory-pipeline-config-v2',
+      ];
+      
+      keysToRemove.forEach((key) => localStorage.removeItem(key));
+      
+      // 重新初始化
+      this.settingsService.reset();
+      const ui: UiRequestKind = 'anthropic';
+      this.requestType.set(ui);
+      const defBaseUrl = this.defaultBaseUrlForUi(ui);
+      this.endpointInput.set(defBaseUrl);
+      const defJson = this.defaultRequestJsonForUi(ui);
+      this.requestConfigJson.set(defJson);
+      
+      this.validationMessage.set('');
+      this.testStatus.set('idle');
+      this.testMessage.set('缓存已清空，请重新加载页面');
+      this.saveFeedback.set('saved');
+      this.cdr.markForCheck();
+    } catch {
+      this.testMessage.set('缓存清空失败');
+      this.cdr.markForCheck();
+    }
   }
 
   protected async testConnection(): Promise<void> {
@@ -422,25 +594,43 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     this.testMessage.set('正在连接模型...');
     this.cdr.markForCheck();
 
-    const cfg = this.settingsService.value;
-    const apiKey = cfg.apiKey?.trim();
-    if (!apiKey) {
-      this.testStatus.set('error');
-      this.testMessage.set('请先在模型配置中填写 API Key');
-      this.cdr.markForCheck();
-      return;
-    }
-
     const parsedCfg = this.parseRequestJsonOrSetError();
     if (!parsedCfg) {
       this.testStatus.set('error');
       this.cdr.markForCheck();
       return;
     }
+    
+    const model = (typeof parsedCfg['model'] === 'string' ? String(parsedCfg['model']) : this.activeCatalogEntry().id).trim();
+    const modelEntry = findCatalogEntry(model) ?? this.activeCatalogEntry();
+    const providerKey = modelEntry.provider === 'minimax' ? 'MiniMax' : modelEntry.provider === 'deepseek' ? 'DeepSeek' : null;
+    
+    let apiKey = '';
+    const apiKeysObj = parsedCfg['api_keys'];
+    if (apiKeysObj && typeof apiKeysObj === 'object' && !Array.isArray(apiKeysObj)) {
+      const apiKeys = apiKeysObj as Record<string, Record<string, unknown>>;
+      if (providerKey && apiKeys[providerKey]) {
+        const keyVal = apiKeys[providerKey]['api_key'];
+        if (typeof keyVal === 'string' && keyVal.trim()) {
+          apiKey = keyVal.trim();
+        }
+      }
+    }
+    
+    if (!apiKey) {
+      apiKey = this.settingsService.value.apiKey?.trim() ?? '';
+    }
+    
+    if (!apiKey) {
+      this.testStatus.set('error');
+      this.testMessage.set(`请先在配置文件的 api_keys.${providerKey ?? 'MiniMax/DeepSeek'}.api_key 中填写 API Key`);
+      this.cdr.markForCheck();
+      return;
+    }
+
     const baseUrl =
       (typeof parsedCfg['baseUrl'] === 'string' ? String(parsedCfg['baseUrl']) : this.endpointInput()).trim() ||
       this.defaultBaseUrlForUi(this.requestType());
-    const model = (typeof parsedCfg['model'] === 'string' ? String(parsedCfg['model']) : this.activeCatalogEntry().id).trim();
     const ipcProvider = this.requestType() === 'openai' ? 'openai' : 'anthropic';
 
     try {
@@ -554,12 +744,13 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
   private defaultBaseUrlForUi(kind: UiRequestKind): string {
     if (kind === 'anthropic') return 'https://api.minimaxi.com/anthropic';
     if (kind === 'openai') return 'https://api.openai.com';
+    if (kind === 'deepseek') return 'https://api.deepseek.com/anthropic';
     return '';
   }
 
   protected applyRequestType(kind: string): void {
     const k = kind as UiRequestKind;
-    if (k !== 'anthropic' && k !== 'openai' && k !== 'custom') return;
+    if (k !== 'anthropic' && k !== 'openai' && k !== 'deepseek' && k !== 'custom') return;
     this.requestType.set(k);
     if (!this.endpointInput().trim()) {
       this.endpointInput.set(this.defaultBaseUrlForUi(k));
@@ -581,17 +772,143 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
 
   private mapSettingsProviderToUi(p: ModelProvider): UiRequestKind {
     if (p === 'minimax') return 'anthropic';
+    if (p === 'deepseek') return 'deepseek';
     if (p === 'anthropic' || p === 'openai' || p === 'custom') return p;
     return 'custom';
   }
 
   private defaultRequestJsonForUi(kind: UiRequestKind): string {
+    const currentModel = this.activeCatalogEntry();
+    const endpointConfig = MODEL_ENDPOINTS[currentModel.provider];
     if (kind === 'openai') {
       return JSON.stringify(
         {
-          provider: 'openai',
+          api_keys: {
+            MiniMax: { api_key: '' },
+            DeepSeek: { api_key: '' },
+          },
+          provider: 'minimax',
+          model: currentModel.id,
+          baseUrl: endpointConfig?.baseUrl ?? '',
           max_tokens: DEFAULT_MODEL_MAX_TOKENS,
           temperature: 0.2,
+          thinking: endpointConfig?.supportsThinking ? { type: 'enabled' } : undefined,
+          compression: {
+            enabled: true,
+            maxMessagesBeforeCompact: 50,
+            compactToMessages: 20,
+            maxEstimatedTokens: 24000,
+          },
+          cost: {
+            maxSessionCostUsd: 5,
+            warnThresholdUsd: 3,
+          },
+          theme: 'dark',
+          models: {
+            'MiniMax-M2.7': {
+              enabled: true,
+              isActive: currentModel.id === 'MiniMax-M2.7',
+              baseUrl: 'https://api.minimaxi.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+            },
+            'abab6.5s-chat': {
+              enabled: true,
+              isActive: currentModel.id === 'abab6.5s-chat',
+              baseUrl: 'https://api.minimaxi.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+            },
+            'abab6.5g-chat': {
+              enabled: true,
+              isActive: currentModel.id === 'abab6.5g-chat',
+              baseUrl: 'https://api.minimaxi.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+            },
+            'deepseek-v4-flash': {
+              enabled: true,
+              isActive: currentModel.id === 'deepseek-v4-flash',
+              baseUrl: 'https://api.deepseek.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+            },
+            'deepseek-v4-pro': {
+              enabled: true,
+              isActive: currentModel.id === 'deepseek-v4-pro',
+              baseUrl: 'https://api.deepseek.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+              thinking: { type: 'enabled' },
+            },
+          },
+        },
+        null,
+        2,
+      );
+    }
+    if (kind === 'deepseek') {
+      return JSON.stringify(
+        {
+          api_keys: {
+            MiniMax: { api_key: '' },
+            DeepSeek: { api_key: '' },
+          },
+          provider: 'deepseek',
+          model: currentModel.id,
+          baseUrl: endpointConfig?.baseUrl ?? '',
+          max_tokens: DEFAULT_MODEL_MAX_TOKENS,
+          temperature: 0.2,
+          thinking: endpointConfig?.supportsThinking ? { type: 'enabled' } : undefined,
+          compression: {
+            enabled: true,
+            maxMessagesBeforeCompact: 50,
+            compactToMessages: 20,
+            maxEstimatedTokens: 24000,
+          },
+          cost: {
+            maxSessionCostUsd: 5,
+            warnThresholdUsd: 3,
+          },
+          theme: 'dark',
+          models: {
+            'MiniMax-M2.7': {
+              enabled: true,
+              isActive: currentModel.id === 'MiniMax-M2.7',
+              baseUrl: 'https://api.minimaxi.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+            },
+            'abab6.5s-chat': {
+              enabled: true,
+              isActive: currentModel.id === 'abab6.5s-chat',
+              baseUrl: 'https://api.minimaxi.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+            },
+            'abab6.5g-chat': {
+              enabled: true,
+              isActive: currentModel.id === 'abab6.5g-chat',
+              baseUrl: 'https://api.minimaxi.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+            },
+            'deepseek-v4-flash': {
+              enabled: true,
+              isActive: currentModel.id === 'deepseek-v4-flash',
+              baseUrl: 'https://api.deepseek.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+            },
+            'deepseek-v4-pro': {
+              enabled: true,
+              isActive: currentModel.id === 'deepseek-v4-pro',
+              baseUrl: 'https://api.deepseek.com/anthropic',
+              max_tokens: 81920,
+              temperature: 0.2,
+              thinking: { type: 'enabled' },
+            },
+          },
         },
         null,
         2,
@@ -599,9 +916,64 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     }
     return JSON.stringify(
       {
-        provider: 'anthropic',
+        api_keys: {
+          MiniMax: { api_key: '' },
+          DeepSeek: { api_key: '' },
+        },
+        provider: 'minimax',
+        model: currentModel.id,
+        baseUrl: endpointConfig?.baseUrl ?? '',
         max_tokens: DEFAULT_MODEL_MAX_TOKENS,
         temperature: 0.2,
+        compression: {
+          enabled: true,
+          maxMessagesBeforeCompact: 50,
+          compactToMessages: 20,
+          maxEstimatedTokens: 24000,
+        },
+        cost: {
+          maxSessionCostUsd: 5,
+          warnThresholdUsd: 3,
+        },
+        theme: 'dark',
+        models: {
+          'MiniMax-M2.7': {
+            enabled: true,
+            isActive: currentModel.id === 'MiniMax-M2.7',
+            baseUrl: 'https://api.minimaxi.com/anthropic',
+            max_tokens: 81920,
+            temperature: 0.2,
+          },
+          'abab6.5s-chat': {
+            enabled: true,
+            isActive: currentModel.id === 'abab6.5s-chat',
+            baseUrl: 'https://api.minimaxi.com/anthropic',
+            max_tokens: 81920,
+            temperature: 0.2,
+          },
+          'abab6.5g-chat': {
+            enabled: true,
+            isActive: currentModel.id === 'abab6.5g-chat',
+            baseUrl: 'https://api.minimaxi.com/anthropic',
+            max_tokens: 81920,
+            temperature: 0.2,
+          },
+          'deepseek-v4-flash': {
+            enabled: true,
+            isActive: currentModel.id === 'deepseek-v4-flash',
+            baseUrl: 'https://api.deepseek.com/anthropic',
+            max_tokens: 81920,
+            temperature: 0.2,
+          },
+          'deepseek-v4-pro': {
+            enabled: true,
+            isActive: currentModel.id === 'deepseek-v4-pro',
+            baseUrl: 'https://api.deepseek.com/anthropic',
+            max_tokens: 81920,
+            temperature: 0.2,
+            thinking: { type: 'enabled' },
+          },
+        },
       },
       null,
       2,
@@ -709,6 +1081,65 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
 
   private normalizeRequestConfig(input: Record<string, unknown>): Record<string, unknown> {
     const out: Record<string, unknown> = { ...input };
+    const currentModel = this.activeCatalogEntry();
+    const endpointConfig = MODEL_ENDPOINTS[currentModel.provider];
+    
+    if (!out['api_keys']) {
+      out['api_keys'] = {
+        MiniMax: { api_key: '' },
+        DeepSeek: { api_key: '' },
+      };
+    }
+    
+    if (!out['models']) {
+      out['models'] = {
+        'MiniMax-M2.7': {
+          enabled: true,
+          isActive: currentModel.id === 'MiniMax-M2.7',
+          baseUrl: 'https://api.minimaxi.com/anthropic',
+          max_tokens: 81920,
+          temperature: 0.2,
+        },
+        'abab6.5s-chat': {
+          enabled: true,
+          isActive: currentModel.id === 'abab6.5s-chat',
+          baseUrl: 'https://api.minimaxi.com/anthropic',
+          max_tokens: 81920,
+          temperature: 0.2,
+        },
+        'abab6.5g-chat': {
+          enabled: true,
+          isActive: currentModel.id === 'abab6.5g-chat',
+          baseUrl: 'https://api.minimaxi.com/anthropic',
+          max_tokens: 81920,
+          temperature: 0.2,
+        },
+        'deepseek-v4-flash': {
+          enabled: true,
+          isActive: currentModel.id === 'deepseek-v4-flash',
+          baseUrl: 'https://api.deepseek.com/anthropic',
+          max_tokens: 81920,
+          temperature: 0.2,
+        },
+        'deepseek-v4-pro': {
+          enabled: true,
+          isActive: currentModel.id === 'deepseek-v4-pro',
+          baseUrl: 'https://api.deepseek.com/anthropic',
+          max_tokens: 81920,
+          temperature: 0.2,
+          thinking: { type: 'enabled' },
+        },
+      };
+    } else {
+      const models = out['models'] as Record<string, unknown>;
+      for (const [modelId, modelCfg] of Object.entries(models)) {
+        if (modelCfg && typeof modelCfg === 'object') {
+          delete (modelCfg as Record<string, unknown>)['api_key'];
+          (modelCfg as Record<string, unknown>)['isActive'] = modelId === currentModel.id;
+        }
+      }
+    }
+    
     const maxTokensFromSnake = Number(out['max_tokens']);
     const maxTokensFromCamel = Number(out['maxTokens']);
     const snakeValid = Number.isFinite(maxTokensFromSnake) && maxTokensFromSnake > 0;
@@ -719,6 +1150,46 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
         ? Math.floor(maxTokensFromCamel)
         : DEFAULT_MODEL_MAX_TOKENS;
     out['max_tokens'] = resolvedMaxTokens === LEGACY_DEFAULT_MAX_TOKENS ? DEFAULT_MODEL_MAX_TOKENS : resolvedMaxTokens;
+
+    if (!out['model']) {
+      out['model'] = currentModel.id;
+    }
+    const modelId = String(out['model'] ?? currentModel.id);
+    const modelEntry = findCatalogEntry(modelId) ?? currentModel;
+    const modelEndpointConfig = MODEL_ENDPOINTS[modelEntry.provider];
+    if (!out['baseUrl'] || out['baseUrl'] === 'https://api.anthropic.com' || out['baseUrl'] === 'https://api.openai.com') {
+      out['baseUrl'] = modelEndpointConfig?.baseUrl ?? '';
+    }
+    if (modelEntry.provider === 'deepseek') {
+      const baseUrlStr = typeof out['baseUrl'] === 'string' ? out['baseUrl'] : '';
+      if (!baseUrlStr || baseUrlStr === 'https://api.deepseek.com' || !baseUrlStr.includes('/anthropic')) {
+        out['baseUrl'] = modelEndpointConfig?.baseUrl ?? 'https://api.deepseek.com/anthropic';
+      }
+    }
+    if (modelEntry.provider === 'minimax') {
+      out['baseUrl'] = modelEndpointConfig?.baseUrl ?? 'https://api.minimaxi.com/anthropic';
+    }
+    if (!out['compression']) {
+      out['compression'] = {
+        enabled: true,
+        maxMessagesBeforeCompact: 50,
+        compactToMessages: 20,
+        maxEstimatedTokens: 24000,
+      };
+    }
+    if (!out['cost']) {
+      out['cost'] = {
+        maxSessionCostUsd: 5,
+        warnThresholdUsd: 3,
+      };
+    }
+    if (!out['theme']) {
+      out['theme'] = 'dark';
+    }
+    if (endpointConfig?.supportsThinking && !out['thinking']) {
+      out['thinking'] = { type: 'enabled' };
+    }
+
     return out;
   }
 
@@ -731,8 +1202,37 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
         return this.defaultRequestJsonForUi(kind);
       }
       const normalized = this.normalizeRequestConfig(parsed as Record<string, unknown>);
+      const currentModel = this.activeCatalogEntry();
+      const endpointConfig = MODEL_ENDPOINTS[currentModel.provider];
       if (kind === 'openai') normalized['provider'] = 'openai';
+      else if (kind === 'deepseek') {
+        normalized['provider'] = 'deepseek';
+        normalized['baseUrl'] = endpointConfig?.baseUrl ?? 'https://api.deepseek.com/anthropic';
+      }
       else if (kind === 'anthropic') normalized['provider'] = 'anthropic';
+      return JSON.stringify(normalized, null, 2);
+    } catch {
+      return this.defaultRequestJsonForUi(kind);
+    }
+  }
+
+  private upsertRequestConfigModel(
+    rawJson: string,
+    modelId: string,
+    provider: AppSettings['modelProvider'],
+    baseUrl: string,
+    kind: UiRequestKind,
+  ): string {
+    if (!rawJson.trim()) return this.defaultRequestJsonForUi(kind);
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return this.defaultRequestJsonForUi(kind);
+      }
+      const normalized = this.normalizeRequestConfig(parsed as Record<string, unknown>);
+      normalized['model'] = modelId;
+      normalized['baseUrl'] = baseUrl;
+      normalized['provider'] = provider;
       return JSON.stringify(normalized, null, 2);
     } catch {
       return this.defaultRequestJsonForUi(kind);

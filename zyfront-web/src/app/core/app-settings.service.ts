@@ -31,7 +31,7 @@ export interface CostSettings {
 /** 聚合后的应用设置快照 */
 export interface AppSettings {
   apiKey: string;
-  modelProvider: 'anthropic' | 'openai' | 'minimax' | 'custom';
+  modelProvider: 'anthropic' | 'openai' | 'minimax' | 'deepseek' | 'custom';
   model: string;
   proxy: ProxySettings;
   compression: CompressionSettings;

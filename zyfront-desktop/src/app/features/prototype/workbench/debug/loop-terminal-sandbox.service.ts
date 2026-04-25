@@ -48,6 +48,18 @@ export class LoopTerminalSandboxService {
       };
     }
 
+    const terminalHint = this.getTerminalAvailabilityHint();
+    if (terminalHint.blocked) {
+      return {
+        ok: false,
+        command,
+        exitCode: 1,
+        stdout: '',
+        stderr: terminalHint.message,
+        duration: Date.now() - start,
+      };
+    }
+
     const exec = await window.zytrader.terminal.exec(command, cwd);
     const stdout = (exec.stdout ?? '').toString();
     const stderr = (exec.stderr ?? '').toString();
@@ -158,5 +170,28 @@ export class LoopTerminalSandboxService {
       'cmd.exe /c npm run verify:utf8',
       'cmd.exe /c npm run check',
     ]);
+  }
+
+  private getTerminalAvailabilityHint(): { blocked: boolean; message: string } {
+    if (typeof navigator === 'undefined') {
+      return { blocked: true, message: '终端环境不可用，Loop 任务已阻断' };
+    }
+
+    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
+      ?? navigator.platform
+      ?? '';
+    const isWindows = /win/i.test(platform);
+    const hasWslHint = typeof window !== 'undefined' && Boolean((window as Window & { zytrader?: { env?: { wsl?: boolean } } }).zytrader?.env?.wsl);
+    const hasTerminal = typeof window !== 'undefined' && Boolean(window.zytrader?.terminal?.exec);
+
+    if (!hasTerminal) {
+      return { blocked: true, message: '终端不可用：缺少 zytrader.terminal.exec，Loop 任务已阻断' };
+    }
+
+    if (isWindows && !hasWslHint) {
+      return { blocked: true, message: '检测到 Windows 环境但未检测到 WSL 可用，Loop 任务已阻断，请先启用 WSL/终端沙箱' };
+    }
+
+    return { blocked: false, message: '' };
   }
 }

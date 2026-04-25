@@ -987,24 +987,38 @@ function registerIpcHandlers() {
 
     const normalizedProvider = String(provider || 'custom').toLowerCase()
     const root = String(baseUrl).replace(/\/$/, '')
+    const isDeepSeek = root.includes('deepseek.com')
+    const isDeepSeekPro = model.toLowerCase().includes('v4-pro') || model.toLowerCase().includes('reasoner')
     try {
       let resp
       if (normalizedProvider === 'openai') {
         const url = root.endsWith('/v1') ? `${root}/chat/completions` : `${root}/v1/chat/completions`
+        const body = {
+          model,
+          max_tokens: 32,
+          messages: [{ role: 'user', content: `ping from ${normalizedProvider}` }],
+        }
+        if (isDeepSeek && isDeepSeekPro) {
+          body.thinking = { type: 'disabled' }
+        }
         resp = await fetch(url, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
             authorization: `Bearer ${apiKey}`,
           },
-          body: JSON.stringify({
-            model,
-            max_tokens: 32,
-            messages: [{ role: 'user', content: `ping from ${normalizedProvider}` }],
-          }),
+          body: JSON.stringify(body),
         })
       } else {
         const url = root.endsWith('/v1') ? `${root}/messages` : `${root}/v1/messages`
+        const body = {
+          model,
+          max_tokens: 32,
+          messages: [{ role: 'user', content: `ping from ${normalizedProvider}` }],
+        }
+        if (isDeepSeek && isDeepSeekPro) {
+          body.thinking = { type: 'disabled' }
+        }
         resp = await fetch(url, {
           method: 'POST',
           headers: {
@@ -1013,11 +1027,7 @@ function registerIpcHandlers() {
             'x-api-key': apiKey,
             'anthropic-version': '2023-06-01',
           },
-          body: JSON.stringify({
-            model,
-            max_tokens: 32,
-            messages: [{ role: 'user', content: `ping from ${normalizedProvider}` }],
-          }),
+          body: JSON.stringify(body),
         })
       }
       const body = await resp.text()
@@ -1192,6 +1202,40 @@ function registerIpcHandlers() {
         memoryIndexBuildPromise = null
       })
       return await memoryIndexBuildPromise
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  const MODEL_CONFIG_FILENAME = 'model.config.json'
+
+  function getModelConfigPath() {
+    const sysDir = pickPrimarySystemDirForVault(RUNTIME.vaultRoot)
+    return path.join(RUNTIME.vaultRoot, sysDir, MODEL_CONFIG_FILENAME)
+  }
+
+  ipcMain.handle('zytrader:model-config:read', async () => {
+    try {
+      await refreshRuntime()
+      const fp = getModelConfigPath()
+      if (!existsSync(fp)) {
+        return { ok: false, error: 'config_not_found', path: fp }
+      }
+      const raw = readFileSync(fp, 'utf8')
+      const parsed = JSON.parse(raw)
+      return { ok: true, config: parsed, path: fp }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('zytrader:model-config:write', async (_event, config) => {
+    try {
+      await refreshRuntime()
+      const fp = getModelConfigPath()
+      await fs.mkdir(path.dirname(fp), { recursive: true })
+      await fs.writeFile(fp, JSON.stringify(config, null, 2), 'utf8')
+      return { ok: true, path: fp }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }

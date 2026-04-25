@@ -215,6 +215,11 @@ export class CommandExecutorService {
         };
       }
 
+      const heuristic = this.shouldUseMultiAgentForLoop(goal);
+      const teamHint = heuristic.useMultiAgent
+        ? '**多智能体建议**：当前任务可能适合创建团队协作。完成需求确认后，可自动进入团队模式。'
+        : '';
+
       // 返回需求收集模式，让主终端通过对话澄清需求后再进入 Loop 页
       return {
         success: true,
@@ -224,7 +229,7 @@ export class CommandExecutorService {
           '**`/loop` 需求分析**',
           '',
           `目标初稿：${goal}`,
-          '',
+          ...(teamHint ? [teamHint, ''] : []),
           '我需要了解一些细节来制定执行计划，请回答以下问题（可逐条回复）：',
           '',
           '1. **任务范围**：涉及哪些文件/目录？是否有特定技术栈要求？',
@@ -234,10 +239,67 @@ export class CommandExecutorService {
           '',
           '_回答完毕后输入 **"确认"** 或 **"开始"** 进入 Loop 执行页面。_',
           '_输入 **"取消"** 可退出本次 loop。_',
-        ].join('\n'),
-        metadata: { mode: 'loop-gathering', goal },
+        ].filter(Boolean).join('\n'),
+        metadata: { mode: 'loop-gathering', goal, useMultiAgent: heuristic.useMultiAgent, reason: heuristic.reason, tabKey: 'Loop / Task' },
         shouldQuery: true,
         displayType: 'message',
+      };
+    });
+
+    this.registerDirectiveExecutor('team', async (ctx) => {
+      const objective = ctx.parsed.args.trim();
+      if (!objective) {
+        return {
+          success: false,
+          route: 'directive',
+          responseType: 'error',
+          content: '/team <目标> [--members=planner,executor,validator]',
+          shouldQuery: false,
+          displayType: 'error',
+        };
+      }
+
+      const teamName = `team-${Date.now()}`;
+      const members = this.parseTeamMembers(ctx.parsed.args);
+      const team = {
+        id: teamName,
+        name: teamName,
+        objective,
+        members: members.map((role, index) => ({
+          id: `${teamName}-${index + 1}`,
+          name: role,
+          role,
+          prompt: `你是${role}，负责围绕目标「${objective}」协作。`,
+        })),
+        createdAt: new Date().toISOString(),
+      };
+
+      const existingTeams = JSON.parse(localStorage.getItem('persistent-agent-teams') || '[]');
+      const existingIndex = existingTeams.findIndex((t: any) => t.name === teamName || t.objective === objective);
+      if (existingIndex >= 0) {
+        existingTeams[existingIndex] = team;
+      } else {
+        existingTeams.push(team);
+      }
+      localStorage.setItem('persistent-agent-teams', JSON.stringify(existingTeams));
+
+      const lines = [
+        '**团队创建请求已接收**',
+        '',
+        `目标：${objective}`,
+        `团队：${teamName}`,
+        `成员：${members.join('、')}`,
+        '',
+        '系统已持久化团队配置，可切换到开发者模式后在协作页查看。',
+      ];
+      return {
+        success: true,
+        route: 'directive',
+        responseType: 'directive',
+        content: lines.join('\n'),
+        metadata: { mode: 'team', teamCreate: true, teamName, objective, members },
+        shouldQuery: false,
+        displayType: 'success',
       };
     });
 
@@ -328,6 +390,25 @@ export class CommandExecutorService {
         displayType: 'error',
       };
     });
+  }
+
+  private shouldUseMultiAgentForLoop(goal: string): { useMultiAgent: boolean; reason: string } {
+    const t = goal.toLowerCase();
+    const signals = [
+      /重构|架构|设计|方案|评审|调研|迁移|分阶段|多模块|多页面|多人|协作/.test(goal),
+      /(frontend|后端|backend|api|测试|test|部署|ci|docker|性能|复杂|large|enterprise)/i.test(goal),
+      (goal.match(/[，,;；]/g)?.length ?? 0) >= 2,
+      t.includes('multiple') || t.includes('multi-agent') || t.includes('parallel'),
+    ];
+    const score = signals.filter(Boolean).length;
+    if (score >= 2) return { useMultiAgent: true, reason: '任务复杂度较高，建议多智能体协作' };
+    return { useMultiAgent: false, reason: '任务较简单，默认单智能体即可' };
+  }
+
+  private parseTeamMembers(rawArgs: string): string[] {
+    const match = rawArgs.match(/--members=([^\s]+)/i);
+    const parsed = match?.[1]?.split(',').map((s) => s.trim()).filter(Boolean) ?? [];
+    return parsed.length > 0 ? parsed : ['planner', 'executor', 'validator'];
   }
 
   private ensureLoopSchedule(sessionId: string, everyMs?: number): boolean {

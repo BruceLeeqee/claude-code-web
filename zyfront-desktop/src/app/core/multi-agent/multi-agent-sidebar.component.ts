@@ -559,6 +559,7 @@ export class MultiAgentSidebarComponent implements OnDestroy {
       this.modeReason.set(decision.reason);
 
       const complexity = this.planner.analyzeComplexity(request);
+      const isSimpleTask = complexity.level === 'simple' && !complexity.requiresMultipleAgents;
 
       const output = await this.planner.plan({
         userRequest: request,
@@ -600,7 +601,8 @@ export class MultiAgentSidebarComponent implements OnDestroy {
       console.log('[MultiAgent] Visible task IDs:', allTaskIds);
       this.visibleTaskIds.set(allTaskIds);
 
-      if (output.agentIntents.length > 0) {
+      // 日常简单任务不创建额外智能体，仅使用默认智能体（超体）
+      if (!isSimpleTask && output.agentIntents.length > 0) {
         const roleToAgentId = new Map<string, string>();
         const createdRoles = new Set<string>();
         const existingAgents = this.agents();

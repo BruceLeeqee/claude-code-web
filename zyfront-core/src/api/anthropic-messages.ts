@@ -48,6 +48,16 @@ export function toAnthropicApiMessage(msg: ChatMessage): { role: string; content
     };
   }
   const r = msg.role === 'assistant' ? 'assistant' : 'user';
+  
+  // DeepSeek V4 Pro: 如果有 reasoningContent，需要作为 thinking 块传回
+  if (msg.role === 'assistant' && msg.reasoningContent) {
+    const content: JsonArray = [
+      { type: 'thinking', thinking: msg.reasoningContent } as JsonValue,
+      { type: 'text', text: msg.content } as JsonValue,
+    ];
+    return { role: r, content };
+  }
+  
   return {
     role: r,
     content: [{ type: 'text', text: msg.content }] as JsonArray,

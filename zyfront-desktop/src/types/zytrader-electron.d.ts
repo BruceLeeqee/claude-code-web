@@ -93,6 +93,10 @@ declare global {
           status: number
           body: string
         }>
+        config: {
+          read: () => Promise<{ ok: boolean; config?: Record<string, unknown>; path?: string; error?: string }>
+          write: (config: Record<string, unknown>) => Promise<{ ok: boolean; path?: string; error?: string }>
+        }
       }
       workspace: {
         info: () => Promise<WorkspaceInfoOk | { ok: false; error?: string }>

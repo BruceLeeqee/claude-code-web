@@ -18,7 +18,21 @@ export interface ModelCatalogEntry {
   kind: 'cloud' | 'local';
 }
 
-export type ModelProvider = 'anthropic' | 'openai' | 'minimax' | 'custom';
+export type ModelProvider = 'anthropic' | 'openai' | 'minimax' | 'deepseek' | 'custom';
+
+export interface ModelEndpointConfig {
+  baseUrl: string;
+  apiFormat: 'anthropic' | 'openai';
+  supportsThinking?: boolean;
+}
+
+export const MODEL_ENDPOINTS: Record<ModelProvider, ModelEndpointConfig> = {
+  anthropic: { baseUrl: 'https://api.anthropic.com', apiFormat: 'anthropic' },
+  openai: { baseUrl: 'https://api.openai.com', apiFormat: 'openai' },
+  minimax: { baseUrl: 'https://api.minimaxi.com/anthropic', apiFormat: 'anthropic' },
+  deepseek: { baseUrl: 'https://api.deepseek.com/anthropic', apiFormat: 'anthropic', supportsThinking: true },
+  custom: { baseUrl: '', apiFormat: 'anthropic' },
+};
 
 export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
   {
@@ -58,39 +72,27 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     kind: 'cloud',
   },
   {
-    id: 'claude-3-5-sonnet-latest',
-    name: 'Claude 3.5 Sonnet',
-    shortName: '3.5 Sonnet',
-    description: '长上下文与强推理，适合重构与架构设计。',
-    provider: 'anthropic',
-    providerLabel: 'Anthropic',
-    maxContextTokens: 200_000,
-    usdPer1MInput: 3,
-    usdPer1MOutput: 15,
+    id: 'deepseek-v4-flash',
+    name: 'DeepSeek V4 Flash',
+    shortName: 'V4 Flash',
+    description: 'DeepSeek 快速对话模型，适合日常编码与多轮对话。',
+    provider: 'deepseek',
+    providerLabel: 'DeepSeek',
+    maxContextTokens: 128_000,
+    usdPer1MInput: 0.5,
+    usdPer1MOutput: 2,
     kind: 'cloud',
   },
   {
-    id: 'claude-3-7-sonnet-latest',
-    name: 'Claude 3.7 Sonnet',
-    shortName: '3.7 Sonnet',
-    description: '在 3.5 基础上增强的编码与推理能力。',
-    provider: 'anthropic',
-    providerLabel: 'Anthropic',
-    maxContextTokens: 200_000,
-    usdPer1MInput: 3,
-    usdPer1MOutput: 15,
-    kind: 'cloud',
-  },
-  {
-    id: 'claude-3-opus-latest',
-    name: 'Claude 3 Opus',
-    shortName: 'Opus',
-    description: '最高质量输出，适合复杂推理与长文档。',
-    provider: 'anthropic',
-    providerLabel: 'Anthropic',
-    maxContextTokens: 200_000,
-    usdPer1MInput: 15,
-    usdPer1MOutput: 75,
+    id: 'deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    shortName: 'V4 Pro',
+    description: 'DeepSeek 推理增强模型，支持 thinking 模式与深度推理，适合复杂编码与逻辑分析。',
+    provider: 'deepseek',
+    providerLabel: 'DeepSeek',
+    maxContextTokens: 128_000,
+    usdPer1MInput: 2,
+    usdPer1MOutput: 8,
     kind: 'cloud',
   },
 ];

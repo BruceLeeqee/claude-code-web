@@ -383,8 +383,313 @@
   &:hover { background: rgba(34, 197, 94, 0.22); border-color: rgba(34, 197, 94, 0.5); }
 }
 
-/* ── 卡片视图 ── */
+/* ── 卡片视图（重设计：支持日志 + 多卡片并行 + 验证矩阵） ── */
 .loop-cards-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  gap: 0;
+}
+
+/* 实时日志面板 */
+.loop-log-panel {
+  flex-shrink: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  background: rgba(8, 8, 12, 0.95);
+  border-bottom: 1px solid rgba(139, 92, 246, 0.15);
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  scrollbar-width: thin;
+
+  .log-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 12px;
+    background: rgba(139, 92, 246, 0.06);
+    border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #a78bfa;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+
+    .log-count {
+      color: #6b7280;
+      font-weight: 400;
+    }
+  }
+
+  .log-lines {
+    padding: 4px 12px 6px;
+  }
+
+  .log-line {
+    padding: 1px 0;
+    color: rgba(209, 213, 219, 0.75);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.6;
+
+    &:last-child { color: #e5e7eb; }
+  }
+}
+
+/* ── Loop 任务列表（多任务管理）── */
+.loop-task-list-section {
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  padding: 10px 12px;
+
+  .section-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(148, 163, 184, 0.6);
+    margin-bottom: 8px;
+
+    .task-count {
+      font-weight: 400;
+      color: rgba(148, 163, 184, 0.4);
+      font-size: 10px;
+    }
+  }
+}
+
+.loop-task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.no-tasks-hint {
+  text-align: center;
+  color: rgba(148, 163, 184, 0.35);
+  font-size: 12px;
+  padding: 20px 0;
+}
+
+/* ── Loop 任务卡片（代表一个完整任务，非步骤）── */
+.loop-task-card {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  background: rgba(15, 23, 42, 0.6);
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    border-color: rgba(99, 102, 241, 0.3);
+    background: rgba(15, 23, 42, 0.85);
+  }
+
+  &.task-active {
+    border-color: rgba(99, 102, 241, 0.45);
+    background: rgba(30, 27, 75, 0.6);
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.15);
+  }
+
+  // 状态颜色
+  &.task-status-executing,
+  &.task-status-verifying { border-color: rgba(245, 158, 11, 0.25); animation: card-running-border 1.8s ease-in-out infinite; }
+  &.task-status-completed { border-color: rgba(34, 197, 94, 0.2); background: rgba(16, 30, 22, 0.5); }
+  &.task-status-failed { border-color: rgba(239, 68, 68, 0.25); }
+  &.task-status-paused,
+  &.task-status-blocked { border-color: rgba(251, 191, 36, 0.2); }
+  &.task-status-planning { border-color: rgba(148, 163, 184, 0.15); }
+
+  .task-card-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .task-type-badge {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+    line-height: 1.6;
+
+    &.type-development { background: rgba(34, 197, 94, 0.12); color: #86efac; }
+    &.type-testing { background: rgba(245, 158, 11, 0.12); color: #fcd34d; }
+    &.type-analysis { background: rgba(168, 85, 247, 0.12); color: #d8b4fe; }
+    &.type-docs { background: rgba(6, 182, 212, 0.12); color: #67e8f9; }
+    &.type-ops { background: rgba(239, 68, 68, 0.12); color: #fca5a5; }
+    &.type-general { background: rgba(148, 163, 184, 0.12); color: #cbd5e1; }
+  }
+
+  .task-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+
+    &.dot-executing,
+    &.dot-verifying { background: #f59e0b; box-shadow: 0 0 4px rgba(245, 158, 11, 0.5); }
+    &.dot-completed,
+    &.dot-ready_for_review,
+    &.dot-ready_for_release { background: #22c55e; }
+    &.dot-failed { background: #ef4444; }
+    &.dot-paused,
+    &.dot-blocked { background: #fbbf24; }
+    &.dot-planning { background: #64748b; }
+    &.dot-idle { background: #475569; }
+  }
+
+  .task-status-text {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: rgba(148, 163, 184, 0.45);
+    margin-left: auto;
+  }
+
+  .task-card-body {
+    flex: 1;
+    min-height: 28px;
+  }
+
+  .task-objective {
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.4;
+    color: #e2e4f0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .task-card-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(148, 163, 184, 0.06);
+
+    .task-progress {
+      font-size: 10px;
+      color: rgba(148, 163, 184, 0.45);
+      white-space: nowrap;
+    }
+
+    .task-time {
+      font-size: 10px;
+      color: rgba(148, 163, 184, 0.3);
+      margin-left: auto;
+    }
+
+    .task-action-hint {
+      font-size: 9px;
+      color: rgba(99, 102, 241, 0.5);
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    &:hover .task-action-hint { opacity: 1; }
+  }
+}
+
+/* ── 步骤进度行（紧凑列表）── */
+.loop-steps-section {
+  .section-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(148, 163, 184, 0.5);
+    margin: 8px 12px 4px;
+  }
+}
+
+.loop-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-left: 2px solid transparent;
+  transition: all 0.12s ease;
+
+  &.step-done {
+    border-left-color: rgba(34, 197, 94, 0.35);
+    .step-title { color: rgba(226, 228, 240, 0.5); text-decoration: line-through; }
+    .step-status { color: #86efac; }
+  }
+  &.step-running {
+    border-left-color: rgba(245, 158, 11, 0.5);
+    background: rgba(35, 28, 14, 0.4);
+    .step-status { color: #fcd34d; }
+  }
+  &.step-failed {
+    border-left-color: rgba(239, 68, 68, 0.4);
+    .step-status { color: #fca5a5; }
+  }
+  &.step-pending {
+    .step-title { color: rgba(226, 228, 240, 0.35); }
+    .step-status { color: rgba(148, 163, 184, 0.3); }
+  }
+
+  .step-index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.06);
+    color: rgba(148, 163, 184, 0.4);
+    flex-shrink: 0;
+  }
+
+  .step-title {
+    flex: 1;
+    font-size: 11.5px;
+    color: #e2e4f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .step-status {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    flex-shrink: 0;
+
+    &.status-small { font-size: 8px; }
+  }
+}
+
+@keyframes card-running-border {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+  50% { box-shadow: 0 0 10px 1px rgba(245, 158, 11, 0.2); }
+}
+
+/* 任务卡片网格（每行4列） */
+.loop-card-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 10px;
@@ -393,6 +698,31 @@
   flex: 1;
   min-height: 0;
   align-content: start;
+  scrollbar-width: thin;
+}
+
+/* 已完成区域 */
+.loop-completed-section {
+  padding: 0 12px 8px;
+  overflow-y: auto;
+  max-height: 160px;
+  scrollbar-width: thin;
+
+  .section-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(148, 163, 184, 0.45);
+    padding: 6px 0 4px;
+    border-top: 1px solid rgba(148, 163, 184, 0.08);
+  }
+
+  .loop-card-grid {
+    padding: 8px 0 0;
+    max-height: none;
+    overflow: visible;
+  }
 }
 
 .loop-card {
@@ -535,6 +865,7 @@
   align-items: center;
   justify-content: center;
   flex: 1;
+  height: 100%;
   color: rgba(148, 163, 184, 0.5);
   gap: 8px;
 
@@ -542,8 +873,133 @@
   .empty-hint { font-size: 11px; color: rgba(148, 163, 184, 0.35); }
 }
 
+/* ── 文档产出步骤条 ── */
+.loop-docs-stepper {
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  max-height: 200px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+
+  .section-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(148, 163, 184, 0.5);
+    padding: 8px 12px 4px;
+    flex-shrink: 0;
+
+    .doc-count {
+      font-weight: 400;
+      color: rgba(148, 163, 184, 0.35);
+      font-size: 9px;
+    }
+  }
+
+  .docs-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2px 8px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    scrollbar-width: thin;
+  }
+}
+
+.doc-step-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  border: 1px solid transparent;
+  background: rgba(15, 23, 42, 0.3);
+
+  &:hover {
+    background: rgba(99, 102, 241, 0.08);
+    border-color: rgba(99, 102, 241, 0.15);
+  }
+
+  &.doc-active {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: rgba(99, 102, 241, 0.3);
+
+    .doc-step-title { color: #c4b5fd; }
+  }
+
+  &.doc-has-content {
+    .doc-step-status { color: #86efac; }
+  }
+
+  &.artifact-item:hover {
+    background: rgba(6, 182, 212, 0.06);
+    border-color: rgba(6, 182, 212, 0.15);
+  }
+
+  .doc-step-icon {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    flex-shrink: 0;
+    background: rgba(139, 92, 246, 0.08);
+    border-radius: 5px;
+  }
+
+  .doc-step-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .doc-step-title {
+    font-size: 11.5px;
+    font-weight: 500;
+    color: #e2e4f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .doc-step-meta {
+    font-size: 9px;
+    color: rgba(148, 163, 184, 0.4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .doc-step-status {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: rgba(148, 163, 184, 0.4);
+    background: rgba(148, 163, 184, 0.06);
+
+    &.doc-ready { color: #86efac; background: rgba(34, 197, 94, 0.1); }
+    &.doc-pending { color: #fbbf24; background: rgba(245, 158, 11, 0.08); }
+  }
+}
+
 /* ── 验证矩阵卡片 ── */
 .loop-verification-grid {
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 8px;

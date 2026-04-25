@@ -8,6 +8,7 @@ export type DirectiveKind =
   | 'mode_solo'
   | 'mode_plan'
   | 'mode_dev'
+  | 'team'
   | 'loop'
   | 'task'
   | 'plugin_list'
@@ -104,12 +105,22 @@ export const DIRECTIVE_REGISTRY: DirectiveDefinition[] = [
   },
   {
     name: '/mode-dev',
-    desc: '切换到开发者模式，实例化开发团队',
+    desc: '切换到开发者模式，不自动创建团队',
     template: '/mode-dev',
     kind: 'mode_dev',
     group: 'mode',
     usage: '/mode-dev 切换到开发者模式',
     visibleInHelp: true,
+  },
+  {
+    name: '/team',
+    desc: '显式创建多智能体团队',
+    template: '/team <objective>',
+    kind: 'team',
+    group: 'development',
+    usage: '/team <目标> [--members=planner,executor,validator]',
+    visibleInHelp: true,
+    requiresArgs: true,
   },
   {
     name: '/loop',

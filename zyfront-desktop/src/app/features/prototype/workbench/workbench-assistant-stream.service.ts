@@ -75,7 +75,7 @@ export class WorkbenchAssistantStreamService {
         }
 
         if (value.type === 'thinking_delta' && value.textDelta) {
-          callbacks.onDelta?.(value.textDelta, value);
+          // Thinking content is handled by the coordinator, do not route to onDelta
           continue;
         }
 

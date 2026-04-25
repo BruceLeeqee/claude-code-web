@@ -35,6 +35,8 @@ export interface ChatMessage {
   timestamp: number;
   /** Optional API-shaped payload for Anthropic replay (`anthropicWire`); see zyfront-core `api/anthropic-messages`. */
   metadata?: JsonObject;
+  /** DeepSeek V4 Pro thinking content (reasoning_content) for multi-turn tool calls */
+  reasoningContent?: string;
 }
 
 /** 模型发起的工具调用 */
@@ -59,6 +61,8 @@ export interface AnthropicTurnSnapshot {
   assistantContentBlocks: JsonArray;
   toolCalls: ToolCall[];
   usage?: Usage;
+  /** DeepSeek V4 Pro thinking content for multi-turn tool calls */
+  reasoningContent?: string;
 }
 
 /** 流式通道向下游推送的分片类型联合 */
@@ -80,12 +84,13 @@ export interface ProxyConfig {
 
 /** 模型提供方与采样参数 */
 export interface ModelConfig {
-  provider: 'anthropic' | 'openai' | 'minimax' | 'custom';
+  provider: 'anthropic' | 'openai' | 'minimax' | 'deepseek' | 'custom';
   model: string;
   temperature?: number;
   maxTokens?: number;
   topP?: number;
   stopSequences?: string[];
+  thinking?: { type: 'enabled' | 'disabled' };
 }
 
 /** 发往 LLM 的聊天请求体（含历史消息与可选 tools） */

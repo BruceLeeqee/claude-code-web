@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import type { LoopState, LoopValidationResult } from './loop-command.types';
+import type { LoopState, LoopTaskType, LoopValidationResult } from './loop-command.types';
 
 /**
  * Loop 验证器
@@ -26,6 +26,9 @@ export class LoopVerifierService {
     const warnings: string[] = [];
     const blockers: string[] = [];
 
+    // 根据任务类型确定哪些验证维度是必需的
+    const requiredDimensions = this.getRequiredDimensions(state.taskType);
+
     if (!state.objective.trim()) {
       errors.push('目标描述为空');
       blockers.push('missing-objective');
@@ -44,7 +47,17 @@ export class LoopVerifierService {
     }
 
     if (state.blockedReasons.length > 0) {
-      blockers.push(...state.blockedReasons);
+      // 过滤掉与当前任务类型无关的 blocker（如分析任务中的 compile/terminal 验证未通过）
+      const irrelevantPatterns = ['compile 验证未通过', 'terminal 验证未通过'];
+      const relevantBlockers = state.blockedReasons.filter((reason) => {
+        // 如果是验证维度的 blocker，检查是否属于当前任务类型需要的维度
+        if (irrelevantPatterns.some((p) => reason.includes(p))) {
+          const dimension = reason.startsWith('compile') ? 'compile' : reason.startsWith('terminal') ? 'terminal' : null;
+          return dimension ? requiredDimensions.has(dimension) : true;
+        }
+        return true;
+      });
+      blockers.push(...relevantBlockers);
     }
 
     if (state.iteration >= state.maxIterations) {
@@ -52,8 +65,9 @@ export class LoopVerifierService {
     }
 
     // 验证矩阵失败检查
+    // 根据任务类型确定哪些维度是必需的（复用上方已计算的 requiredDimensions）
     const failedMatrix = state.verificationMatrix.filter(
-      (entry) => entry.note !== 'pending' && !entry.passed,
+      (entry) => entry.note !== 'pending' && entry.note !== 'skipped' && !entry.passed && requiredDimensions.has(entry.dimension),
     );
     for (const entry of failedMatrix) {
       if (entry.dimension === 'ui' || entry.dimension === 'api' || entry.dimension === 'data') {
@@ -105,9 +119,10 @@ export class LoopVerifierService {
     failedMatrix: LoopState['verificationMatrix'],
   ): LoopValidationResult['recommendation'] {
     if (!passed) {
-      // 编译/终端失败 → repair
+      // 仅当任务类型需要编译/终端验证时，编译/终端失败才走 repair
+      const requiredDimensions = this.getRequiredDimensions(state.taskType);
       const compileOrTerminalFailed = failedMatrix.some(
-        (e) => (e.dimension === 'compile' || e.dimension === 'terminal') && !e.passed,
+        (e) => (e.dimension === 'compile' || e.dimension === 'terminal') && !e.passed && requiredDimensions.has(e.dimension),
       );
       if (compileOrTerminalFailed) return 'repair';
 
@@ -126,23 +141,53 @@ export class LoopVerifierService {
     return 'continue';
   }
 
+  /**
+   * 检测连续出现相同 blocker 的情况。
+   * 仅当同一 blocker 在连续的验证记录中反复出现时才触发。
+   * 例如：[A, A, A] 连续 3 次出现 blocker A → 触发
+   *      [A, B, A] 总共出现 2 次 A 但不连续 → 不触发
+   */
   private detectConsecutiveBlockers(state: LoopState): Array<{ reason: string; count: number }> {
     const result: Array<{ reason: string; count: number }> = [];
-    const recentValidations = state.validationHistory.slice(-MAX_CONSECUTIVE_BLOCKER);
+    const recentValidations = state.validationHistory.slice(-MAX_CONSECUTIVE_BLOCKER * 2);
 
     if (recentValidations.length < MAX_CONSECUTIVE_BLOCKER) return result;
 
-    // 检查最近 N 次验证是否有相同的 blocker
-    const allBlockers = recentValidations.flatMap((v) => v.blockers);
-    const blockerCounts = new Map<string, number>();
+    // 按顺序遍历，统计每个 blocker 的最大连续出现次数
+    const blockerStreak = new Map<string, number>();
 
-    for (const b of allBlockers) {
-      blockerCounts.set(b, (blockerCounts.get(b) ?? 0) + 1);
+    for (const v of recentValidations) {
+      const blockers = v.blockers ?? [];
+      if (blockers.length === 0) {
+        // 清零所有 streak（当前轮无 blocker）
+        for (const key of blockerStreak.keys()) {
+          blockerStreak.set(key, 0);
+        }
+        continue;
+      }
+
+      // 当前轮的 blocker 集合（去重）
+      const currentBlockers = new Set(blockers);
+
+      for (const [reason, streak] of blockerStreak) {
+        if (currentBlockers.has(reason)) {
+          blockerStreak.set(reason, streak + 1);
+        } else {
+          blockerStreak.set(reason, 0);
+        }
+      }
+
+      // 新增的 blocker 初始化 streak
+      for (const b of blockers) {
+        if (!blockerStreak.has(b)) {
+          blockerStreak.set(b, 1);
+        }
+      }
     }
 
-    for (const [reason, count] of blockerCounts) {
-      if (count >= MAX_CONSECUTIVE_BLOCKER) {
-        result.push({ reason, count });
+    for (const [reason, streak] of blockerStreak) {
+      if (streak >= MAX_CONSECUTIVE_BLOCKER) {
+        result.push({ reason, count: streak });
       }
     }
 
@@ -153,10 +198,29 @@ export class LoopVerifierService {
     const recent = state.validationHistory.slice(-MAX_NO_PROGRESS_RUNS);
     if (recent.length < MAX_NO_PROGRESS_RUNS) return false;
 
-    // 如果最近 N 轮全部失败且状态未变化，认为无进展
+    // 如果最近 N 轮全部失败且 recommendation 未变化，认为无进展
     const allFailed = recent.every((v) => !v.passed);
-    const sameStatus = new Set(recent.map((v) => v.recommendation)).size === 1;
+    const sameRecommendation = new Set(recent.map((v) => v.recommendation)).size === 1;
 
-    return allFailed && sameStatus;
+    return allFailed && sameRecommendation;
+  }
+
+  /**
+   * 根据任务类型确定哪些验证维度是必需的。
+   * analysis / docs / general 类任务不需要 compile / terminal 验证。
+   */
+  private getRequiredDimensions(taskType: LoopTaskType): Set<string> {
+    switch (taskType) {
+      case 'development':
+      case 'testing':
+      case 'ops':
+        return new Set(['compile', 'ui', 'api', 'data', 'terminal']);
+      case 'docs':
+        return new Set(['ui']); // 文档任务只需基本的 UI 检查
+      case 'analysis':
+      case 'general':
+      default:
+        return new Set(); // 分析/通用任务不需要编译/终端验证
+    }
   }
 }

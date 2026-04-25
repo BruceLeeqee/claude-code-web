@@ -110,6 +110,9 @@ export class WorkbenchModeService {
       throw new Error('只能在开发者模式下初始化开发团队');
     }
 
+    const existing = this.state().devTeam;
+    if (existing) return existing;
+
     const timestamp = Date.now();
     const teamId = `dev-team-${timestamp}`;
     const sessionId = `dev-session-${timestamp}`;

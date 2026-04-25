@@ -211,7 +211,8 @@ export class LoopTaskRouterService {
   private buildAnalysisSteps(objective: string): LoopPlanStep[] {
     return [
       { id: 'analysis', title: `调研分析：${objective}`, type: 'analysis', status: 'pending', dependencies: [], acceptance: ['调研结论清晰'], riskLevel: 'low', outputs: ['analysis-report'] },
-      { id: 'summary', title: '输出调研报告', type: 'summary', status: 'pending', dependencies: ['analysis'], acceptance: ['报告可交付'], riskLevel: 'low', outputs: ['summary'] },
+      { id: 'implementation', title: '指派智能体或团队执行调研', type: 'implementation', status: 'pending', dependencies: ['analysis'], acceptance: ['已创建智能体任务并等待回传'], riskLevel: 'medium', outputs: ['agent-request'] },
+      { id: 'summary', title: '输出调研报告', type: 'summary', status: 'pending', dependencies: ['implementation'], acceptance: ['报告可交付'], riskLevel: 'low', outputs: ['summary'] },
     ];
   }
 

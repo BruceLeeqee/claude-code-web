@@ -83,27 +83,33 @@ export class SettingsPageComponent {
     }
 
     const value = this.form.getRawValue();
-    this.settingsService.update({
-      apiKey: value.apiKey ?? '',
-      modelProvider: (value.modelProvider ?? 'minimax') as 'anthropic' | 'openai' | 'minimax' | 'custom',
-      model: value.model ?? 'MiniMax-M2.7',
-      proxy: {
-        enabled: Boolean(value.proxyEnabled),
-        baseUrl: value.proxyBaseUrl ?? '',
-        authToken: value.proxyAuthToken ?? '',
+    const modelProvider = (value.modelProvider ?? 'minimax') as 'anthropic' | 'openai' | 'minimax' | 'deepseek' | 'custom';
+    const model = value.model ?? 'MiniMax-M2.7';
+    const modelKey = `${modelProvider}:${model}`;
+    this.settingsService.update(
+      {
+        apiKey: value.apiKey ?? '',
+        modelProvider,
+        model,
+        proxy: {
+          enabled: Boolean(value.proxyEnabled),
+          baseUrl: value.proxyBaseUrl ?? '',
+          authToken: value.proxyAuthToken ?? '',
+        },
+        compression: {
+          enabled: Boolean(value.compressionEnabled),
+          maxMessagesBeforeCompact: Number(value.maxMessagesBeforeCompact ?? 50),
+          compactToMessages: Number(value.compactToMessages ?? 20),
+          maxEstimatedTokens: Number(value.maxEstimatedTokens ?? 24000),
+        },
+        cost: {
+          maxSessionCostUsd: Number(value.maxSessionCostUsd ?? 5),
+          warnThresholdUsd: Number(value.warnThresholdUsd ?? 3),
+        },
+        theme: (value.theme ?? 'dark') as AppTheme,
       },
-      compression: {
-        enabled: Boolean(value.compressionEnabled),
-        maxMessagesBeforeCompact: Number(value.maxMessagesBeforeCompact ?? 50),
-        compactToMessages: Number(value.compactToMessages ?? 20),
-        maxEstimatedTokens: Number(value.maxEstimatedTokens ?? 24000),
-      },
-      cost: {
-        maxSessionCostUsd: Number(value.maxSessionCostUsd ?? 5),
-        warnThresholdUsd: Number(value.warnThresholdUsd ?? 3),
-      },
-      theme: (value.theme ?? 'dark') as AppTheme,
-    });
+      { profileKey: modelKey },
+    );
   }
 
   /** 经本地 Bridge 探测上游模型 HTTP 是否成功 */

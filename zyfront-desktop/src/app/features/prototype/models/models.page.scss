@@ -272,6 +272,13 @@
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
+.json-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+
 .json-editor {
   width: 100%;
   min-height: 420px;

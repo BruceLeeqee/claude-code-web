@@ -10,8 +10,9 @@ import type { AnthropicTurnSnapshot, JsonArray, JsonValue, ToolCall, Usage } fro
 type MutableAnthropicTurn = AnthropicTurnSnapshot & { usage?: Usage };
 
 type TextBlock = { kind: 'text'; text: string };
+type ThinkingBlock = { kind: 'thinking'; thinking: string };
 type ToolBlock = { kind: 'tool_use'; id: string; name: string; jsonBuf: string };
-type BlockState = TextBlock | ToolBlock;
+type BlockState = TextBlock | ThinkingBlock | ToolBlock;
 
 /** 从流内 usage 对象提取 token 数 */
 function roughUsage(u: unknown): Usage | undefined {
@@ -73,6 +74,8 @@ export class AnthropicSseTurnAccumulator {
       const c = cb as Record<string, unknown>;
       if (c['type'] === 'text') {
         this.blocks.set(idx, { kind: 'text', text: '' });
+      } else if (c['type'] === 'thinking') {
+        this.blocks.set(idx, { kind: 'thinking', thinking: '' });
       } else if (c['type'] === 'tool_use') {
         const id = typeof c['id'] === 'string' ? c['id'] : '';
         const name = typeof c['name'] === 'string' ? c['name'] : '';
@@ -90,6 +93,9 @@ export class AnthropicSseTurnAccumulator {
       if (!b) return;
       if (b.kind === 'text' && d['type'] === 'text_delta' && typeof d['text'] === 'string') {
         b.text += d['text'];
+      }
+      if (b.kind === 'thinking' && d['type'] === 'thinking_delta' && typeof d['thinking'] === 'string') {
+        b.thinking += d['thinking'];
       }
       if (b.kind === 'tool_use' && d['type'] === 'input_json_delta' && typeof d['partial_json'] === 'string') {
         b.jsonBuf += d['partial_json'];
@@ -115,6 +121,7 @@ export class AnthropicSseTurnAccumulator {
     const assistantContentBlocks: JsonArray = [];
     const textParts: string[] = [];
     const toolCalls: ToolCall[] = [];
+    let reasoningContent = '';
 
     let seq = 1;
     for (const idx of indices) {
@@ -123,6 +130,9 @@ export class AnthropicSseTurnAccumulator {
       if (b.kind === 'text') {
         assistantContentBlocks.push({ type: 'text', text: b.text } as JsonValue);
         if (b.text) textParts.push(b.text);
+      } else if (b.kind === 'thinking') {
+        assistantContentBlocks.push({ type: 'thinking', thinking: b.thinking } as JsonValue);
+        if (b.thinking) reasoningContent += b.thinking;
       } else {
         let input: JsonValue = {};
         try {
@@ -153,6 +163,7 @@ export class AnthropicSseTurnAccumulator {
       toolCalls,
     };
     if (this.usage !== undefined) snap.usage = this.usage;
+    if (reasoningContent) snap.reasoningContent = reasoningContent;
     return snap;
   }
 }

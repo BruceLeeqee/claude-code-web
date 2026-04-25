@@ -106,6 +106,12 @@ export class LoopExecutorService {
     const stepDoc = await this.docWriter.writeStepDoc(current, step);
     stepDocs.push(stepDoc);
 
+    // 对于非开发类任务（analysis/docs/general），analysis/summary 步骤执行后自动标记验证矩阵通过
+    const autoPassedMatrixUpdates = this.buildAutoPassMatrixUpdates(current, step);
+
+    // 合并矩阵更新：自动通过的更新优先级低于实际工具产出
+    const mergedMatrixUpdates = this.mergeMatrixUpdates(autoPassedMatrixUpdates, toolOutcome.matrixUpdates);
+
     return this.loopCommand.update(sessionId, {
       status,
       phase: this.mapPhase(step),
@@ -118,7 +124,7 @@ export class LoopExecutorService {
       stepDocs: stepDocs.slice(-50),
       memoryRefs: [...current.memoryRefs, `step:${step.id}:${Date.now()}`].slice(-100),
       retryCount: current.retryCount + (status === 'repairing' ? 1 : 0),
-      verificationMatrix: this.updateVerificationMatrix(current, step, toolOutcome.blockers, toolOutcome.matrixUpdates),
+      verificationMatrix: this.updateVerificationMatrix(current, step, toolOutcome.blockers, mergedMatrixUpdates),
       buildStatus: this.pickBuildStatus(current, step, toolOutcome.blockers),
       uiStatus: this.pickUiStatus(current, step, toolOutcome.blockers),
       apiStatus: this.pickApiStatus(current, step, toolOutcome.blockers),
@@ -147,14 +153,39 @@ export class LoopExecutorService {
       }
 
       /* ── analysis / requirements 步骤：任务路由 + 团队编排 ── */
-      if (step.type === 'analysis' && current.taskType === 'development') {
-        // 开发任务：检查需求/设计门禁
-        const gate = this.taskRouter.checkDevelopmentGate(current);
-        toolHistory.push(`task-router:gate:${gate.passed ? 'passed' : 'blocked'}`);
-        if (!gate.passed) {
-          blockers.push(gate.reason ?? '开发任务门禁未通过');
-          statusHint = 'paused';
+      if (step.type === 'analysis') {
+        const team = this.teamManager.createTeam(current);
+        const assignments = this.teamManager.assignSteps(team, [step]);
+        for (const a of assignments) {
+          toolHistory.push(`team:${team.name}:${a.assigneeRole}:${a.stepId}`);
         }
+
+        const agentRequestPath = '02-AGENT-MEMORY/01-Short-Term/loop-agent-request.md';
+        const agentRequest = [
+          `# Loop Agent Request`,
+          ``,
+          `- loopId: ${sessionId}`,
+          `- objective: ${current.objective}`,
+          `- taskType: ${current.taskType}`,
+          `- step: ${step.id} (${step.title})`,
+          `- riskLevel: ${step.riskLevel}`,
+          `- acceptance: ${step.acceptance.join('; ')}`,
+          `- assignedTo: ${assignments[0]?.assigneeName ?? 'general-agent'} (${assignments[0]?.assigneeRole ?? 'general-agent'})`,
+          `- timestamp: ${new Date().toISOString()}`,
+          ``,
+          `## 状态`,
+          ``,
+          `> **requires-agent**: 此步骤需要 AI Agent 执行。`,
+          `> Loop 将暂停等待 Agent 完成后继续验证。`,
+        ].join('\n');
+        const write = await window.zytrader.fs.write(agentRequestPath, agentRequest, { scope: 'vault' });
+        if (write.ok) {
+          fileChanges.push(agentRequestPath);
+          toolHistory.push(`fs.write:${agentRequestPath}`);
+        }
+
+        statusHint = 'paused';
+        warnings.push('analysis 步骤已强制指派 AI Agent/团队执行，当前暂停等待');
       }
 
       /* ── design 步骤：需求→设计门禁确认 ── */
@@ -238,63 +269,82 @@ export class LoopExecutorService {
         }
       }
 
-      /* ── verification 步骤：使用 TerminalSandbox + SandboxRunner ── */
+      /* ── verification 步骤：按任务类型差异化验证 ── */
       if (step.type === 'verification') {
-        // 终端验证矩阵
-        const batch = await this.terminalSandbox.runVerificationMatrix();
-        toolHistory.push(`terminal-sandbox:matrix:${batch.allPassed ? 'passed' : 'failed'}`);
+        // 根据任务类型决定验证范围：开发类任务走完整矩阵，非开发类跳过编译/终端
+        const isDevLikeTask = current.taskType === 'development' || current.taskType === 'testing' || current.taskType === 'ops';
 
-        for (const r of batch.results) {
-          const out = `${r.stdout}\n${r.stderr}`.trim();
-          // 从命令推断维度
-          const dimension = out.includes('compile') || r.command.includes('tsc') || r.command.includes('build')
-            ? 'compile' as const
-            : 'terminal' as const;
-          matrixUpdates.push({
-            dimension,
-            passed: r.ok,
-            evidence: [out.slice(0, 300) || `${dimension} output empty`],
-            note: r.ok ? `${dimension} pass` : `${dimension} failed`,
-          });
-          if (!r.ok && !batch.allPassed) blockers.push(`${dimension} verification failed`);
-        }
+        if (isDevLikeTask) {
+          // 开发类任务：完整验证矩阵（compile + terminal + ui + api + data + sandbox）
+          const batch = await this.terminalSandbox.runVerificationMatrix();
+          toolHistory.push(`terminal-sandbox:matrix:${batch.allPassed ? 'passed' : 'failed'}`);
 
-        // UI/API/Data 维度通过 check 脚本
-        for (const dimension of ['ui', 'api', 'data'] as const) {
-          const probe = await this.execCommand(`${this.cmdPrefix()}npm run ${dimension}:check`);
-          const missingScript = this.isMissingScript(probe.out);
-          const passed = probe.ok || missingScript;
-          toolHistory.push(`terminal.exec:${dimension}:${probe.code}`);
-          matrixUpdates.push({
-            dimension,
-            passed,
-            evidence: [probe.out.slice(0, 240) || `${dimension} output empty`],
-            note: missingScript ? `${dimension} script missing, skipped` : passed ? `${dimension} pass` : `${dimension} failed`,
-          });
-          if (!passed) blockers.push(`${dimension} verification failed`);
-          if (missingScript) warnings.push(`${dimension} 验证脚本未配置，当前记为跳过`);
-        }
-
-        // 沙箱浏览器 UI 验证（可选）
-        if (current.uiStatus === 'unknown' || current.uiStatus === 'failed') {
-          try {
-            const sandboxResult = await this.sandboxRunner.openPage({
-              url: 'http://localhost:4200',
-              waitFor: 3000,
-              captureScreenshot: true,
-              captureDom: false,
-              retries: 1,
-            });
-            toolHistory.push(`sandbox-runner:${sandboxResult.ok ? 'passed' : 'failed'}`);
+          for (const r of batch.results) {
+            const out = `${r.stdout}\n${r.stderr}`.trim();
+            const dimension = out.includes('compile') || r.command.includes('tsc') || r.command.includes('build')
+              ? 'compile' as const
+              : 'terminal' as const;
             matrixUpdates.push({
-              dimension: 'ui',
-              passed: sandboxResult.ok,
-              evidence: sandboxResult.consoleErrors.length > 0 ? sandboxResult.consoleErrors.slice(0, 3) : ['page opened'],
-              note: sandboxResult.ok ? 'UI sandbox passed' : `UI sandbox: ${sandboxResult.error || 'console errors'}`,
+              dimension,
+              passed: r.ok,
+              evidence: [out.slice(0, 300) || `${dimension} output empty`],
+              note: r.ok ? `${dimension} pass` : `${dimension} failed`,
             });
-            if (sandboxResult.screenshotPath) fileChanges.push(sandboxResult.screenshotPath);
-          } catch {
-            warnings.push('沙箱浏览器不可用，UI 验证已跳过');
+            if (!r.ok && !batch.allPassed) blockers.push(`${dimension} verification failed`);
+          }
+
+          // UI/API/Data 维度通过 check 脚本
+          for (const dimension of ['ui', 'api', 'data'] as const) {
+            const probe = await this.execCommand(`${this.cmdPrefix()}npm run ${dimension}:check`);
+            const missingScript = this.isMissingScript(probe.out);
+            const passed = probe.ok || missingScript;
+            toolHistory.push(`terminal.exec:${dimension}:${probe.code}`);
+            matrixUpdates.push({
+              dimension,
+              passed,
+              evidence: [probe.out.slice(0, 240) || `${dimension} output empty`],
+              note: missingScript ? `${dimension} script missing, skipped` : passed ? `${dimension} pass` : `${dimension} failed`,
+            });
+            if (!passed) blockers.push(`${dimension} verification failed`);
+            if (missingScript) warnings.push(`${dimension} 验证脚本未配置，当前记为跳过`);
+          }
+
+          // 沙箱浏览器 UI 验证（可选）
+          if (current.uiStatus === 'unknown' || current.uiStatus === 'failed') {
+            try {
+              const sandboxResult = await this.sandboxRunner.openPage({
+                url: 'http://localhost:4200',
+                waitFor: 3000,
+                captureScreenshot: true,
+                captureDom: false,
+                retries: 1,
+              });
+              toolHistory.push(`sandbox-runner:${sandboxResult.ok ? 'passed' : 'failed'}`);
+              matrixUpdates.push({
+                dimension: 'ui',
+                passed: sandboxResult.ok,
+                evidence: sandboxResult.consoleErrors.length > 0 ? sandboxResult.consoleErrors.slice(0, 3) : ['page opened'],
+                note: sandboxResult.ok ? 'UI sandbox passed' : `UI sandbox: ${sandboxResult.error || 'console errors'}`,
+              });
+              if (sandboxResult.screenshotPath) fileChanges.push(sandboxResult.screenshotPath);
+            } catch {
+              warnings.push('沙箱浏览器不可用，UI 验证已跳过');
+            }
+          }
+        } else {
+          // 非开发类任务（analysis/docs/general）：轻量级验证，直接通过
+          toolHistory.push('verification:skipped-for-non-dev-task');
+
+          // 将验证矩阵中所有 pending/skipped 维度标记为通过
+          for (const entry of current.verificationMatrix) {
+            if (!entry.passed) {
+              matrixUpdates.push({
+                dimension: entry.dimension,
+                passed: true,
+                evidence: [`auto-passed for ${current.taskType} task verification`],
+                note: 'skipped',
+              });
+            }
           }
         }
       }
@@ -349,17 +399,31 @@ export class LoopExecutorService {
   }
 
   private async applyVerification(sessionId: string, current: LoopState, verification: ReturnType<LoopVerifierService['verify']>): Promise<LoopState> {
-    const nextStatus = verification.passed
-      ? verification.recommendation === 'release'
+    // 所有计划步骤是否已完成
+    const allPlanDone = current.currentPlan.length === 0;
+
+    let nextStatus: LoopState['status'];
+    if (verification.passed) {
+      nextStatus = verification.recommendation === 'release'
         ? 'ready_for_release'
         : verification.recommendation === 'stop'
           ? 'completed'
-          : current.currentPlan.length === 0
+          : allPlanDone
             ? 'ready_for_review'
-            : 'executing'
-      : verification.recommendation === 'pause'
-        ? 'paused'
-        : 'repairing';
+            : 'executing';
+    } else {
+      // 验证未通过，但所有计划步骤已完成
+      // 对于非开发类任务，验证矩阵中可能存在与任务无关的 pending 维度，
+      // 此时不应阻塞，直接进入 ready_for_review
+      const nonDevTaskTypes: LoopState['taskType'][] = ['analysis', 'docs', 'general'];
+      if (allPlanDone && nonDevTaskTypes.includes(current.taskType)) {
+        nextStatus = 'ready_for_review';
+      } else if (verification.recommendation === 'pause') {
+        nextStatus = 'paused';
+      } else {
+        nextStatus = 'repairing';
+      }
+    }
 
     // 验证通过时清空 blockedReasons
     const nextBlockedReasons = verification.passed ? [] : (
@@ -452,8 +516,26 @@ export class LoopExecutorService {
         };
       });
     }
-    const dimension = step.type === 'test' || step.type === 'verification' ? 'terminal' : step.type === 'implementation' ? 'compile' : null;
+
+    // 根据步骤类型和任务类型决定映射的验证维度
+    // 仅开发/测试/运维类任务才将步骤结果映射到 compile/terminal 维度
+    const isDevLikeTask = current.taskType === 'development' || current.taskType === 'testing' || current.taskType === 'ops';
+    let dimension: LoopState['verificationMatrix'][number]['dimension'] | null = null;
+
+    if (isDevLikeTask) {
+      if (step.type === 'test' || step.type === 'verification') dimension = 'terminal';
+      else if (step.type === 'implementation') dimension = 'compile';
+    } else {
+      // 非开发类任务：不映射到任何验证维度（避免 compile/terminal 被错误标记）
+      dimension = null;
+    }
+
     if (!dimension) return current.verificationMatrix;
+
+    // 仅更新存在的维度
+    const hasDimension = current.verificationMatrix.some((e) => e.dimension === dimension);
+    if (!hasDimension) return current.verificationMatrix;
+
     return current.verificationMatrix.map((entry) =>
       entry.dimension === dimension
         ? {
@@ -467,23 +549,78 @@ export class LoopExecutorService {
   }
 
   private pickBuildStatus(current: LoopState, step: LoopPlanStep, blockers: string[]): LoopState['buildStatus'] {
-    if (!['test', 'implementation', 'verification'].includes(step.type)) return current.buildStatus;
+    // 仅开发/测试/运维类任务才更新 buildStatus
+    const isDevLikeTask = current.taskType === 'development' || current.taskType === 'testing' || current.taskType === 'ops';
+    if (!isDevLikeTask || !['test', 'implementation', 'verification'].includes(step.type)) return current.buildStatus;
     return blockers.length === 0 ? 'passed' : 'failed';
   }
 
   private pickUiStatus(current: LoopState, step: LoopPlanStep, blockers: string[]): LoopState['uiStatus'] {
-    if (step.type !== 'verification') return current.uiStatus;
+    // 仅开发/测试类任务才更新 uiStatus
+    const isDevLikeTask = current.taskType === 'development' || current.taskType === 'testing';
+    if (!isDevLikeTask || step.type !== 'verification') return current.uiStatus;
     return blockers.length === 0 ? 'passed' : 'failed';
   }
 
   private pickApiStatus(current: LoopState, step: LoopPlanStep, blockers: string[]): LoopState['apiStatus'] {
-    if (step.type !== 'verification') return current.apiStatus;
+    // 仅开发/测试类任务才更新 apiStatus
+    const isDevLikeTask = current.taskType === 'development' || current.taskType === 'testing';
+    if (!isDevLikeTask || step.type !== 'verification') return current.apiStatus;
     return blockers.length === 0 ? 'passed' : 'failed';
   }
 
   private pickDataStatus(current: LoopState, step: LoopPlanStep, blockers: string[]): LoopState['dataStatus'] {
-    if (step.type !== 'verification') return current.dataStatus;
+    // 仅开发/测试类任务才更新 dataStatus
+    const isDevLikeTask = current.taskType === 'development' || current.taskType === 'testing';
+    if (!isDevLikeTask || step.type !== 'verification') return current.dataStatus;
     return blockers.length === 0 ? 'passed' : 'failed';
+  }
+
+  /**
+   * 对于非开发类任务（analysis/docs/general），analysis/summary 步骤完成后
+   * 自动将验证矩阵中尚处于 pending 状态的维度标记为通过（跳过），
+   * 因为这些任务不需要编译/终端等验证。
+   */
+  private buildAutoPassMatrixUpdates(
+    current: LoopState,
+    step: LoopPlanStep,
+  ): ToolOutcome['matrixUpdates'] {
+    // 仅对非开发类任务，且步骤类型为 analysis/summary 时自动通过
+    const nonDevTaskTypes: LoopState['taskType'][] = ['analysis', 'docs', 'general'];
+    if (!nonDevTaskTypes.includes(current.taskType)) return [];
+    if (step.type !== 'analysis' && step.type !== 'summary') return [];
+
+    const updates: ToolOutcome['matrixUpdates'] = [];
+    for (const entry of current.verificationMatrix) {
+      // 只自动通过尚未完成的维度（pending 状态）
+      if (!entry.passed && (entry.note === 'pending' || entry.note === 'skipped')) {
+        updates.push({
+          dimension: entry.dimension,
+          passed: true,
+          evidence: [`auto-skipped for ${current.taskType} task`],
+          note: 'skipped',
+        });
+      }
+    }
+    return updates;
+  }
+
+  /**
+   * 合并矩阵更新：toolOutcome 的实际结果优先，自动通过的作为兜底。
+   */
+  private mergeMatrixUpdates(
+    autoPassUpdates: ToolOutcome['matrixUpdates'],
+    toolUpdates: ToolOutcome['matrixUpdates'],
+  ): ToolOutcome['matrixUpdates'] {
+    const result = [...toolUpdates];
+    for (const auto of autoPassUpdates) {
+      // 如果 toolOutcome 已有同维度的更新，优先使用 toolOutcome 的结果
+      const alreadyHas = result.some((r) => r.dimension === auto.dimension);
+      if (!alreadyHas) {
+        result.push(auto);
+      }
+    }
+    return result;
   }
 
   /* ── 终端命令执行 ────────────────────────────────────── */

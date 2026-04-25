@@ -148,6 +148,8 @@ export class CommandPresentationService {
     content: string,
   ): CommandPresentation {
     const tier: PresentationTier = success ? 'info' : 'error';
+    // 对于 natural 或 normal 标题，我们只显示内容本身，不显示头部
+    const isNaturalOrNormal = title === 'natural' || title === 'normal';
     const headerMap: Record<typeof kind, string> = {
       directive: '/directive',
       shell: '/shell',
@@ -155,15 +157,23 @@ export class CommandPresentationService {
       system: '/system',
       error: '/error',
     };
-    const header = success
-      ? `${this.tierColors.info}[${headerMap[kind]} ${title}]${this.RESET}`
-      : `${this.tierColors.error}[${headerMap[kind]} ${title}]${this.RESET}`;
+    let fullText = '';
     const body = content ? ` ${content.replaceAll('\n', '\r\n')}` : '';
+    if (!isNaturalOrNormal || !content) {
+      // 如果不是 natural 或 normal，或者没有内容，还是显示头部
+      const header = success
+        ? `${this.tierColors.info}[${headerMap[kind]} ${title}]${this.RESET}`
+        : `${this.tierColors.error}[${headerMap[kind]} ${title}]${this.RESET}`;
+      fullText = `${header}${body}`;
+    } else {
+      // 否则只显示内容
+      fullText = body;
+    }
 
     return {
-      fragments: [{ tier, text: `${header}${body}`, standalone: true }],
+      fragments: [{ tier, text: fullText || '', standalone: true }],
       compactSummary: `[${title}] ${success ? '成功' : '失败'}`,
-      fullText: `${header}${body}`,
+      fullText,
     };
   }
 

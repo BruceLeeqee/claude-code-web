@@ -140,7 +140,7 @@ export class LoopCommandService {
         this.buildStepDoc('design', 'design', designDocPath, now),
         this.buildStepDoc('status', 'status', this.docPath('status', request.objective), now),
       ],
-      verificationMatrix: this.defaultVerificationMatrix(now),
+      verificationMatrix: this.defaultVerificationMatrix(now, taskType),
       artifacts: [
         { kind: 'document', label: 'requirements', path: requirementsDocPath, createdAt: now },
         { kind: 'document', label: 'design', path: designDocPath, createdAt: now },
@@ -161,14 +161,31 @@ export class LoopCommandService {
     return this.taskRouter.buildStepsForTaskType(taskType, objective);
   }
 
-  private defaultVerificationMatrix(now: string): LoopVerificationEntry[] {
-    return [
-      { dimension: 'compile', passed: false, evidence: [], note: 'pending', updatedAt: now },
-      { dimension: 'ui', passed: false, evidence: [], note: 'pending', updatedAt: now },
-      { dimension: 'api', passed: false, evidence: [], note: 'pending', updatedAt: now },
-      { dimension: 'data', passed: false, evidence: [], note: 'pending', updatedAt: now },
-      { dimension: 'terminal', passed: false, evidence: [], note: 'pending', updatedAt: now },
-    ];
+  private defaultVerificationMatrix(now: string, taskType: LoopTaskType): LoopVerificationEntry[] {
+    // 分析/文档类任务不需要编译和终端验证
+    const needsCompile = taskType === 'development' || taskType === 'testing' || taskType === 'ops';
+    const needsTerminal = taskType === 'development' || taskType === 'testing' || taskType === 'ops';
+    const needsUiApiData = taskType === 'development' || taskType === 'testing';
+
+    const matrix: LoopVerificationEntry[] = [];
+    if (needsCompile) {
+      matrix.push({ dimension: 'compile', passed: false, evidence: [], note: 'pending', updatedAt: now });
+    }
+    if (needsUiApiData) {
+      matrix.push({ dimension: 'ui', passed: false, evidence: [], note: 'pending', updatedAt: now });
+      matrix.push({ dimension: 'api', passed: false, evidence: [], note: 'pending', updatedAt: now });
+      matrix.push({ dimension: 'data', passed: false, evidence: [], note: 'pending', updatedAt: now });
+    }
+    if (needsTerminal) {
+      matrix.push({ dimension: 'terminal', passed: false, evidence: [], note: 'pending', updatedAt: now });
+    }
+
+    // 至少保留一个维度，避免空矩阵
+    if (matrix.length === 0) {
+      matrix.push({ dimension: 'terminal', passed: true, evidence: ['analysis task - no build verification needed'], note: 'skipped', updatedAt: now });
+    }
+
+    return matrix;
   }
 
   private docPath(type: string, objective: string): string {

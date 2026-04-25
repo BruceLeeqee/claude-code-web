@@ -13,7 +13,7 @@ import {
   CUSTOM_ELEMENTS_SCHEMA,
 } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-import { NgFor, NgIf, NgTemplateOutlet } from '@angular/common';
+import { NgFor, NgIf, NgTemplateOutlet, NgSwitch, NgSwitchCase, NgSwitchDefault } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
@@ -130,10 +130,8 @@ const WORKSPACE_AT_VAULT_HIDDEN_DIRS = new Set([
   '01-HUMAN-NOTES',
   '02-AGENT-MEMORY',
   '03-AGENT-TOOLS',
-  '03-PROJECTS',
-  '04-RESOURCES',
+  '04-PROJECTS',
   '05-RESOURCES',
-  '05-SYSTEM',
   '06-SYSTEM',
 ]);
 
@@ -363,6 +361,9 @@ function parsePlanStepsFromText(text: string): string[] {
     NzProgressModule,
     WorkbenchMonacoEditorComponent,
     MultiAgentSidebarComponent,
+    NgSwitch,
+    NgSwitchCase,
+    NgSwitchDefault,
   ],
   schemas: [CUSTOM_ELEMENTS_SCHEMA],
   templateUrl: './workbench.page.html',
@@ -647,6 +648,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private thinkingBuffer = '';
   private thinkingPrintedLen = 0;
   private thinkingHasNonChinese = false;
+  /** 本轮助手回答输出缓冲（避免逐字输出） */
+  private answerBuffer = '';
+  private answerPrintedLen = 0;
   /** 本轮流式输出占用的物理行数（用于结束后折叠 Thinking 区） */
   private streamConsumedLines = 0;
   /** 本轮助手回答纯文本（用于折叠后重绘） */
@@ -746,7 +750,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     void this.bootstrapWorkspace();
     void this.loadAgentSessionsFromVault();
     this.syncCoordinatorState();
-    this.ensureDefaultTeamReady();
     void this.rebuildMemoryPanel();
     void this.hydrateRecentTurnsFromMemory();
     void this.reloadInstalledSkills();
@@ -964,10 +967,29 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly loopGatheringMode = signal(false);
   /** loop 需求收集的原始目标 */
   protected readonly loopGatheringGoal = signal('');
+  /** /loop 是否建议多智能体协作 */
+  protected readonly loopPendingUseMultiAgent = signal(false);
+  /** /loop 是否已回显过用户输入，避免重复写入 */
+  protected readonly loopInputEchoed = signal(false);
   /** Loop 视图模式：'cards'（卡片，默认）| 'terminal'（命令行） */
   protected readonly loopViewMode = signal<'cards' | 'terminal'>('cards');
   /** 当前 Loop 会话状态（从 LoopCommandService 获取） */
   protected readonly currentLoopState = signal<import('./debug/loop-command.types').LoopState | null>(null);
+
+  // ── 多任务管理 ──
+  /** 所有 Loop 任务的摘要列表 */
+  protected readonly loopTaskList = signal<import('./debug/loop-command.types').LoopState[]>([]);
+  /** 当前活动查看的 Loop 任务 sessionId */
+  protected readonly activeLoopSessionId = signal<string>('');
+  /** 当前选中的文档 ID（用于高亮） */
+  protected readonly selectedDocId = signal<string>('');
+
+  /** Loop 自动调度 interval ID（用于停止调度） */
+  private loopScheduleIntervalId: ReturnType<typeof setInterval> | null = null;
+  /** 按 sessionId 分组的日志缓冲（支持多任务切换查看） */
+  private loopLogBuffers = new Map<string, string[]>();
+  /** Loop 日志缓冲的最大行数 */
+  private readonly LOOP_LOG_BUFFER_MAX = 100;
 
   /** 切换 Loop 视图模式 */
   protected toggleLoopViewMode(): void {
@@ -985,6 +1007,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected refreshLoopState(): void {
     const state = this.loopCommand.get(SESSION_ID);
     this.currentLoopState.set(state);
+    // 同步更新 loopTaskList 中该任务的最新状态
+    if (state) {
+      this.loopTaskList.update((list) =>
+        list.map((t) => t.taskId === state.taskId ? state : t),
+      );
+    }
   }
 
   /** 获取 Loop 状态 CSS class */
@@ -1000,6 +1028,40 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       case 'planning': return 'status-planning';
       default: return 'status-idle';
     }
+  }
+
+  protected getLoopPhaseLabel(): string {
+    const phase = this.currentLoopState()?.phase ?? 'planning';
+    const map: Record<string, string> = {
+      planning: '思考中',
+      executing: '执行中',
+      verifying: '验证中',
+      blocked: '阻塞中',
+      paused: '等待中',
+      completed: '已完成',
+      failed: '失败',
+      ready_for_release: '待发布',
+      ready_for_review: '待审阅',
+    };
+    return map[phase] ?? map[this.currentLoopState()?.status ?? ''] ?? '思考中';
+  }
+
+  protected getLoopStatusTone(): 'thinking' | 'running' | 'blocked' | 'success' {
+    const s = this.currentLoopState()?.status ?? 'idle';
+    if (s === 'blocked' || s === 'failed') return 'blocked';
+    if (s === 'completed' || s === 'ready_for_release' || s === 'ready_for_review') return 'success';
+    if (s === 'executing' || s === 'verifying') return 'running';
+    return 'thinking';
+  }
+
+  protected getLoopSectionTitle(): string {
+    return this.currentLoopState()?.objective ? `Loop · ${this.currentLoopState()!.objective}` : 'Loop';
+  }
+
+  protected getLoopActiveStep(): string {
+    const state = this.currentLoopState();
+    if (!state) return '无';
+    return state.currentPlan[0]?.title ?? state.completedSteps[0]?.title ?? '等待计划生成';
   }
 
   /** 从工具栏执行 Loop step */
@@ -1381,14 +1443,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.stepInProgress.set(state.steps.filter((s: CoordinationStep) => s.status === 'in_progress').length);
     this.stepPending.set(state.steps.filter((s: CoordinationStep) => s.status === 'pending').length);
     this.sessionCostUsd.set(0);
-  }
-
-  private ensureDefaultTeamReady(): void {
-    const vm = this.teammateTeamVm();
-    if (vm?.teammates?.length) return;
-    if (this.teammateBackendMode() === 'auto') {
-      this.setTeammateMode('in-process');
-    }
   }
 
   /** 将历史消息与工具轨迹合并为右栏「捕获的记忆」 */
@@ -3119,17 +3173,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
     const mk = term.registerMarker(0);
     if (mk) this.assistantStreamOutputStartMarker = mk;
-    const trimmed = userPrompt.replace(/\r\n/g, '\n').trim();
-    const escaped = trimmed.replaceAll('\n', '\r\n');
-    let body = `\r\x1b[2K\x1b[36m[用户]\x1b[0m ${escaped}`;
     const thinkingEligible = cfg.showThinking && !cfg.thinkingVerboseMode;
     if (thinkingEligible) {
       const id = this.ensureStreamingThinkingBlockId();
-      body += `\r\n\x1b[90m[Thinking #${id}]\x1b[0m `;
+      const thHeader = `\r\n\x1b[90m[Thinking #${id}]\x1b[0m `;
+      this.aiXtermWrite(thHeader);
+      this.bumpStreamLineBudgetForWrite(thHeader);
       this.thinkingHeaderShown = true;
     }
-    this.aiXtermWrite(body);
-    this.bumpStreamLineBudgetForWrite(body);
   }
 
   private disposeAssistantStreamOutputStartMarker(): void {
@@ -4062,7 +4113,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private renderAnswerHeader(): void {
     const label = this.workbenchMode.isDevMode() ? '架构师' : '超体';
-    const hdr = `\r\n\x1b[35m[${label}]\x1b[0m `;
+    const hdr = `\x1b[35m[${label}]\x1b[0m `;
     this.aiXtermWrite(hdr);
     this.bumpStreamLineBudgetForWrite(hdr);
     this.ensureAssistantStreamOutputStartMarker();
@@ -4172,16 +4223,18 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         },
         onAnswerText: (text) => {
           this.roundAnswerAccumulator += text;
-          if (cfg.layoutSplitThinkingAnswer && !this.answerHeaderShown) {
-            this.renderAnswerHeader();
-            this.answerHeaderShown = true;
-          }
           if (!this.assistantStreamOutputStartMarker) this.ensureAssistantStreamOutputStartMarker();
           
-          const filteredText = this.filterConsecutiveNewlines(text);
+          this.answerBuffer += text;
+          const rest = this.answerBuffer.slice(this.answerPrintedLen);
+          // Buffer at least 5 characters to avoid character-by-character output
+          if (rest && rest.length >= 5) {
+            const filteredText = this.filterConsecutiveNewlines(rest).replace(/\r?\n+/g, ' ');
           if (filteredText) {
             this.aiXtermWrite(filteredText);
             this.bumpStreamLineBudgetForWrite(filteredText);
+          }
+            this.answerPrintedLen = this.answerBuffer.length;
           }
         },
       },
@@ -4835,6 +4888,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       // 与正常结束保持一致：仅标记中断并停止流，不在此处提前清空 thinking 状态
       // 最终由 askAssistant finally 中的 finalizeAssistantStreamUi 统一收口，确保思考过程按折叠态隐藏
       this.streamInterruptRequested = true;
+      this.terminalBusy.set(false);
       try {
         this.streamStop();
       } catch {
@@ -4842,6 +4896,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
       this.streamStop = undefined;
       void this.streamReader?.cancel();
+      this.writeMainTerminalPrompt();
       return;
     }
 
@@ -5079,6 +5134,30 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
+    if (this.activeTab() === 'Loop / Task') {
+      const loopHandled = await this.handleLoopTabInput(t);
+      if (loopHandled) return;
+    }
+
+    if (/^\/team\b/i.test(t)) {
+      this.pushHistory(t);
+      const processedTeam = await this.commandProcessing.process(t, {
+        sessionId: SESSION_ID,
+        mode: this.runtime.coordinator.getState().mode,
+        source: 'user',
+      }, {
+        source: 'user',
+        preservePrefixes: false,
+        allowBridgeSlashCommands: true,
+      });
+      if (processedTeam.executionResult.responseType !== 'directive') {
+        this.presentUnifiedCommandEntry(processedTeam.executionResult);
+        return;
+      }
+      await this.runDirective(processedTeam.preprocessed.normalized);
+      return;
+    }
+
     this.pushHistory(t);
 
     const processed = await this.commandProcessing.process(t, {
@@ -5096,6 +5175,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       if (processed.executionResult.metadata?.['mode'] === 'loop-gathering') {
         this.loopGatheringMode.set(true);
         this.loopGatheringGoal.set(String(processed.executionResult.metadata?.['goal'] ?? ''));
+        this.loopPendingUseMultiAgent.set(Boolean(processed.executionResult.metadata?.['useMultiAgent']));
+        this.loopInputEchoed.set(false);
         // 展示需求问题到主终端
         this.presentUnifiedCommandEntry(processed.executionResult);
         // 检测是否需要进入 loop 页（已有 tabKey 的情况走原有逻辑）
@@ -5108,7 +5189,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       // debug 命令不在主终端展示任何内容（结果在独立 debug 终端 tab 中展示）
       const isTerminalTabDirective = processed.executionResult.responseType === 'directive' &&
         /^\/debug\b/i.test(processed.preprocessed.normalized.trim());
-      if (!isTerminalTabDirective) {
+      
+      // 对于 natural 或 fallback 路由，不调用 presentUnifiedCommandEntry，避免重复输出用户输入
+      const isNaturalOrFallback = processed.executionResult.responseType === 'fallback' || 
+                                  processed.routeResult.route === 'natural' ||
+                                  (processed.executionResult.responseType !== 'directive' && 
+                                   processed.executionResult.responseType !== 'shell');
+
+      if (!isTerminalTabDirective && !isNaturalOrFallback) {
         this.presentUnifiedCommandEntry(processed.executionResult);
       }
 
@@ -5255,61 +5343,428 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   /** 处理 Loop 需求收集阶段的用户输入 */
   private async handleLoopGatheringInput(input: string): Promise<void> {
-    // 显示用户输入
-    this.aiXtermWrite(`\r\n\x1b[90m[用户]\x1b[0m ${input}\r\n`);
+    if (!this.loopInputEchoed()) {
+      this.aiXtermWrite(`\r\n\x1b[90m[用户]\x1b[0m ${input}\r\n`);
+      this.loopInputEchoed.set(true);
+    }
 
     if (WorkbenchPageComponent.LOOP_CONFIRM_WORDS.test(input)) {
-      // 用户确认 → 创建 LoopState 并进入 Loop 页
       await this.confirmAndEnterLoop();
       return;
     }
 
     if (WorkbenchPageComponent.LOOP_CANCEL_WORDS.test(input)) {
-      // 用户取消
       this.loopGatheringMode.set(false);
       this.loopGatheringGoal.set('');
+      this.loopPendingUseMultiAgent.set(false);
+      this.loopInputEchoed.set(false);
       this.aiXtermWrite('\x1b[33m[loop] 需求收集已取消。\x1b[0m\r\n');
       this.writeMainTerminalPrompt();
       return;
     }
 
-    // 普通回答：记录并在终端显示，继续等待
     this.aiXtermWrite('\x1b[90m[loop] 已记录。继续回答问题，或输入"确认"进入执行页面、"取消"退出。\x1b[0m\r\n');
     this.writeMainTerminalPrompt();
   }
 
-  /** 确认需求并创建 Loop 会话，进入 Loop tab */
+  /** Loop tab 中的输入：用于继续执行或回到主终端 */
+  private async handleLoopTabInput(input: string): Promise<boolean> {
+    const t = input.trim();
+    if (!t) return false;
+
+    if (WorkbenchPageComponent.LOOP_CANCEL_WORDS.test(t)) {
+      this.aiXtermWrite('\x1b[33m[loop] 已退出当前 Loop 任务。\x1b[0m\r\n');
+      this.setTab('Terminal - Main');
+      return true;
+    }
+
+    if (WorkbenchPageComponent.LOOP_CONFIRM_WORDS.test(t)) {
+      this.aiXtermWrite('\x1b[36m[loop] 当前任务继续执行中。\x1b[0m\r\n');
+      await this.executeLoopCycleOnce(this.activeLoopSessionId() || SESSION_ID);
+      return true;
+    }
+
+    if (/^\/team\b/i.test(t)) {
+      this.aiXtermWrite('\x1b[36m[team] 将在主终端处理团队创建命令。\x1b[0m\r\n');
+      this.setTab('Terminal - Main');
+      await this.dispatchMainTerminalLine(t);
+      return true;
+    }
+
+    await this.dispatchMainTerminalLine(t);
+    return true;
+  }
+
+  /** 确认需求并创建 Loop 会话，进入 Loop tab，自动立即执行 */
   private async confirmAndEnterLoop(): Promise<void> {
     const goal = this.loopGatheringGoal();
     const sessionId = SESSION_ID;
+    const useMultiAgent = this.loopPendingUseMultiAgent();
 
-    // 创建 LoopState
     const state = this.loopCommand.start(`/loop ${goal}`, sessionId);
     if (!state) {
       this.loopGatheringMode.set(false);
+      this.loopPendingUseMultiAgent.set(false);
+      this.loopInputEchoed.set(false);
       this.aiXtermWrite('\x1b[31m[loop] 无法启动 Loop 会话。\x1b[0m\r\n');
       this.writeMainTerminalPrompt();
       return;
     }
 
-    // 退出收集模式
     this.loopGatheringMode.set(false);
     this.loopGatheringGoal.set('');
+    this.loopInputEchoed.set(false);
+    this.loopPendingUseMultiAgent.set(false);
 
-    // 设置当前状态供卡片视图使用
+    this.loopTaskList.update((list) => {
+      if (list.some((t) => t.loopId === state.loopId)) return list;
+      return [...list, state];
+    });
+    this.activeLoopSessionId.set(state.taskId);
     this.currentLoopState.set(state);
+    this.loopLogBuffers.set(state.taskId, []);
 
-    // 打开 Loop / Task tab
     const tabKey = 'Loop / Task';
     this.addTabIfMissing(tabKey);
     this.activeTab.set(tabKey);
-
-    // 重置视图模式为卡片（默认）
     this.loopViewMode.set('cards');
 
-    // 主终端提示已切换
-    this.aiXtermWrite('\x1b[36m[loop]\x1b[0m 已进入 \x1b[33mLoop 执行页面\x1b[0m（查看右侧 Tab）\r\n');
+    this.aiXtermWrite('\x1b[36m[loop]\x1b[0m 已进入 \x1b[33mLoop 执行页面\x1b[0m，任务自动立即执行...\r\n');
     this.writeMainTerminalPrompt();
+
+    this.renderLoopThoughtBox([
+      `目标：${goal}`,
+      `任务初稿：${state.taskType}`,
+      useMultiAgent ? '路径：多智能体协作' : '路径：单智能体执行',
+      '状态：需求已进入分析与调度阶段',
+    ]);
+    this.renderLoopStatusBox([
+      `会话：${state.taskId}`,
+      `状态：${state.status}`,
+      `阶段：${state.phase}`,
+      `轮次：${state.iteration}/${state.maxIterations}`,
+      `团队：${state.teamName}`,
+    ]);
+    this.renderLoopPathBox([
+      useMultiAgent ? '复杂度较高，建议多智能体协作。' : '任务较简单，采用单智能体即可。',
+      useMultiAgent ? '策略：拆分为规划 / 实现 / 验证' : '策略：直接进入执行与验证',
+    ]);
+    this.renderLoopExecutionLog(['已创建任务卡片并开始调度执行']);
+
+    if (useMultiAgent && this.multiAgentSidebar) {
+      this.multiAgentSidebar.setCurrentRequest(goal);
+      this.multiAgentSidebar.setDefaultAgentStatus('thinking');
+      this.multiAgentSidebar.processRequest(goal).catch((error) => {
+        this.renderLoopExecutionLog([`智能体请求失败：${error instanceof Error ? error.message : String(error)}`]);
+      });
+    }
+
+    if (!useMultiAgent) {
+      this.renderLoopExecutionLog(['已选择单智能体路径，等待主模型生成方案']);
+    }
+
+    void this.askAssistant(
+      `请根据以下 Loop 目标生成执行方案、必要文档与下一步建议，要求先给出可执行计划，再继续推进：${goal}`,
+      { skipTerminalUserLineAnchor: true },
+    );
+
+    await this.executeLoopCycleOnce(sessionId);
+    this.startLoopAutoSchedule(sessionId);
+  }
+
+  /** 执行一次 Loop cycle（1-3 步），并刷新状态和日志 */
+  private async executeLoopCycleOnce(sessionId: string): Promise<void> {
+    const state = this.loopCommand.get(sessionId);
+    if (!state) return;
+
+    // 如果已达终止状态或暂停状态（等待 Agent），停止调度
+    if (this.isLoopTerminalStatus(state.status)) {
+      this.stopLoopAutoSchedule();
+      return;
+    }
+
+    // 如果正在等待 Agent（implementation 步骤），暂停调度
+    if (state.status === 'paused') {
+      const waitingStep = state.currentPlan[0]?.title ?? '未知步骤';
+      this.renderLoopStatusBox([
+        `会话：${state.taskId}`,
+        `状态：${state.status}`,
+        `阶段：${state.phase}`,
+        `轮次：${state.iteration}/${state.maxIterations}`,
+        `当前等待：${waitingStep}`,
+      ]);
+      this.renderLoopExecutionLog([
+        `⏸ 等待 Agent 执行: ${waitingStep}（请等待 Agent 完成后手动触发）`,
+      ]);
+      this.refreshLoopState();
+      this.stopLoopAutoSchedule();
+      return;
+    }
+
+    // 如果当前计划为空（无待执行步骤），停止调度
+    if (state.currentPlan.length === 0 && state.completedSteps.length > 0) {
+      this.appendLoopLog(`[${new Date().toLocaleTimeString('zh-CN')}] ✅ 所有任务已完成`);
+      this.refreshLoopState();
+      this.stopLoopAutoSchedule();
+      return;
+    }
+
+    try {
+      // 执行一轮（最多 3 步）
+      const results = await this.loopExecutor.runCycle(sessionId, 3);
+
+      // 无结果（步骤全部被跳过）
+      if (results.length === 0) {
+        this.renderLoopExecutionLog([`${new Date().toLocaleTimeString('zh-CN')} ⏹ 无可执行步骤，Loop 停止`]);
+        this.stopLoopAutoSchedule();
+        return;
+      }
+
+      for (const result of results) {
+        const executedStep = result.executedStep;
+        const timestamp = new Date().toLocaleTimeString('zh-CN');
+        const stepLine = executedStep
+          ? `${timestamp} ${result.state.status === 'paused' ? '⏸' : result.verification.passed ? '✓' : '✗'} ${executedStep.title} → ${result.state.status}`
+          : `${timestamp} 执行完成 → ${result.state.status}`;
+        this.renderLoopExecutionLog([stepLine, ...(result.verification.blockers.length > 0 ? [`⚠ 阻塞: ${result.verification.blockers.join('; ')}`] : [])]);
+      }
+
+      // 刷新卡片状态
+      const latestState = this.loopCommand.get(sessionId);
+      this.refreshLoopState();
+
+      // 如果已达终止状态或暂停状态，停止调度
+      if (latestState && (this.isLoopTerminalStatus(latestState.status) || latestState.status === 'paused')) {
+        if (latestState.status === 'paused') {
+          this.renderLoopStatusBox([
+            `会话：${latestState.taskId}`,
+            `状态：${latestState.status}`,
+            `当前等待：${latestState.currentPlan[0]?.title ?? '等待下一步'}`,
+          ]);
+        } else {
+          this.renderLoopStatusBox([
+            `会话：${latestState.taskId}`,
+            `状态：${latestState.status}`,
+            `阶段：${latestState.phase}`,
+          ]);
+        }
+        this.stopLoopAutoSchedule();
+      }
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      this.appendLoopSection('执行日志', [`❌ 执行异常: ${errMsg}`]);
+      this.refreshLoopState();
+    }
+  }
+
+  /** 启动 Loop 自动调度 */
+  private startLoopAutoSchedule(sessionId: string): void {
+    // 先停止已有的调度
+    this.stopLoopAutoSchedule();
+
+    this.loopScheduleIntervalId = setInterval(async () => {
+      const state = this.loopCommand.get(sessionId);
+      if (!state || this.isLoopTerminalStatus(state.status)) {
+        this.stopLoopAutoSchedule();
+        return;
+      }
+      await this.executeLoopCycleOnce(sessionId);
+    }, 5000);
+  }
+
+  /** 停止 Loop 自动调度 */
+  private stopLoopAutoSchedule(): void {
+    if (this.loopScheduleIntervalId !== null) {
+      clearInterval(this.loopScheduleIntervalId);
+      this.loopScheduleIntervalId = null;
+    }
+  }
+
+  /** 判断 Loop 状态是否为终止状态 */
+  private isLoopTerminalStatus(status: string): boolean {
+    return ['completed', 'ready_for_release', 'failed', 'blocked', 'paused'].includes(status);
+  }
+
+  /** 追加一行 Loop 日志到当前活动任务的缓冲 */
+  private appendLoopLog(line: string): void {
+    const sid = this.activeLoopSessionId();
+    if (!sid) return;
+    let buf = this.loopLogBuffers.get(sid);
+    if (!buf) { buf = []; this.loopLogBuffers.set(sid, buf); }
+    buf.push(line);
+    if (buf.length > this.LOOP_LOG_BUFFER_MAX) buf.shift();
+  }
+
+  private appendLoopSection(title: string, bodyLines: string[]): void {
+    const width = 58;
+    const header = `╭─ ${title} ${'─'.repeat(Math.max(4, width - title.length - 3))}`;
+    this.appendLoopLog(header);
+    for (const line of bodyLines) {
+      this.appendLoopLog(`│ ${line}`);
+    }
+    this.appendLoopLog(`╰${'─'.repeat(Math.max(4, width - 1))}`);
+  }
+
+  private renderLoopThoughtBox(lines: string[]): void {
+    this.appendLoopSection('思考框', lines);
+  }
+
+  private renderLoopStatusBox(lines: string[]): void {
+    this.appendLoopSection('状态块', lines);
+  }
+
+  private renderLoopPathBox(lines: string[]): void {
+    this.appendLoopSection('路径判断', lines);
+  }
+
+  private renderLoopExecutionLog(lines: string[]): void {
+    this.appendLoopSection('执行日志', lines);
+  }
+
+  /** 获取当前活动 Loop 任务的日志缓冲（供模板使用） */
+  protected getLoopLogBuffer(): string[] {
+    const sid = this.activeLoopSessionId();
+    return sid ? (this.loopLogBuffers.get(sid) ?? []) : [];
+  }
+
+  /** 切换当前查看的 Loop 任务 */
+  protected selectLoopTask(sessionId: string): void {
+    this.activeLoopSessionId.set(sessionId);
+    const task = this.loopTaskList().find((t) => t.taskId === sessionId || t.loopId === sessionId);
+    if (task) {
+      this.currentLoopState.set(task);
+      // 切换到终端视图以显示该任务的日志
+      this.loopViewMode.set('terminal');
+      this.appendLoopLog(`[${new Date().toLocaleTimeString('zh-CN')}] 🔎 切换任务卡片：${task.objective}`);
+      this.appendLoopLog(`[${new Date().toLocaleTimeString('zh-CN')}] ▶ 重新聚焦任务执行上下文，准备渲染思考过程`);
+      this.renderTaskTerminalContext(task.taskId);
+      setTimeout(() => {
+        this.initDebugXterm();
+        this.debugFitAddon?.fit();
+        // 将该任务的历史日志渲染到 xterm
+        const logs = this.loopLogBuffers.get(task.taskId) ?? [];
+        for (const line of logs) {
+          this.debugXtermWrite(line + '\r\n');
+        }
+        this.debugXterm?.focus();
+      }, 0);
+    }
+  }
+
+  private renderTaskTerminalContext(sessionId: string): void {
+    const task = this.loopTaskList().find((t) => t.taskId === sessionId || t.loopId === sessionId);
+    if (!task) return;
+
+    const lines = [
+      `[${new Date().toLocaleTimeString('zh-CN')}] ╭─ Loop 任务上下文`,
+      `[${new Date().toLocaleTimeString('zh-CN')}] │ 目标：${task.objective}`,
+      `[${new Date().toLocaleTimeString('zh-CN')}] │ 类型：${task.taskType}`,
+      `[${new Date().toLocaleTimeString('zh-CN')}] │ 状态：${task.status}`,
+      `[${new Date().toLocaleTimeString('zh-CN')}] │ 轮次：${task.iteration}/${task.maxIterations}`,
+      `[${new Date().toLocaleTimeString('zh-CN')}] │ 当前计划：${task.currentPlan[0]?.title ?? '无'}`,
+      `[${new Date().toLocaleTimeString('zh-CN')}] │ 已完成：${task.completedSteps.length}`,
+      `[${new Date().toLocaleTimeString('zh-CN')}] │ 文档：${task.stepDocs.length}`,
+      `[${new Date().toLocaleTimeString('zh-CN')}] │ 工件：${task.artifacts.length}`,
+      `[${new Date().toLocaleTimeString('zh-CN')}] ╰─ 正在等待智能体/终端执行结果`,
+    ];
+    for (const line of lines) this.appendLoopLog(line);
+  }
+
+  /** 获取任务状态对应的 CSS class */
+  protected getTaskStatusClass(status: string): string {
+    switch (status) {
+      case 'executing': return 'status-executing';
+      case 'verifying': return 'status-verifying';
+      case 'completed': case 'ready_for_release': case 'ready_for_review': return 'status-completed';
+      case 'failed': return 'status-failed';
+      case 'blocked': return 'status-blocked';
+      case 'paused': return 'status-paused';
+      case 'planning': return 'status-planning';
+      default: return 'status-idle';
+    }
+  }
+
+  /** 打开 Loop 文档到编辑器 Tab 查看内容 */
+  protected async openLoopDoc(doc: import('./debug/loop-command.types').LoopStepDoc): Promise<void> {
+    this.selectedDocId.set(doc.id);
+    const tabLabel = `📄 ${doc.title}`;
+    this.addTabIfMissing(tabLabel);
+
+    let content = doc.content ?? '';
+    // 尝试从 vault 文件系统读取最新内容
+    if (!content && typeof window !== 'undefined' && window.zytrader?.fs?.read) {
+      try {
+        const result = await window.zytrader.fs.read(doc.path, { scope: 'vault' });
+        if (result.ok && result.content) {
+          content = result.content;
+        }
+      } catch {
+        content = `# ${doc.title}\n\n> 文档路径: ${doc.path}\n> 创建时间: ${doc.createdAt}\n\n文档内容正在生成中，请稍候...`;
+      }
+    }
+    if (!content) {
+      content = `# ${doc.title}\n\n> 文档路径: ${doc.path}\n> 创建时间: ${doc.createdAt}\n\n（暂无内容）`;
+    }
+
+    this.tabEditorState.set(tabLabel, {
+      relPath: doc.path,
+      content,
+      previewKind: 'code',
+      dirty: false,
+      fsScope: 'vault',
+    });
+    this.activeTab.set(tabLabel);
+    this.selectedPath.set(doc.path);
+    this.selectedContent.set(content);
+    this.previewKind.set('code');
+    this.editorDirty.set(false);
+  }
+
+  /** 打开 Loop 工件文件到编辑器 Tab */
+  protected async openArtifact(artifact: import('./debug/loop-command.types').LoopArtifact): Promise<void> {
+    const tabLabel = `📎 ${artifact.label}`;
+    this.addTabIfMissing(tabLabel);
+
+    let content = '';
+    if (typeof window !== 'undefined' && window.zytrader?.fs?.read) {
+      try {
+        const scope = artifact.path.startsWith('02-AGENT-MEMORY') ? ('vault' as const) : ('workspace' as const);
+        const result = await window.zytrader.fs.read(artifact.path, { scope });
+        if (result.ok && result.content) {
+          content = result.content;
+        }
+      } catch {
+        content = `# ${artifact.label}\n\n> 路径: ${artifact.path}\n> 类型: ${artifact.kind}\n\n无法读取文件内容`;
+      }
+    }
+    if (!content) {
+      content = `# ${artifact.label}\n\n> 路径: ${artifact.path}\n> 类型: ${artifact.kind}\n\n（空文件或无法读取）`;
+    }
+
+    this.tabEditorState.set(tabLabel, {
+      relPath: artifact.path,
+      content,
+      previewKind: 'code',
+      dirty: false,
+      fsScope: artifact.path.startsWith('02-AGENT-MEMORY') ? 'vault' : 'workspace',
+    });
+    this.activeTab.set(tabLabel);
+    this.selectedPath.set(artifact.path);
+    this.selectedContent.set(content);
+    this.previewKind.set('code');
+    this.editorDirty.set(false);
+  }
+
+  /** 获取文档状态 CSS class */
+  protected getDocStatusClass(doc: import('./debug/loop-command.types').LoopStepDoc): string {
+    if (doc.content) return 'ready';
+    return 'pending';
+  }
+
+  /** 获取文档状态标签 */
+  protected getDocStatusLabel(doc: import('./debug/loop-command.types').LoopStepDoc): string {
+    if (doc.content) return '可查看';
+    return '生成中';
   }
 
   private async runDirective(raw: string): Promise<void> {
@@ -5325,7 +5780,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       },
     });
 
-    // 有 tabKey 的命令结果（/debug, /loop）展示到独立终端 tab，主终端不输出任何内容
+    // 有 tabKey 的命令结果（/debug, /loop）展示到独立终端 tab，主终端不输出重复内容
     const hasTabKey = !!result.metadata?.['tabKey'];
     if (hasTabKey) {
       const tabKey = String(result.metadata!['tabKey']);
@@ -5334,19 +5789,23 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.addTabIfMissing(tabKey);
 
       if (isLoop) {
-        // Loop tab：不需要 debugPayload.viewModel，直接写入内容
         this.activeTab.set(tabKey);
         setTimeout(() => {
           this.initDebugXterm();
+          this.debugXterm?.clear();
+          const modeLine = String(result.metadata?.['useMultiAgent']) === 'true' || result.metadata?.['useMultiAgent'] === true
+            ? '\x1b[36m[思考]\x1b[0m 任务复杂度较高，已进入多智能体评估路径\r\n'
+            : '\x1b[36m[思考]\x1b[0m 任务复杂度较低，保持单智能体路径\r\n';
           if (result.content) {
-            this.debugXtermWrite(`${result.content}\r\n`);
+            this.debugXtermWrite(`${modeLine}${result.content}\r\n`);
+          } else {
+            this.debugXtermWrite(modeLine);
           }
           this.writeDebugTerminalPrompt();
           this.debugFitAddon?.fit();
           this.debugXterm?.focus();
         }, 0);
       } else {
-        // Debug tab：需要 debugPayload.viewModel
         const payload = result.metadata?.['debugPayload'] as import('./debug/debug-command.types').DebugTabPayload | undefined;
         if (payload?.viewModel) {
           this.currentDebugPayload.set(payload);
@@ -5363,7 +5822,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         }
       }
 
-      // 主终端写新提示符
       this.writeMainTerminalPrompt();
     } else {
       this.renderCommandPresentation(this.commandPresentation.formatExecutionResult(
@@ -5382,12 +5840,23 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.workbenchMode.switchMode('plan', '用户指令切换');
       } else if (mode === 'dev') {
         this.workbenchMode.switchMode('dev', '用户指令切换');
+      } else if (mode === 'team') {
+        this.workbenchMode.switchMode('dev', 'team 指令创建团队');
         try {
           await this.workbenchMode.initializeDevTeam();
         } catch (e) {
-          this.renderCommandPresentation(this.commandPresentation.formatExecutionResult('error', 'directive', false, `初始化开发团队失败: ${e}`));
+          this.renderCommandPresentation(this.commandPresentation.formatExecutionResult('error', 'directive', false, `创建团队失败: ${e}`));
         }
       }
+    }
+
+    if (result.metadata?.['teamCreate']) {
+      this.setTab('Loop / Task');
+      this.aiXtermWrite(`\r\n\x1b[36m[team]\x1b[0m 团队已创建：${String(result.metadata['teamName'] ?? 'team')}\r\n`);
+    }
+
+    if (result.metadata?.['tabKey'] && String(result.metadata['tabKey']) === 'Loop / Task' && this.activeTab() !== 'Loop / Task') {
+      this.setTab('Loop / Task');
     }
 
     if (result.responseType === 'shell') {
@@ -5660,7 +6129,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.terminalBusy.set(true);
           this.streamRequestStartMs = Date.now();
           this.ensureStreamingThinkingBlockId();
-          this.renderCommandPresentation(this.commandPresentation.formatExecutionResult('assistant', 'stream', true, '开始流式输出'));
           if (this.multiAgentSidebar) {
             this.multiAgentSidebar.setDefaultAgentStatus('thinking');
             this.multiAgentSidebar.processRequest(prepared.prompt || '').catch(() => {});
@@ -5852,11 +6320,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       thinkingToggleShortcut: cfg.thinkingToggleShortcut,
       thinkingToggleAllShortcut: cfg.thinkingToggleAllShortcut,
     });
-    await this.appendRecentTurnAfterSuccess(raw);
-    try {
-      await this.triggerMemoryPipelineFromHistory(raw);
-    } catch {
-      /* ignore */
+    if (!this.streamInterruptRequested) {
+      await this.appendRecentTurnAfterSuccess(raw);
+      try {
+        await this.triggerMemoryPipelineFromHistory(raw);
+      } catch {
+        /* ignore */
+      }
     }
     await this.syncPlanStepsFromLastAssistant();
     this.syncCoordinatorState();
@@ -5865,7 +6335,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     if (this.multiAgentSidebar) {
       this.multiAgentSidebar.setDefaultAgentStatus('idle');
     }
-    this.renderCommandPresentation(this.commandPresentation.formatExecutionResult('assistant', isDev ? 'dev' : 'normal', true, '流式输出完成'));
     await this.refreshWorkbenchContextSnapshot();
     this.writeMainTerminalPrompt();
   }
@@ -6025,7 +6494,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           if (cfg.showThinking) {
             this.thinkingBuffer += value.textDelta;
             const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
-            if (rest) {
+            // Buffer at least 5 characters to avoid character-by-character output
+            if (rest && rest.length >= 5) {
               const visible = this.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(rest) : rest;
               const out = this.highlightThinkingSteps(visible);
               this.aiXtermWrite(out);
@@ -6102,10 +6572,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           }
         }
         
-        await this.appendRecentTurnAfterSuccess(raw);
-        try {
-          await this.triggerMemoryPipelineFromHistory(raw);
-        } catch { /* 记忆管道失败不向主终端刷屏 */ }
+        if (!this.streamInterruptRequested) {
+          await this.appendRecentTurnAfterSuccess(raw);
+          try {
+            await this.triggerMemoryPipelineFromHistory(raw);
+          } catch { /* 记忆管道失败不向主终端刷屏 */ }
+        }
         await this.syncPlanStepsFromLastAssistant();
         this.syncCoordinatorState();
       }
@@ -6489,6 +6961,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.thinkingBuffer = '';
     this.thinkingPrintedLen = 0;
     this.thinkingHasNonChinese = false;
+    this.answerBuffer = '';
+    this.answerPrintedLen = 0;
     this.streamConsumedLines = 0;
     this.roundAnswerAccumulator = '';
     this.streamToolEchoes = [];

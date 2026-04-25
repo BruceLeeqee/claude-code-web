@@ -48,6 +48,9 @@ export interface ApiRequestOptions {
   modelOverride?: Partial<ModelConfig>;
 }
 
+/** DeepSeek 要求工具名匹配 ^[a-zA-Z0-9_-]+$，用双下划线替代点号以保持可逆 */
+const DEEPSEEK_TOOL_NAME_SEP = '__';
+
 /** 通过 Bridge 或直连访问 LLM，支持 Anthropic 兼容 JSON 与 SSE 流 */
 export class ClaudeApiClient {
   private readonly fetchImpl: typeof fetch;
@@ -55,6 +58,8 @@ export class ClaudeApiClient {
   private currentBaseUrl: string;
   private currentApiKey: string | undefined;
   private currentProxy: ProxyConfig | undefined;
+  /** DeepSeek 工具名映射：sanitizedName → originalName */
+  private deepseekToolNameMap: Map<string, string> = new Map();
 
   constructor(private readonly options: ClaudeApiClientOptions) {
     const fallbackFetch = globalThis.fetch?.bind(globalThis);
@@ -120,6 +125,20 @@ export class ClaudeApiClient {
     }
 
     const turn = parseAnthropicMessageJson(raw);
+    // DeepSeek: 还原被清理的工具名
+    if (this.isDeepseekProvider(activeConfig)) {
+      for (const tc of turn.toolCalls) {
+        tc.toolName = this.restoreDeepseekToolName(tc.toolName);
+      }
+      for (const block of turn.assistantContentBlocks) {
+        if (block && typeof block === 'object' && !Array.isArray(block)) {
+          const b = block as Record<string, unknown>;
+          if (b['type'] === 'tool_use' && typeof b['name'] === 'string') {
+            b['name'] = this.restoreDeepseekToolName(b['name'] as string);
+          }
+        }
+      }
+    }
     const rawObj = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
     const apiId = typeof rawObj['id'] === 'string' ? rawObj['id'] : `asst_${Date.now()}`;
 
@@ -198,7 +217,22 @@ export class ClaudeApiClient {
               if (text.length > 0) feedSseChunkWithLines(sse, text, push, pushThinking, onLine);
             }
             flushSseBufferWithLines(sse, push, pushThinking, onLine);
-            controller.enqueue({ type: 'anthropic_turn', turn: acc.finalize() });
+            const turn = acc.finalize();
+            // DeepSeek: 还原被清理的工具名
+            if (this.isDeepseekProvider(activeConfig)) {
+              for (const tc of turn.toolCalls) {
+                tc.toolName = this.restoreDeepseekToolName(tc.toolName);
+              }
+              for (const block of turn.assistantContentBlocks) {
+                if (block && typeof block === 'object' && !Array.isArray(block)) {
+                  const b = block as Record<string, unknown>;
+                  if (b['type'] === 'tool_use' && typeof b['name'] === 'string') {
+                    b['name'] = this.restoreDeepseekToolName(b['name'] as string);
+                  }
+                }
+              }
+            }
+            controller.enqueue({ type: 'anthropic_turn', turn });
           } else {
             while (true) {
               const { done, value } = await reader.read();
@@ -303,7 +337,7 @@ export class ClaudeApiClient {
     return stream ? '/api/llm/stream' : '/api/llm/messages';
   }
 
-  /** 非流式请求头：Anthropic 系用 x-api-key，其余 Bearer */
+  /** 非流式请求头：Anthropic 系用 x-api-key，DeepSeek 用 Bearer，其余 Bearer */
   private resolveHeaders(config: ModelConfig): HeadersInit {
     const apiKey = this.currentApiKey;
     const common = {
@@ -313,6 +347,14 @@ export class ClaudeApiClient {
     if (!apiKey) return createJsonHeaders(common);
 
     if (this.isAnthropicCompatible(config)) {
+      // DeepSeek 虽然走 Anthropic 兼容协议体，但认证要求 Authorization: Bearer
+      if (this.isDeepseekProvider(config)) {
+        return createJsonHeaders({
+          ...common,
+          Authorization: `Bearer ${apiKey}`,
+          'anthropic-version': '2023-06-01',
+        });
+      }
       return createJsonHeaders({
         ...common,
         'x-api-key': apiKey,
@@ -357,7 +399,23 @@ export class ClaudeApiClient {
       if (config.topP !== undefined) body['top_p'] = config.topP;
       if (config.stopSequences !== undefined) body['stop_sequences'] = config.stopSequences as JsonValue;
       if (request.systemPrompt) body['system'] = request.systemPrompt;
-      if (request.tools && request.tools.length > 0) body['tools'] = request.tools as JsonValue;
+      if (config.thinking !== undefined) body['thinking'] = config.thinking as JsonValue;
+      if (request.tools && request.tools.length > 0) {
+        body['tools'] = this.isDeepseekProvider(config)
+          ? this.sanitizeDeepseekTools(request.tools)
+          : request.tools as JsonValue;
+      }
+      if (this.isDeepseekProvider(config)) {
+        this.sanitizeDeepseekRequestBody(body);
+      }
+      // 兜底：无论 tools 来自哪个层，DeepSeek 请求体中所有 tool/function.name 必须是安全字符集
+      if (this.isDeepseekProvider(config)) {
+        this.normalizeDeepseekToolNamesInObject(body);
+      }
+      // DeepSeek: 历史消息中 tool_use 块的 name 也需清理
+      if (this.isDeepseekProvider(config) && this.deepseekToolNameMap.size > 0) {
+        this.sanitizeDeepseekMessageNames(body);
+      }
       return body as JsonValue;
     }
 
@@ -367,10 +425,102 @@ export class ClaudeApiClient {
     } as unknown as JsonValue;
   }
 
+  /** 对请求体 messages 中历史 tool_use 块的 name 做清理（替换 . → __） */
+  private sanitizeDeepseekMessageNames(body: Record<string, JsonValue>): void {
+    const messages = body['messages'];
+    if (!Array.isArray(messages)) return;
+    for (const msg of messages) {
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg)) continue;
+      const content = (msg as Record<string, unknown>)['content'];
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+        const b = block as Record<string, unknown>;
+        if (b['type'] === 'tool_use' && typeof b['name'] === 'string') {
+          const name = b['name'] as string;
+          if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+            b['name'] = name.replace(/\./g, DEEPSEEK_TOOL_NAME_SEP);
+          }
+        }
+      }
+    }
+  }
+
+  /** 递归兜底：任何对象中出现的 name/function.name 都清洗 */
+  private normalizeDeepseekToolNamesInObject(value: JsonValue): void {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const obj = value as Record<string, JsonValue>;
+    for (const [key, child] of Object.entries(obj)) {
+      if (key === 'name' && typeof child === 'string' && !/^[a-zA-Z0-9_-]+$/.test(child)) {
+        const sanitized = child.replace(/\./g, DEEPSEEK_TOOL_NAME_SEP);
+        this.deepseekToolNameMap.set(sanitized, child);
+        obj[key] = sanitized;
+        continue;
+      }
+      if (key === 'function' && child && typeof child === 'object' && !Array.isArray(child)) {
+        this.normalizeDeepseekToolNamesInObject(child);
+        continue;
+      }
+      this.normalizeDeepseekToolNamesInObject(child);
+    }
+  }
+
+  /** 额外清洗 DeepSeek 请求体内的 tools / tool_choice 等结构 */
+  private sanitizeDeepseekRequestBody(body: Record<string, JsonValue>): void {
+    this.sanitizeDeepseekMessageNames(body);
+    this.normalizeDeepseekToolNamesInObject(body['tools'] as JsonValue);
+    this.normalizeDeepseekToolNamesInObject(body['tool_choice'] as JsonValue);
+    this.normalizeDeepseekToolNamesInObject(body['messages'] as JsonValue);
+  }
+
+  /** 对 DeepSeek 不兼容的工具名做 . → __ 替换，并缓存映射以便响应时还原 */
+  private sanitizeDeepseekTools(tools: JsonArray): JsonArray {
+    this.deepseekToolNameMap.clear();
+    return tools.map((t) => this.sanitizeDeepseekToolNode(t));
+  }
+
+  private sanitizeDeepseekToolNode(node: JsonValue): JsonValue {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return node;
+    const obj = node as Record<string, JsonValue>;
+    const next: Record<string, JsonValue> = { ...obj };
+
+    const directName = typeof obj['name'] === 'string' ? (obj['name'] as string) : '';
+    if (directName && !/^[a-zA-Z0-9_-]+$/.test(directName)) {
+      const sanitized = directName.replace(/\./g, DEEPSEEK_TOOL_NAME_SEP);
+      this.deepseekToolNameMap.set(sanitized, directName);
+      next['name'] = sanitized;
+    }
+
+    const functionNode = obj['function'];
+    if (functionNode && typeof functionNode === 'object' && !Array.isArray(functionNode)) {
+      const fn = functionNode as Record<string, JsonValue>;
+      const fnNext: Record<string, JsonValue> = { ...fn };
+      const fnName = typeof fn['name'] === 'string' ? (fn['name'] as string) : '';
+      if (fnName && !/^[a-zA-Z0-9_-]+$/.test(fnName)) {
+        const sanitized = fnName.replace(/\./g, DEEPSEEK_TOOL_NAME_SEP);
+        this.deepseekToolNameMap.set(sanitized, fnName);
+        fnNext['name'] = sanitized;
+      }
+      next['function'] = fnNext as JsonValue;
+    }
+
+    return next as JsonValue;
+  }
+
+  /** 将响应中 DeepSeek 清理过的工具名还原为原始名 */
+  private restoreDeepseekToolName(name: string): string {
+    return this.deepseekToolNameMap.get(name) ?? name;
+  }
+
   /** 是否按 Anthropic Messages API 形状序列化/解析 */
   private isAnthropicCompatible(config: ModelConfig): boolean {
     const model = config.model.toLowerCase();
-    return config.provider === 'anthropic' || config.provider === 'minimax' || model.includes('minimax') || model.includes('abab');
+    return config.provider === 'anthropic' || config.provider === 'minimax' || config.provider === 'deepseek' || model.includes('minimax') || model.includes('abab') || model.includes('deepseek');
+  }
+
+  /** 是否为 DeepSeek 提供商（需要 Bearer 认证而非 x-api-key） */
+  private isDeepseekProvider(config: ModelConfig): boolean {
+    return config.provider === 'deepseek' || config.model.toLowerCase().includes('deepseek');
   }
 }
 

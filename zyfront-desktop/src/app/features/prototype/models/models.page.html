@@ -5,7 +5,6 @@
       <h1 class="hub-title">模型配置</h1>
       <p class="hub-sub">管理你的本地及云端 AI 核心；用量趋势来自本机真实对话记录。</p>
     </div>
-    <button type="button" class="hub-add-btn" (click)="openAddCustom()">+ 添加自定义模型</button>
   </header>
 
   <section class="card-active" [class.card-active--ok]="connectionUi() === 'ok'">
@@ -50,6 +49,9 @@
         </button>
         <button type="button" class="side-btn" (click)="save()">保存配置</button>
         <button type="button" class="side-btn" (click)="resetDefaults()">恢复默认</button>
+        <button type="button" class="side-btn" (click)="clearCache()" style="background: #ef4444;">
+          清空缓存
+        </button>
       </div>
     </div>
   </section>
@@ -61,68 +63,56 @@
     <p class="hub-toast hub-toast--warn">{{ validationMessage() }}</p>
   }
 
-  <section class="card-panel conn-panel">
-    <h3 class="panel-title">连接参数</h3>
-    <div class="conn-grid">
-      <label class="conn-field">
-        <span>API Key</span>
-        <input
-          type="password"
-          [value]="st.apiKey"
-          (input)="onApiKeyInput($any($event.target).value)"
-          placeholder="sk-..."
-        />
-      </label>
-      <label class="conn-field">
-        <span>请求类型</span>
-        <select [value]="requestType()" (change)="applyRequestType($any($event.target).value)">
-          <option value="anthropic">Anthropic 兼容（含 MiniMax 等）</option>
-          <option value="openai">OpenAI</option>
-          <option value="custom">Custom</option>
-        </select>
-      </label>
-      <label class="conn-field">
-        <span>启用代理</span>
-        <select
-          [value]="st.proxy.enabled ? '1' : '0'"
-          (change)="onProxyEnabledChange($any($event.target).value === '1')"
-        >
-          <option value="1">启用</option>
-          <option value="0">禁用</option>
-        </select>
-      </label>
-      <div class="conn-field conn-field--endpoint">
-        <span>请求地址</span>
-        <div class="endpoint-row">
-          <select
-            class="endpoint-preset"
-            aria-label="常用地址"
-            (change)="onEndpointPresetSelect($event)"
-          >
-            <option value="">常用地址…</option>
-            @for (op of requestAddressOptions(); track op.id) {
-              <option [value]="op.url">{{ op.label }}</option>
-            }
-          </select>
-          <input
-            type="text"
-            [value]="endpointInput()"
-            (input)="endpointInput.set($any($event.target).value)"
-            placeholder="https://api.minimaxi.com/anthropic"
-          />
+  <div class="models-hub-grid">
+    <section class="card-trend card-panel">
+      <h3 class="panel-title">TOKEN 消耗趋势（近 7 日）</h3>
+      <p class="panel-sub">每日累计所有助手请求的 input+output tokens</p>
+      <div class="trend-chart-wrap">
+        <svg class="trend-svg" viewBox="0 0 360 88" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="rgba(168, 85, 247, 0.35)" />
+              <stop offset="100%" stop-color="rgba(168, 85, 247, 0)" />
+            </linearGradient>
+          </defs>
+          <polygon class="trend-area" [attr.points]="chartAreaPoints()" fill="url(#trendFill)" />
+          <polyline class="trend-line" [attr.points]="chartLinePoints()" fill="none" stroke="#a855f7" stroke-width="2" vector-effect="non-scaling-stroke" />
+        </svg>
+        <div class="trend-x-labels">
+          @for (d of usageLedger.last7DaysSeries(); track d.key) {
+            <span>{{ d.label }}</span>
+          }
         </div>
       </div>
-      <label class="conn-field">
-        <span>代理 Token</span>
-        <input
-          type="password"
-          [value]="st.proxy.authToken"
-          (input)="onProxyAuthTokenInput($any($event.target).value)"
-          placeholder="token"
-        />
-      </label>
-    </div>
-  </section>
+    </section>
+
+    <section class="card-lib card-panel">
+      <h3 class="panel-title">可用模型库</h3>
+      <p class="panel-sub">切换会立刻生效；自定义模型可删除</p>
+      <ul class="model-lib-list">
+        @for (row of modelLibraryRows(); track row.id) {
+          <li class="model-lib-item">
+            <div class="model-lib-icon" [attr.data-kind]="row.kind">{{ row.kind === 'local' ? '💻' : '☁' }}</div>
+            <div class="model-lib-text">
+              <div class="model-lib-name">{{ row.name }}</div>
+              <div class="model-lib-desc">{{ row.description }}</div>
+              <div class="model-lib-meta">{{ row.providerLabel }} · 窗口 {{ row.maxContextTokens | number }}</div>
+            </div>
+            <div class="model-lib-actions">
+              @if (st.model === row.id) {
+                <span class="model-lib-current">当前</span>
+              } @else {
+                <button type="button" class="model-lib-switch" (click)="switchModel(row.id)">切换</button>
+              }
+              @if (isCustomModel(row.id)) {
+                <button type="button" class="model-lib-delete" (click)="removeCustomModel(row.id)">删除</button>
+              }
+            </div>
+          </li>
+        }
+      </ul>
+    </section>
+  </div>
 
   <section class="card-panel conn-panel">
     <h3 class="panel-title">Vault 根目录与记忆管道</h3>
@@ -213,67 +203,26 @@
     }
   </section>
 
-  <div class="models-hub-grid">
-    <section class="card-trend card-panel">
-      <h3 class="panel-title">TOKEN 消耗趋势（近 7 日）</h3>
-      <p class="panel-sub">每日累计所有助手请求的 input+output tokens</p>
-      <div class="trend-chart-wrap">
-        <svg class="trend-svg" viewBox="0 0 360 88" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="rgba(168, 85, 247, 0.35)" />
-              <stop offset="100%" stop-color="rgba(168, 85, 247, 0)" />
-            </linearGradient>
-          </defs>
-          <polygon class="trend-area" [attr.points]="chartAreaPoints()" fill="url(#trendFill)" />
-          <polyline class="trend-line" [attr.points]="chartLinePoints()" fill="none" stroke="#a855f7" stroke-width="2" vector-effect="non-scaling-stroke" />
-        </svg>
-        <div class="trend-x-labels">
-          @for (d of usageLedger.last7DaysSeries(); track d.key) {
-            <span>{{ d.label }}</span>
-          }
-        </div>
-      </div>
-    </section>
-
-    <section class="card-lib card-panel">
-      <h3 class="panel-title">可用模型库</h3>
-      <p class="panel-sub">切换会立刻生效；自定义模型可删除</p>
-      <ul class="model-lib-list">
-        @for (row of modelLibraryRows(); track row.id) {
-          <li class="model-lib-item">
-            <div class="model-lib-icon" [attr.data-kind]="row.kind">{{ row.kind === 'local' ? '💻' : '☁' }}</div>
-            <div class="model-lib-text">
-              <div class="model-lib-name">{{ row.name }}</div>
-              <div class="model-lib-desc">{{ row.description }}</div>
-              <div class="model-lib-meta">{{ row.providerLabel }} · 窗口 {{ row.maxContextTokens | number }}</div>
-            </div>
-            <div class="model-lib-actions">
-              @if (st.model === row.id) {
-                <span class="model-lib-current">当前</span>
-              } @else {
-                <button type="button" class="model-lib-switch" (click)="switchModel(row.id)">切换</button>
-              }
-              @if (isCustomModel(row.id)) {
-                <button type="button" class="model-lib-delete" (click)="removeCustomModel(row.id)">删除</button>
-              }
-            </div>
-          </li>
-        }
-      </ul>
-    </section>
-  </div>
-
   <section class="card-panel json-config-panel">
     <h3 class="panel-title">配置文件（JSON）</h3>
-    <p class="panel-sub">统一配置模型参数、上下文压缩、成本与主题。合法 JSON 会在停止输入约 0.7s 后自动写入并生效；「保存」可格式化文本框。</p>
+    <p class="panel-sub">统一配置 API Key、模型参数、上下文压缩、成本与主题。合法 JSON 会在停止输入约 0.7s 后自动写入并生效；「保存」可格式化文本框。</p>
     <div class="json-editor-wrap">
       <textarea
         class="json-editor"
         [value]="requestConfigJson()"
         (input)="onRequestConfigJsonInput($event)"
         placeholder='{
-  "provider": "anthropic",
+  "api_keys": {
+    "MiniMax": {
+      "api_key": "你的 MiniMax 密钥"
+    },
+    "DeepSeek": {
+      "api_key": "你的 DeepSeek 密钥"
+    }
+  },
+  "provider": "minimax",
+  "model": "MiniMax-M2.7",
+  "baseUrl": "https://api.minimaxi.com/anthropic",
   "max_tokens": 81920,
   "temperature": 0.2,
   "compression": {
@@ -286,9 +235,51 @@
     "maxSessionCostUsd": 5,
     "warnThresholdUsd": 3
   },
-  "theme": "dark"
+  "theme": "dark",
+  "models": {
+    "MiniMax-M2.7": {
+      "enabled": true,
+      "isActive": true,
+      "baseUrl": "https://api.minimaxi.com/anthropic",
+      "max_tokens": 81920,
+      "temperature": 0.2
+    },
+    "abab6.5s-chat": {
+      "enabled": true,
+      "isActive": false,
+      "baseUrl": "https://api.minimaxi.com/anthropic",
+      "max_tokens": 81920,
+      "temperature": 0.2
+    },
+    "abab6.5g-chat": {
+      "enabled": true,
+      "isActive": false,
+      "baseUrl": "https://api.minimaxi.com/anthropic",
+      "max_tokens": 81920,
+      "temperature": 0.2
+    },
+    "deepseek-v4-flash": {
+      "enabled": true,
+      "isActive": false,
+      "baseUrl": "https://api.deepseek.com",
+      "max_tokens": 81920,
+      "temperature": 0.2
+    },
+    "deepseek-v4-pro": {
+      "enabled": true,
+      "isActive": false,
+      "baseUrl": "https://api.deepseek.com",
+      "max_tokens": 81920,
+      "temperature": 0.2,
+      "thinking": { "type": "enabled" }
+    }
+  }
 }'
       ></textarea>
+    </div>
+    <div class="json-actions">
+      <button type="button" class="side-btn" (click)="saveJsonConfig()">保存配置</button>
+      <button type="button" class="side-btn" (click)="formatJsonConfig()">格式化</button>
     </div>
   </section>
 
@@ -298,24 +289,4 @@
     </p>
   }
 </main>
-}
-
-@if (showAddCustomDialog()) {
-<div class="modal-backdrop" (click)="cancelAddCustom()">
-  <div class="modal-box" (click)="$event.stopPropagation()">
-    <h3>添加自定义模型</h3>
-    <p class="modal-hint">输入模型 id（例如 provider/model-name），会加入模型库并立即切换。</p>
-    <input
-      class="modal-input"
-      type="text"
-      [value]="customModelInput()"
-      (input)="customModelInput.set($any($event.target).value)"
-      placeholder="my-org/model-name"
-    />
-    <div class="modal-actions">
-      <button type="button" class="secondary" (click)="cancelAddCustom()">取消</button>
-      <button type="button" (click)="confirmAddCustom()">添加并切换</button>
-    </div>
-  </div>
-</div>
 }

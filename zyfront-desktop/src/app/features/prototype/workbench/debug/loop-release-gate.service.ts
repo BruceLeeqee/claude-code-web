@@ -46,43 +46,55 @@ export class LoopReleaseGateService {
 
     // 功能实现完成
     const implementationDone = state.completedSteps.some((s) => s.type === 'implementation' && s.status === 'done');
+    const needsImplementation = state.taskType === 'development' || state.taskType === 'testing' || state.taskType === 'ops';
     checklist.push({
       category: 'function',
       label: '功能实现完成',
-      passed: implementationDone,
-      evidence: implementationDone ? '存在已完成的 implementation 步骤' : '缺少已完成的 implementation 步骤',
-      required: true,
+      passed: needsImplementation ? implementationDone : true,
+      evidence: needsImplementation
+        ? (implementationDone ? '存在已完成的 implementation 步骤' : '缺少已完成的 implementation 步骤')
+        : `${state.taskType} 任务不需要功能实现步骤`,
+      required: needsImplementation,
     });
 
-    // 关键测试通过
+    // 关键测试通过（仅开发/测试/运维类任务必需）
+    const needsTests = state.taskType === 'development' || state.taskType === 'testing';
     const testDone = state.completedSteps.some((s) => s.type === 'test' && s.status === 'done');
     const verificationPassed = !validation || validation.passed;
     checklist.push({
       category: 'test',
       label: '关键测试通过',
-      passed: testDone && verificationPassed,
-      evidence: testDone ? (verificationPassed ? '测试完成且验证通过' : '测试完成但验证未通过') : '缺少已完成的测试步骤',
-      required: true,
+      passed: needsTests ? (testDone && verificationPassed) : true,
+      evidence: needsTests
+        ? (testDone ? (verificationPassed ? '测试完成且验证通过' : '测试完成但验证未通过') : '缺少已完成的测试步骤')
+        : `${state.taskType} 任务不需要测试步骤`,
+      required: needsTests,
     });
 
-    // build 成功
+    // build 成功（仅开发/测试/运维类任务必需）
+    const needsBuild = state.taskType === 'development' || state.taskType === 'testing' || state.taskType === 'ops';
     const buildPassed = state.buildStatus === 'passed';
     checklist.push({
       category: 'build',
       label: 'Build 成功',
-      passed: buildPassed,
-      evidence: `buildStatus=${state.buildStatus}`,
-      required: true,
+      passed: needsBuild ? buildPassed : true,
+      evidence: needsBuild
+        ? `buildStatus=${state.buildStatus}`
+        : `${state.taskType} 任务不需要构建`,
+      required: needsBuild,
     });
 
-    // 编译验证矩阵通过
-    const compilePassed = state.verificationMatrix.find((e) => e.dimension === 'compile')?.passed ?? false;
+    // 编译验证矩阵通过（仅开发/测试/运维类任务必需）
+    const compileEntry = state.verificationMatrix.find((e) => e.dimension === 'compile');
+    const compilePassed = compileEntry ? compileEntry.passed : true; // 无 compile 维度时视为通过
     checklist.push({
       category: 'build',
       label: '编译验证通过',
-      passed: compilePassed,
-      evidence: `compile matrix=${compilePassed ? 'passed' : 'pending/failed'}`,
-      required: true,
+      passed: needsBuild ? compilePassed : true,
+      evidence: compileEntry
+        ? `compile matrix=${compilePassed ? 'passed' : 'pending/failed'}`
+        : `${state.taskType} 任务不需要编译验证`,
+      required: needsBuild,
     });
 
     // 无已知 blocker

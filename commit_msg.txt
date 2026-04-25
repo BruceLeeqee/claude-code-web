@@ -1,29 +1,29 @@
-feat(workbench): 增强命令执行与调试能力
+feat(workbench): 新增 DeepSeek 支持、Loop 多任务管理与团队编排
 
 【背景】
-- 原有 workbench 缺乏独立的命令执行机制
-- 调试能力分散，难以追踪命令流程
-- memory 模块调度逻辑需要简化
+- 需要支持 DeepSeek 作为 LLM 提供方，其工具名正则限制要求对 API 层做兼容适配
+- Loop 系统需要支持多任务并发管理、团队编排、自动验证矩阵等能力
+- Models 页面需要重构以支持新模型配置结构
 
 【本次改动】
-- 新增 command-executor.service.ts 实现统一命令执行
-- 新增 directive-registry.ts 管理命令指令注册
-- 新增 command-system.spec.ts 单元测试
-- 新增 debug-tab 组件增强调试能力
-- 优化 workbench.page.ts 处理复杂交互逻辑（801行变更）
-- 新增 workbench.page.scss 样式模块（320行）
-- 重构 memory.orchestrator.ts 与 memory.scheduler.ts
-- 优化 command-presentation.service.ts
-- 新增多个文档记录设计决策
+- 新增 DeepSeek 工具名清理/还原逻辑（sanitize → restore），兼容 ^[a-zA-Z0-9_-]+$ 限制
+- Loop 执行器新增多任务管理与团队编排（teamManager.createTeam/assignSteps）
+- Loop 非开发任务（analysis/docs/general）自动标记验证矩阵通过
+- Workbench 页面新增 Loop 多视图模式（cards/terminal）、多任务切换与日志缓冲
+- Models 页面重构：新增 590 行 UI 逻辑与样式更新，支持新模型配置展示
+- 桌面端 main.js 与 preload.js 更新 IPC 桥接能力
+- 桌面端模型目录重构（model-catalog.ts），运行时设置同步优化
+- App settings 服务跨桌面端/Web 端统一调整
 
 【影响范围】
-- workbench 模块：命令执行、调试、标签管理
-- memory 模块：调度与编排
-- zyfront-desktop 包配置
+- zyfront-core：API 层（anthropic-messages、anthropic-stream、api/index、types）
+- zyfront-desktop：workbench 模块、models 页面、main/preload 进程、settings 服务
+- zyfront-web：settings 页面
 
 【验证】
-- 本地编译通过
-- 新增单元测试覆盖
+- 本地编译通过（32 文件变更，2637 行新增，480 行删除）
+- Diff 审查确认改动逻辑完整
 
 【风险与回滚】
-- 中等风险，涉及多文件改动，回滚需逐文件恢复
+- 低风险：改动集中在新增逻辑与重构，未破坏已有接口
+- 回滚方式：`git revert HEAD` 恢复

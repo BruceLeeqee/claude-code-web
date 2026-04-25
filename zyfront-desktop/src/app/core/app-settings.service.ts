@@ -31,12 +31,14 @@ export interface CostSettings {
 /** 聚合后的应用设置快照 */
 export interface AppSettings {
   apiKey: string;
-  modelProvider: 'anthropic' | 'openai' | 'minimax' | 'custom';
+  modelProvider: 'anthropic' | 'openai' | 'minimax' | 'deepseek' | 'custom';
   model: string;
   proxy: ProxySettings;
   compression: CompressionSettings;
   cost: CostSettings;
   theme: AppTheme;
+  /** 按 provider:model 持久化的模型专属配置 */
+  modelProfiles?: Record<string, Pick<AppSettings, 'apiKey' | 'proxy'>>;
 }
 
 const STORAGE_KEY = 'claude-web:settings:v1';
@@ -61,6 +63,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     warnThresholdUsd: 3,
   },
   theme: 'dark',
+  modelProfiles: {},
 };
 
 @Injectable({ providedIn: 'root' })
@@ -79,7 +82,7 @@ export class AppSettingsService {
   }
 
   /** 合并更新设置并写回 localStorage；若包含 theme 则同步到 DOM */
-  update(patch: Partial<AppSettings>): void {
+  update(patch: Partial<AppSettings>, options?: { profileKey?: string }): void {
     const current = this.settingsSubject.value;
     const next: AppSettings = {
       ...current,
@@ -96,7 +99,18 @@ export class AppSettingsService {
         ...current.cost,
         ...(patch.cost ?? {}),
       },
+      modelProfiles: {
+        ...(current.modelProfiles ?? {}),
+      },
     };
+
+    const profileKey = options?.profileKey?.trim();
+    if (profileKey) {
+      next.modelProfiles![profileKey] = {
+        apiKey: next.apiKey,
+        proxy: { ...next.proxy },
+      };
+    }
 
     this.settingsSubject.next(next);
     this.persist(next);
@@ -134,6 +148,10 @@ export class AppSettingsService {
         cost: {
           ...DEFAULT_SETTINGS.cost,
           ...(parsed.cost ?? {}),
+        },
+        modelProfiles: {
+          ...(DEFAULT_SETTINGS.modelProfiles ?? {}),
+          ...(parsed.modelProfiles ?? {}),
         },
       };
     } catch {

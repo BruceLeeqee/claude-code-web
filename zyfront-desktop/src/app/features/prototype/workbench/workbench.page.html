@@ -230,47 +230,136 @@
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
                       终端
                     </button>
-                    <button type="button" class="loop-action-btn loop-step-btn" (click)="executeLoopStepFromToolbar()" title="执行下一步">
-                      ▶ Step
-                    </button>
                   </div>
                 </div>
 
-                <!-- 卡片视图：每行4个任务卡片 -->
-                <div class="loop-cards-view" *ngIf="loopViewMode() === 'cards' && currentLoopState()?.currentPlan?.length">
-                  <div class="loop-card" *ngFor="let step of currentLoopState()!.currentPlan; let i = index"
-                    [class.card-done]="step.status === 'done'"
-                    [class.card-running]="step.status === 'running'"
-                    [class.card-failed]="step.status === 'failed'"
-                    [class.card-skipped]="step.status === 'skipped'">
-                    <div class="card-header">
-                      <span class="card-index">{{ i + 1 }}</span>
-                      <span class="card-type">{{ step.type }}</span>
-                      <span class="card-risk risk-{{ step.riskLevel }}">{{ step.riskLevel }}</span>
-                    </div>
-                    <div class="card-title">{{ step.title }}</div>
-                    <div class="card-footer">
-                      <span class="card-status" [class]="'status-' + step.status">{{ step.status }}</span>
-                      <span class="card-deps" *ngIf="step.dependencies.length > 0" title="依赖: {{ step.dependencies.join(', ') }}">
-                        Deps: {{ step.dependencies.length }}
-                      </span>
+                <!-- 卡片视图：任务卡片 + 文档步骤条 + 日志 + 步骤进度 -->
+                <div class="loop-cards-view" *ngIf="loopViewMode() === 'cards'">
+                  <div class="loop-task-strip" *ngIf="loopTaskList().length">
+                    <div class="section-label">任务卡片</div>
+                    <div class="loop-task-cards">
+                      <button
+                        type="button"
+                        class="loop-task-card"
+                        *ngFor="let task of loopTaskList()"
+                        [class.active]="currentLoopState()?.taskId === task.taskId"
+                        [class.status-paused]="task.status === 'paused'"
+                        [class.status-executing]="task.status === 'executing'"
+                        [class.status-completed]="task.status === 'completed' || task.status === 'ready_for_release' || task.status === 'ready_for_review'"
+                        [class.status-blocked]="task.status === 'blocked'"
+                        (click)="selectLoopTask(task.taskId)"
+                      >
+                        <span class="task-card-title">{{ task.objective }}</span>
+                        <span class="task-card-meta">{{ task.taskType }} · {{ task.status }}</span>
+                        <span class="task-card-progress">轮次 {{ task.iteration }}/{{ task.maxIterations }}</span>
+                      </button>
                     </div>
                   </div>
-                </div>
 
-                <!-- 卡片空状态 -->
-                <div class="loop-empty-state" *ngIf="loopViewMode() === 'cards' && (!currentLoopState() || !currentLoopState()!.currentPlan?.length)">
-                  <div class="empty-icon">📋</div>
-                  <div>暂无执行计划</div>
-                  <div class="empty-hint">在主终端输入 /loop 开始新任务</div>
-                </div>
+                  <ng-container *ngIf="currentLoopState() as currentTask">
 
-                <!-- 验证矩阵卡片区域（卡片视图底部） -->
-                <div class="loop-verification-grid" *ngIf="loopViewMode() === 'cards' && currentLoopState()?.verificationMatrix?.length">
-                  <div class="verif-card" *ngFor="let v of currentLoopState()!.verificationMatrix"
-                    [class.verif-passed]="v.passed" [class.verif-failed]="!v.passed">
-                    <span class="verif-dim">{{ v.dimension }}</span>
-                    <span class="verif-result">{{ v.passed ? '✓' : '✗' }} {{ v.passed ? '通过' : v.note || '未通过' }}</span>
+                    <!-- ── 文档产出步骤条（实时更新，点击可在tab中查看）── -->
+                    <div class="loop-docs-stepper" *ngIf="currentTask.stepDocs?.length || currentTask.artifacts?.length">
+                      <div class="section-label">
+                        <span>📄 文档产出</span>
+                        <span class="doc-count" *ngIf="currentTask.stepDocs.length">{{ currentTask.stepDocs.length }} 个文档</span>
+                      </div>
+
+                      <div class="docs-scroll">
+                        <!-- 步骤文档列表 -->
+                        <div
+                          class="doc-step-item"
+                          *ngFor="let doc of currentTask.stepDocs"
+                          [class.doc-active]="selectedDocId() === doc.id"
+                          [class.doc-has-content]="!!doc.content"
+                          (click)="openLoopDoc(doc)"
+                          title="{{ doc.content ? '点击查看文档内容' : '文档生成中...' }}"
+                        >
+                          <span class="doc-step-icon" [class]="'icon-' + doc.type">
+                            <ng-container [ngSwitch]="doc.type">
+                              <span *ngSwitchCase="'requirements'">📋</span>
+                              <span *ngSwitchCase="'design'">🎨</span>
+                              <span *ngSwitchCase="'execution'">⚙️</span>
+                              <span *ngSwitchCase="'verification'">✅</span>
+                              <span *ngSwitchCase="'repair'">🔧</span>
+                              <span *ngSwitchCase="'summary'">📝</span>
+                              <span *ngSwitchDefault>📄</span>
+                            </ng-container>
+                          </span>
+                          <div class="doc-step-info">
+                            <span class="doc-step-title">{{ doc.title }}</span>
+                            <span class="doc-step-meta">{{ doc.type }} · {{ doc.path.split('/').pop() }}</span>
+                          </div>
+                          <span class="doc-step-status" [class]="'doc-' + getDocStatusClass(doc)">
+                            {{ getDocStatusLabel(doc) }}
+                          </span>
+                        </div>
+
+                        <!-- 工件列表 -->
+                        <div
+                          class="doc-step-item artifact-item"
+                          *ngFor="let artifact of currentTask.artifacts"
+                          (click)="openArtifact(artifact)"
+                        >
+                          <span class="doc-step-icon">📎</span>
+                          <div class="doc-step-info">
+                            <span class="doc-step-title">{{ artifact.label }}</span>
+                            <span class="doc-step-meta">{{ artifact.kind }} · {{ artifact.path.split('/').pop() }}</span>
+                          </div>
+                          <span class="doc-step-status doc-ready">已归档</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 当前任务执行日志（自动滚动） -->
+                    <div class="loop-log-panel" *ngIf="getLoopLogBuffer().length > 0">
+                      <div class="log-panel-header">
+                        <span>「{{ currentTask.objective.slice(0, 30) }}{{ currentTask.objective.length > 30 ? '...' : '' }}」执行日志</span>
+                        <span class="log-count">{{ getLoopLogBuffer().length }} 条</span>
+                      </div>
+                      <div class="log-lines">
+                        <div class="log-line" *ngFor="let log of getLoopLogBuffer()">{{ log }}</div>
+                      </div>
+                    </div>
+
+                    <!-- 当前任务的步骤进度 -->
+                    <div class="loop-steps-section" *ngIf="currentTask.currentPlan.length || currentTask.completedSteps.length">
+                      <div class="section-label">步骤进度</div>
+
+                      <!-- 待执行/执行中的步骤 -->
+                      <div class="loop-step-row" *ngFor="let step of currentTask.currentPlan; let i = index"
+                        [class.step-done]="step.status === 'done'"
+                        [class.step-running]="step.status === 'running'"
+                        [class.step-failed]="step.status === 'failed'"
+                        [class.step-pending]="step.status === 'pending' || step.status === 'skipped'">
+                        <span class="step-index">{{ i + 1 }}</span>
+                        <span class="step-title">{{ step.title }}</span>
+                        <span class="step-status">{{ step.status }}</span>
+                      </div>
+
+                      <!-- 已完成的步骤 -->
+                      <div class="loop-step-row step-done" *ngFor="let step of currentTask.completedSteps">
+                        <span class="step-index">✓</span>
+                        <span class="step-title">{{ step.title }}</span>
+                        <span class="step-status status-small">{{ step.status }}</span>
+                      </div>
+                    </div>
+
+                    <!-- 验证矩阵 -->
+                    <div class="loop-verification-grid" *ngIf="currentTask.verificationMatrix.length">
+                      <div class="verif-card" *ngFor="let v of currentTask.verificationMatrix"
+                        [class.verif-passed]="v.passed" [class.verif-failed]="!v.passed">
+                        <span class="verif-dim">{{ v.dimension }}</span>
+                        <span class="verif-result">{{ v.passed ? '✓' : '✗' }} {{ v.passed ? '通过' : v.note || '未通过' }}</span>
+                      </div>
+                    </div>
+                  </ng-container>
+
+                  <!-- 空状态：未选中任何任务 -->
+                  <div class="loop-empty-state" *ngIf="!currentLoopState()">
+                    <div class="empty-icon">📋</div>
+                    <div>请从任务卡片选择一个 Loop 任务</div>
+                    <div class="empty-hint">或在主终端输入 /loop 开始新任务</div>
                   </div>
                 </div>
               </div>

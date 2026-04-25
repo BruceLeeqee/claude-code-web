@@ -56,6 +56,10 @@ contextBridge.exposeInMainWorld('zytrader', {
   },
   model: {
     test: (payload) => ipcRenderer.invoke('zytrader:model:test', payload),
+    config: {
+      read: () => ipcRenderer.invoke('zytrader:model-config:read'),
+      write: (config) => ipcRenderer.invoke('zytrader:model-config:write', config),
+    },
   },
   workspace: {
     info: () => ipcRenderer.invoke('zytrader:workspace:info'),
