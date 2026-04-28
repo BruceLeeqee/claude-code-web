@@ -24,9 +24,11 @@ import {
 } from './anthropic-messages.js';
 import { AnthropicSseTurnAccumulator } from './anthropic-stream.js';
 import {
-  feedSseChunkWithLines,
-  flushSseBufferWithLines,
+  feedSseChunkWithLinesExtended,
+  flushSseBufferWithLinesExtended,
+  ThinkingTagTracker,
   type SseLineBuffer,
+  type SseStreamCallbacks,
 } from './anthropic-sse.js';
 
 /** `bootstrapClaudeApi` 使用的最小配置 */
@@ -207,16 +209,39 @@ export class ClaudeApiClient {
           if (this.isAnthropicCompatible(activeConfig)) {
             const sse: SseLineBuffer = { remainder: '' };
             const acc = new AnthropicSseTurnAccumulator();
+            const tagTracker = new ThinkingTagTracker();
             const onLine = (line: string) => acc.consumeLine(line);
-            const push = (t: string) => controller.enqueue({ type: 'delta', textDelta: t });
+            const push = (t: string) => {
+              const result = tagTracker.feed(t);
+              for (const b of result.boundaries) {
+                controller.enqueue({ type: b.type, blockIndex: b.blockIndex });
+              }
+              if (result.thinking) controller.enqueue({ type: 'thinking_delta', textDelta: result.thinking });
+              if (result.answer) controller.enqueue({ type: 'delta', textDelta: result.answer });
+            };
             const pushThinking = (t: string) => controller.enqueue({ type: 'thinking_delta', textDelta: t });
+            const pushBoundary = (e: { type: 'thinking_start' | 'thinking_done'; blockIndex: number }) => {
+              controller.enqueue({ type: e.type, blockIndex: e.blockIndex });
+            };
+            const callbacks: SseStreamCallbacks = {
+              onTextDelta: push,
+              onThinkingDelta: pushThinking,
+              onThinkingBoundary: pushBoundary,
+              onSseLine: onLine,
+            };
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
               const text = decoder.decode(value, { stream: true });
-              if (text.length > 0) feedSseChunkWithLines(sse, text, push, pushThinking, onLine);
+              if (text.length > 0) feedSseChunkWithLinesExtended(sse, text, callbacks);
             }
-            flushSseBufferWithLines(sse, push, pushThinking, onLine);
+            flushSseBufferWithLinesExtended(sse, callbacks);
+            const flushResult = tagTracker.flush();
+            for (const b of flushResult.boundaries) {
+              controller.enqueue({ type: b.type, blockIndex: b.blockIndex });
+            }
+            if (flushResult.thinking) controller.enqueue({ type: 'thinking_delta', textDelta: flushResult.thinking });
+            if (flushResult.answer) controller.enqueue({ type: 'delta', textDelta: flushResult.answer });
             const turn = acc.finalize();
             // DeepSeek: 还原被清理的工具名
             if (this.isDeepseekProvider(activeConfig)) {
@@ -400,6 +425,12 @@ export class ClaudeApiClient {
       if (config.stopSequences !== undefined) body['stop_sequences'] = config.stopSequences as JsonValue;
       if (request.systemPrompt) body['system'] = request.systemPrompt;
       if (config.thinking !== undefined) body['thinking'] = config.thinking as JsonValue;
+      if (this.isDeepseekProvider(config) && config.thinking?.type === 'enabled') {
+        body['output_config'] = { effort: 'max' } as JsonValue;
+      }
+      if (this.isMiniMaxProvider(config) && config.thinking?.type === 'enabled') {
+        body['reasoning_split'] = true as JsonValue;
+      }
       if (request.tools && request.tools.length > 0) {
         body['tools'] = this.isDeepseekProvider(config)
           ? this.sanitizeDeepseekTools(request.tools)
@@ -516,6 +547,11 @@ export class ClaudeApiClient {
   private isAnthropicCompatible(config: ModelConfig): boolean {
     const model = config.model.toLowerCase();
     return config.provider === 'anthropic' || config.provider === 'minimax' || config.provider === 'deepseek' || model.includes('minimax') || model.includes('abab') || model.includes('deepseek');
+  }
+
+  /** 是否为 MiniMax 提供商 */
+  private isMiniMaxProvider(config: ModelConfig): boolean {
+    return config.provider === 'minimax' || config.model.toLowerCase().includes('minimax');
   }
 
   /** 是否为 DeepSeek 提供商（需要 Bearer 认证而非 x-api-key） */

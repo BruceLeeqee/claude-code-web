@@ -385,7 +385,7 @@ export class AssistantRuntime {
                                 : ([{ type: 'text', text: t.assistantText || '' }] as JsonArray),
                           },
                         },
-                        reasoningContent: t.reasoningContent,
+                        ...(t.reasoningContent ? { reasoningContent: t.reasoningContent } : {}),
                       };
                       await this.history.append(sessionId, assistantMsg);
                       this.coordinator.ingestAssistantMessage(assistantMsg);
@@ -432,7 +432,7 @@ export class AssistantRuntime {
                               : ([{ type: 'text', text: t.assistantText || assistantText || '' }] as JsonArray),
                         },
                       },
-                      reasoningContent: t.reasoningContent,
+                      ...(t.reasoningContent ? { reasoningContent: t.reasoningContent } : {}),
                     };
                     await this.history.append(sessionId, finalMsg);
                     this.coordinator.ingestAssistantMessage(finalMsg);

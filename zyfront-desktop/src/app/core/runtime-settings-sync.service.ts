@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@angular/core';
-import { findCatalogEntry } from './model-catalog';
+import { findCatalogEntry, MODEL_ENDPOINTS } from './model-catalog';
 import { AppSettingsService } from './app-settings.service';
 import { CLAUDE_RUNTIME, type ClaudeCoreRuntime } from './zyfront-core.providers';
 
@@ -16,8 +16,23 @@ export class RuntimeSettingsSyncService {
     this.appSettings.settings$.subscribe((settings) => {
       const maxTokens = this.resolveModelMaxTokens(settings.model);
       const thinking = this.resolveModelThinking();
+      const endpoint = settings.proxy?.baseUrl?.trim() || MODEL_ENDPOINTS[settings.modelProvider]?.baseUrl || '';
+      localStorage.setItem(
+        'zyfront:active-model-runtime',
+        JSON.stringify(
+          {
+            provider: settings.modelProvider,
+            model: settings.model,
+            baseUrl: endpoint,
+            updatedAt: Date.now(),
+          },
+          null,
+          2,
+        ),
+      );
       const runtimeConfig: Parameters<typeof this.runtime.client.configureRuntime>[0] = {
         apiKey: settings.apiKey,
+        baseUrl: endpoint || undefined,
         model: {
           provider: settings.modelProvider,
           model: settings.model,
@@ -26,11 +41,6 @@ export class RuntimeSettingsSyncService {
           ...(thinking ? { thinking } : {}),
         },
       };
-      // 同步端点 URL：用户在模型配置页保存的 endpoint 存在 proxy.baseUrl 中
-      const endpoint = settings.proxy?.baseUrl?.trim();
-      if (endpoint) {
-        runtimeConfig.baseUrl = endpoint;
-      }
       this.runtime.client.configureRuntime(runtimeConfig);
 
       this.runtime.assistant.setAutoCompactPolicy({
@@ -70,7 +80,16 @@ export class RuntimeSettingsSyncService {
   private resolveModelThinking(): { type: 'enabled' | 'disabled' } | undefined {
     try {
       const raw = localStorage.getItem(REQUEST_CFG_JSON_KEY);
-      if (!raw?.trim()) return undefined;
+      if (!raw?.trim()) {
+        const currentModel = this.runtime.client.getModel().model.toLowerCase();
+        if (currentModel.includes('deepseek') && currentModel.includes('v4')) {
+          return { type: 'enabled' };
+        }
+        if (currentModel.includes('minimax')) {
+          return { type: 'enabled' };
+        }
+        return undefined;
+      }
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       const thinking = parsed['thinking'];
       if (thinking && typeof thinking === 'object' && !Array.isArray(thinking)) {
@@ -79,8 +98,22 @@ export class RuntimeSettingsSyncService {
           return { type: t['type'] };
         }
       }
+      const currentModel = this.runtime.client.getModel().model.toLowerCase();
+      if (currentModel.includes('deepseek') && currentModel.includes('v4')) {
+        return { type: 'enabled' };
+      }
+      if (currentModel.includes('minimax')) {
+        return { type: 'enabled' };
+      }
       return undefined;
     } catch {
+      const currentModel = this.runtime.client.getModel().model.toLowerCase();
+      if (currentModel.includes('deepseek') && currentModel.includes('v4')) {
+        return { type: 'enabled' };
+      }
+      if (currentModel.includes('minimax')) {
+        return { type: 'enabled' };
+      }
       return undefined;
     }
   }

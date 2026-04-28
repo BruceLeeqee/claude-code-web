@@ -45,9 +45,23 @@ export function parseSlashCommand(input: string): ParsedDirective | null {
     argsStartIndex = 2;
   }
 
-  const args = words.slice(argsStartIndex).join(' ');
+  let def: DirectiveDefinition | null = null;
 
-  const def = findDirectiveDefinition(commandName);
+  if (words.length > argsStartIndex) {
+    const twoWordName = `${words[0]} ${words[argsStartIndex]}`;
+    const twoWordDef = findDirectiveDefinition(twoWordName);
+    if (twoWordDef) {
+      commandName = twoWordName;
+      argsStartIndex += 1;
+      def = twoWordDef;
+    }
+  }
+
+  if (!def) {
+    def = findDirectiveDefinition(commandName);
+  }
+
+  const args = words.slice(argsStartIndex).join(' ');
 
   return {
     raw: trimmed,

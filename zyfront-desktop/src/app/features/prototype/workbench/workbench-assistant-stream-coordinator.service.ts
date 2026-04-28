@@ -17,6 +17,7 @@ export interface StreamRenderState {
   answerHeaderShown: boolean;
   streamRouteDeltaToThinking: boolean;
   streamRequestStartMs: number;
+  currentThinkingBlockIndex: number;
 }
 
 export interface StreamRenderCallbacks {
@@ -24,6 +25,7 @@ export interface StreamRenderCallbacks {
   budget: (text: string) => void;
   ensureMarker: () => void;
   onThinkingBlockStart: (blockId: number) => void;
+  onThinkingBlockEnd: (blockId: number) => void;
   onToolMemory: (text: string) => void;
   onToolStart: (name: string) => void;
   onToolDone: (ok: boolean, error?: string) => void;
@@ -34,6 +36,16 @@ export interface StreamRenderCallbacks {
 export class WorkbenchAssistantStreamCoordinatorService {
   private readonly modeService = inject(WorkbenchModeService);
   private readonly usageLedger = inject(ModelUsageLedgerService);
+
+  private resetThinkingRenderState(state: StreamRenderState): StreamRenderState {
+    return {
+      ...state,
+      thinkingBuffer: '',
+      thinkingPrintedLen: 0,
+      thinkingHasNonChinese: false,
+      thinkingHeaderShown: false,
+    };
+  }
 
   appendThinkingDelta(
     state: StreamRenderState,
@@ -53,6 +65,7 @@ export class WorkbenchAssistantStreamCoordinatorService {
       const id = nextThinkingBlockId();
       cb.onThinkingBlockStart(id);
       next.thinkingHeaderShown = true;
+      next.currentThinkingBlockIndex = id;
       cb.ensureMarker();
     }
 
@@ -79,6 +92,28 @@ export class WorkbenchAssistantStreamCoordinatorService {
     getModel: () => string,
   ): StreamRenderState {
     const next = { ...state };
+
+    if (value.type === 'thinking_start') {
+      if (!ctx.showThinking) return next;
+      if (next.thinkingHeaderShown) {
+        cb.onThinkingBlockEnd(next.currentThinkingBlockIndex);
+      }
+      const reset = this.resetThinkingRenderState(next);
+      const id = nextThinkingBlockId();
+      cb.onThinkingBlockStart(id);
+      reset.thinkingHeaderShown = true;
+      reset.currentThinkingBlockIndex = id;
+      cb.ensureMarker();
+      return reset;
+    }
+
+    if (value.type === 'thinking_done') {
+      if (!ctx.showThinking) return next;
+      if (next.thinkingHeaderShown && next.currentThinkingBlockIndex >= 0) {
+        cb.onThinkingBlockEnd(next.currentThinkingBlockIndex);
+      }
+      return this.resetThinkingRenderState(next);
+    }
 
     if (value.type === 'delta') {
       const routeThinking = ctx.showThinking && ctx.layoutSplitThinkingAnswer && next.streamRouteDeltaToThinking;

@@ -17,6 +17,7 @@ export interface AssistantStreamContext {
 
 export interface AssistantStreamCallbacks {
   onDelta?: (text: string, chunk: StreamChunk) => void;
+  onChunk?: (chunk: StreamChunk) => void;
   onError?: (errorMessage: string) => void;
   onDone?: (result: AssistantStreamResult) => Promise<void> | void;
   onUsage?: (usage: unknown) => void;
@@ -74,8 +75,18 @@ export class WorkbenchAssistantStreamService {
           continue;
         }
 
-        if (value.type === 'thinking_delta' && value.textDelta) {
-          // Thinking content is handled by the coordinator, do not route to onDelta
+        if (value.type === 'thinking_delta') {
+          callbacks.onChunk?.(value);
+          continue;
+        }
+
+        if (value.type === 'thinking_start' || value.type === 'thinking_done') {
+          callbacks.onChunk?.(value);
+          continue;
+        }
+
+        if (value.type === 'tool_call' || value.type === 'tool_result') {
+          callbacks.onChunk?.(value);
           continue;
         }
 

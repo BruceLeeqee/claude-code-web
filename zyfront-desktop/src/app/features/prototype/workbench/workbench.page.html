@@ -37,7 +37,7 @@
                 <div class="section-header" (click)="toggleProjectTree()">
                   <span class="section-chevron">{{ projectTreeExpanded() ? '▾' : '▸' }}</span>
                   <span class="section-label">项目资源</span>
-                  <span class="section-refresh" nz-icon nzType="refresh" title="刷新" (click)="$event.stopPropagation()"></span>
+                  <span class="section-refresh" nz-icon nzType="reload" title="刷新" (click)="$event.stopPropagation()"></span>
                 </div>
                 <div class="section-content" *ngIf="projectTreeExpanded()">
                   <div class="tree-scroll vscode-tree">
@@ -259,7 +259,7 @@
                   <ng-container *ngIf="currentLoopState() as currentTask">
 
                     <!-- ── 文档产出步骤条（实时更新，点击可在tab中查看）── -->
-                    <div class="loop-docs-stepper" *ngIf="currentTask.stepDocs?.length || currentTask.artifacts?.length">
+                    <div class="loop-docs-stepper" *ngIf="currentTask.stepDocs.length || currentTask.artifacts.length">
                       <div class="section-label">
                         <span>📄 文档产出</span>
                         <span class="doc-count" *ngIf="currentTask.stepDocs.length">{{ currentTask.stepDocs.length }} 个文档</span>
@@ -414,24 +414,35 @@
             <app-multi-agent-sidebar [visible]="rightPanelVisible()"></app-multi-agent-sidebar>
           </div>
           <div class="right-panel-composer">
-            <div class="ai-composer">
-              <div class="composer-toolbar">
-                <button type="button" class="toolbar-btn" title="添加图片">
-                  <span nz-icon nzType="image"></span>
-                </button>
-                <button type="button" class="toolbar-btn" title="添加附件">
-                  <span nz-icon nzType="paper-clip"></span>
-                </button>
-              </div>
-              <div class="composer-images-preview" *ngIf="composerImages().length > 0">
-                <div class="composer-image-item" *ngFor="let imgData of composerImages(); let i = index">
-                  <img [src]="imgData" class="composer-preview-img">
-                  <button type="button" class="composer-image-remove" (click)="removeComposerImage(i)">
-                    <span nz-icon nzType="close"></span>
-                  </button>
+            <div class="task-list-strip" [class.expanded]="taskListExpanded()">
+              <button type="button" class="task-list-header" (click)="toggleTaskListExpanded()">
+                <div class="task-list-left">
+                  <span class="task-list-badge">任务</span>
+                  <span class="task-list-title">{{ currentTaskSummary() }}</span>
                 </div>
+                <span class="task-list-arrow">{{ taskListExpanded() ? '▾' : '▸' }}</span>
+              </button>
+
+              <div class="task-list-body" *ngIf="taskListExpanded()">
+                <div class="task-list-empty" *ngIf="!loopTaskList().length">暂无任务，输入 /loop 创建一个任务。</div>
+                <button
+                  type="button"
+                  class="task-list-item"
+                  *ngFor="let task of loopTaskList()"
+                  (click)="selectLoopTask(task.taskId)"
+                  [class.active]="currentLoopState()?.taskId === task.taskId"
+                >
+                  <span class="task-item-top">
+                    <span class="task-item-title">{{ task.objective }}</span>
+                    <span class="task-item-status">{{ task.status }}</span>
+                  </span>
+                  <span class="task-item-meta">{{ task.teamName }} · {{ task.iteration }}/{{ task.maxIterations }} 轮</span>
+                </button>
               </div>
-              <div class="composer-input-wrapper">
+            </div>
+
+            <div class="ai-composer compact">
+              <div class="composer-input-wrapper compact">
                 <textarea 
                   class="composer-textarea" 
                   [value]="composerDraft()" 
@@ -441,16 +452,43 @@
                   rows="1"
                 ></textarea>
               </div>
-              <div class="composer-footer-row">
-                <div class="footer-left">
-                  <span class="model-badge">
-                    <span class="model-dot"></span>
-                    {{ activeAgentLabel() || 'claude-3-5-sonnet-latest' }}
-                  </span>
+
+              <div class="composer-image-strip" *ngIf="composerImages().length > 0">
+                <div class="composer-images-preview">
+                  <div class="composer-image-item" *ngFor="let imgData of composerImages(); let i = index">
+                    <img [src]="imgData" class="composer-preview-img">
+                    <button type="button" class="composer-image-remove" (click)="removeComposerImage(i)">
+                      <span class="icon-text">×</span>
+                    </button>
+                  </div>
                 </div>
-                <div class="footer-right">
+              </div>
+
+              <div class="composer-footer-row compact">
+                <div class="footer-left compact">
+                  <select class="composer-mode-select" (change)="coordinatorMode.set($any($event.target).value)">
+                    <option value="single" [selected]="coordinatorMode() === 'single'">∞ Agent</option>
+                    <option value="plan" [selected]="coordinatorMode() === 'plan'">◌ Plan</option>
+                    <option value="parallel" [selected]="coordinatorMode() === 'parallel'">◫ Debug</option>
+                  </select>
+                  <div class="composer-model-shell">
+                    <select class="composer-model-select" (change)="onModelSelectChange($event)">
+                      <option *ngFor="let model of availableModelCatalog()" [value]="model.id" [selected]="currentModelEntry()?.id === model.id">
+                        {{ model.providerLabel }} · {{ model.shortName }}
+                      </option>
+                    </select>
+                    <span class="composer-model-value">{{ currentModelLabel() }}</span>
+                  </div>
+                  <button type="button" class="composer-circle-btn" title="上下文">
+                    <span class="circle-ring"></span>
+                  </button>
+                  <button type="button" class="composer-circle-btn" title="图片" (click)="triggerImageUpload()">
+                    <span nz-icon nzType="picture"></span>
+                  </button>
+                </div>
+                <div class="footer-right compact">
                   <button type="button" class="send-btn" [disabled]="!composerDraft().trim()" (click)="sendDraftToMainTerminal()">
-                    <span nz-icon nzType="arrow-right"></span>
+                    <span nz-icon nzType="arrow-up"></span>
                   </button>
                 </div>
               </div>

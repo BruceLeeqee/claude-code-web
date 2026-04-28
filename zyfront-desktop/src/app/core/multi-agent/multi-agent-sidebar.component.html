@@ -7,57 +7,205 @@
   </div>
 
   <div class="sidebar-content" *ngIf="!collapsed()">
-    <div class="status-overview-section">
-      <div class="section-title">
-        <span class="title-text">智能体</span>
-        <span class="status-badge">
-          <span class="status-dot"></span>
-          {{ agents().length }} ACTIVE
-        </span>
+    <div class="sidebar-tabs">
+      <div class="sidebar-tab-bar">
+        <button class="sidebar-tab-btn" [class.active]="sidebarTab() === 0" (click)="sidebarTab.set(0)">
+          智能体
+        </button>
+        <button class="sidebar-tab-btn" [class.active]="sidebarTab() === 1" (click)="sidebarTab.set(1)">
+          团队
+          <nz-badge *ngIf="activeTeam()" [nzCount]="teamMembers().length" nzSize="small" nzStandalone class="tab-badge"></nz-badge>
+        </button>
+        <button class="sidebar-tab-btn" [class.active]="sidebarTab() === 2" (click)="sidebarTab.set(2)">
+          日志
+          <nz-badge *ngIf="recentLogs().length > 0" [nzCount]="recentLogs().length" nzSize="small" nzStandalone class="tab-badge"></nz-badge>
+        </button>
       </div>
-      <div class="agents-display-grid" *ngIf="agents().length > 0; else emptyAgents">
-        <div class="agent-display-card" *ngFor="let agent of agents(); trackBy: trackByAgentId">
-          <div class="agent-icon-wrapper" [class.running]="agent.status === 'running' || agent.status === 'thinking'" [class.idle]="agent.status === 'idle'">
-            <span nz-icon [nzType]="getRoleIcon(agent.role)" nzTheme="outline"></span>
+
+      <div class="sidebar-tab-content" *ngIf="sidebarTab() === 0">
+        <div class="status-overview-section">
+          <div class="section-title">
+            <span class="title-text">智能体</span>
+            <span class="status-badge">
+              <span class="status-dot"></span>
+              {{ agents().length }} ACTIVE
+            </span>
           </div>
-          <div class="agent-info-wrapper">
-            <div class="agent-name-text">{{ agent.agentName }}</div>
-            <div class="agent-status-text" [class.running]="agent.status === 'running' || agent.status === 'thinking'" [class.idle]="agent.status === 'idle'">
-              {{ getAgentStatusText(agent.status) }}
+          <div class="agents-display-grid" *ngIf="agents().length > 0; else emptyAgents">
+            <div class="agent-display-card" *ngFor="let agent of agents(); trackBy: trackByAgentId">
+              <div class="agent-icon-wrapper" [class.running]="agent.status === 'running' || agent.status === 'thinking'" [class.idle]="agent.status === 'idle'">
+                <span nz-icon [nzType]="getRoleIcon(agent.role)" nzTheme="outline"></span>
+              </div>
+              <div class="agent-info-wrapper">
+                <div class="agent-name-text">{{ agent.agentName }}</div>
+                <div class="agent-status-text" [class.running]="agent.status === 'running' || agent.status === 'thinking'" [class.idle]="agent.status === 'idle'">
+                  {{ getAgentStatusText(agent.status) }}
+                </div>
+              </div>
+            </div>
+          </div>
+          <ng-template #emptyAgents>
+            <div class="empty-section">等待输入任务后自动分解</div>
+          </ng-template>
+        </div>
+
+        <div class="task-timeline-section" *ngIf="taskNodes().length > 0">
+          <div class="timeline-header">
+            <span class="timeline-title">任务清单</span>
+            <span class="timeline-count">{{ completedTaskCount() }}/{{ taskNodes().length }}</span>
+          </div>
+          <div class="timeline-body">
+            <div class="timeline-item" *ngFor="let task of taskNodes(); trackBy: trackByTaskId; let last = last"
+              [class.completed]="task.status === 'completed'"
+              [class.running]="task.status === 'running'"
+              [class.failed]="task.status === 'failed'"
+              [class.pending]="task.status === 'pending'">
+              <div class="timeline-rail">
+                <span class="timeline-dot">
+                  <span *ngIf="task.status === 'completed'" class="dot-check" nz-icon nzType="check" nzTheme="fill"></span>
+                  <span *ngIf="task.status === 'running'" class="dot-spinner" nz-icon nzType="loading" nzTheme="outline" nzSpin></span>
+                  <span *ngIf="task.status === 'failed'" class="dot-fail" nz-icon nzType="close" nzTheme="outline"></span>
+                  <span *ngIf="task.status === 'pending'" class="dot-wait"></span>
+                </span>
+                <span *ngIf="!last" class="timeline-line"></span>
+              </div>
+              <div class="timeline-content">
+                <span class="timeline-task-title">{{ task.title }}</span>
+                <span *ngIf="task.status === 'running' && task.currentStep" class="timeline-step">{{ task.currentStep }}</span>
+              </div>
             </div>
           </div>
         </div>
       </div>
-      <ng-template #emptyAgents>
-        <div class="empty-section">等待输入任务后自动分解</div>
-      </ng-template>
-    </div>
 
-    <!-- 任务时间线 -->
-    <div class="task-timeline-section" *ngIf="taskNodes().length > 0">
-      <div class="timeline-header">
-        <span class="timeline-title">任务清单</span>
-        <span class="timeline-count">{{ completedTaskCount() }}/{{ taskNodes().length }}</span>
+      <div class="sidebar-tab-content" *ngIf="sidebarTab() === 1">
+        <div class="team-panel">
+          <div class="team-status-section" *ngIf="activeTeam(); else noTeam">
+            <div class="section-title">
+              <span class="title-text">团队状态</span>
+              <nz-tag [nzColor]="getTeamStatusColor(activeTeam()!.status)">
+                {{ getTeamStatusText(activeTeam()!.status) }}
+              </nz-tag>
+            </div>
+
+            <div class="team-info-card">
+              <div class="info-row">
+                <span class="info-label">结构</span>
+                <span class="info-value">{{ activeTeam()!.structName }}</span>
+              </div>
+              <div class="info-row" *ngIf="activeTeamStage()">
+                <span class="info-label">当前阶段</span>
+                <nz-tag [nzColor]="getStageModeColor(activeTeamStage()!.mode)">
+                  {{ activeTeamStage()!.name }} ({{ getStageModeText(activeTeamStage()!.mode) }})
+                </nz-tag>
+              </div>
+            </div>
+
+            <div class="section-title" style="margin-top: 12px;">
+              <span class="title-text">成员</span>
+              <span class="status-badge">{{ teamMembers().length }}</span>
+            </div>
+            <div class="team-members-list">
+              <div class="team-member-item" *ngFor="let member of teamMembers()">
+                <div class="member-icon" [class.active]="member.status === 'active'">
+                  <span nz-icon nzType="user" nzTheme="outline"></span>
+                </div>
+                <div class="member-info">
+                  <span class="member-name">{{ member.roleName }}</span>
+                  <nz-tag [nzColor]="getMemberStatusColor(member.status)" nzSize="small">
+                    {{ getMemberStatusText(member.status) }}
+                  </nz-tag>
+                </div>
+                <div class="member-unread" *ngIf="member.unreadCount > 0">
+                  <nz-badge [nzCount]="member.unreadCount" nzSize="small"></nz-badge>
+                </div>
+              </div>
+            </div>
+
+            <div class="section-title" style="margin-top: 12px;">
+              <span class="title-text">任务进度</span>
+              <span class="status-badge">{{ teamProgress().completed }}/{{ teamProgress().total }}</span>
+            </div>
+            <div class="team-tasks-list" *ngIf="teamTasks().length > 0">
+              <div class="team-task-item" *ngFor="let task of teamTasks()">
+                <span class="task-status-dot" [class.done]="task.status === 'done'" [class.running]="task.status === 'in_progress'" [class.failed]="task.status === 'rejected'"></span>
+                <span class="task-title">{{ task.title }}</span>
+                <span class="task-assignee">{{ task.assignee }}</span>
+              </div>
+            </div>
+            <div class="empty-section" *ngIf="teamTasks().length === 0">暂无任务</div>
+          </div>
+
+          <ng-template #noTeam>
+            <div class="empty-section" style="padding: 24px 0;">
+              <span nz-icon nzType="team" nzTheme="outline" style="font-size: 32px; opacity: 0.3;"></span>
+              <p style="margin-top: 8px; opacity: 0.5;">暂无活跃团队</p>
+              <p style="font-size: 12px; opacity: 0.4;">
+                使用 /team run struct 或 /team-agent 启动团队
+              </p>
+            </div>
+          </ng-template>
+        </div>
       </div>
-      <div class="timeline-body">
-        <div class="timeline-item" *ngFor="let task of taskNodes(); trackBy: trackByTaskId; let last = last"
-          [class.completed]="task.status === 'completed'"
-          [class.running]="task.status === 'running'"
-          [class.failed]="task.status === 'failed'"
-          [class.pending]="task.status === 'pending'">
-          <div class="timeline-rail">
-            <span class="timeline-dot">
-              <span *ngIf="task.status === 'completed'" class="dot-check" nz-icon nzType="check" nzTheme="fill"></span>
-              <span *ngIf="task.status === 'running'" class="dot-spinner" nz-icon nzType="loading" nzTheme="outline" nzSpin></span>
-              <span *ngIf="task.status === 'failed'" class="dot-fail" nz-icon nzType="close" nzTheme="outline"></span>
-              <span *ngIf="task.status === 'pending'" class="dot-wait"></span>
-            </span>
-            <span *ngIf="!last" class="timeline-line"></span>
+
+      <div class="sidebar-tab-content" *ngIf="sidebarTab() === 2">
+        <div class="log-panel">
+          <div class="section-title">
+            <span class="title-text">命令反馈</span>
           </div>
-          <div class="timeline-content">
-            <span class="timeline-task-title">{{ task.title }}</span>
-            <span *ngIf="task.status === 'running' && task.currentStep" class="timeline-step">{{ task.currentStep }}</span>
+          <div class="command-feedback-list" *ngIf="commandFeedback().length > 0; else noFeedback">
+            <div class="feedback-item" *ngFor="let fb of commandFeedback()" [class.success]="fb.success" [class.error]="!fb.success">
+              <div class="feedback-header">
+                <span class="feedback-command">{{ fb.command }}</span>
+                <span class="feedback-time">{{ formatLogTime(fb.timestamp) }}</span>
+              </div>
+              <div class="feedback-result">{{ fb.result }}</div>
+            </div>
           </div>
+          <ng-template #noFeedback>
+            <div class="empty-section">暂无命令反馈</div>
+          </ng-template>
+
+          <div class="section-title" style="margin-top: 12px;">
+            <span class="title-text">阶段状态机</span>
+          </div>
+          <div class="stage-machine-panel" *ngIf="stageMachineState(); else noMachine">
+            <div class="machine-overall">
+              <nz-tag [nzColor]="stageMachineState()!.overallState === 'completed' ? 'success' : stageMachineState()!.overallState === 'failed' ? 'error' : 'processing'">
+                {{ stageMachineState()!.overallState }}
+              </nz-tag>
+            </div>
+            <div class="stage-node-list">
+              <div class="stage-node-item" *ngFor="let node of stageMachineState()!.nodes; let i = index"
+                [class.succeeded]="node.state === 'succeeded'"
+                [class.failed]="node.state === 'failed'"
+                [class.running]="node.state === 'running'"
+                [class.pending]="node.state === 'pending'">
+                <span class="stage-index">{{ i + 1 }}</span>
+                <span class="stage-name">{{ node.stageName }}</span>
+                <nz-tag [nzColor]="getStageNodeColor(node.state)" nzSize="small">{{ node.state }}</nz-tag>
+                <span class="stage-mode" *ngIf="node.stageMode">{{ node.stageMode }}</span>
+              </div>
+            </div>
+          </div>
+          <ng-template #noMachine>
+            <div class="empty-section">暂无阶段状态机数据</div>
+          </ng-template>
+
+          <div class="section-title" style="margin-top: 12px;">
+            <span class="title-text">最近日志</span>
+          </div>
+          <div class="log-list" *ngIf="recentLogs().length > 0; else noLogs">
+            <div class="log-entry" *ngFor="let log of recentLogs()" [class.error-log]="log.level === 'error'" [class.warn-log]="log.level === 'warn'">
+              <span class="log-time">{{ formatLogTime(log.timestamp) }}</span>
+              <nz-tag [nzColor]="getLogLevelColor(log.level)" nzSize="small">{{ log.level }}</nz-tag>
+              <span class="log-source">[{{ log.source }}]</span>
+              <span class="log-message">{{ log.message }}</span>
+            </div>
+          </div>
+          <ng-template #noLogs>
+            <div class="empty-section">暂无日志</div>
+          </ng-template>
         </div>
       </div>
     </div>

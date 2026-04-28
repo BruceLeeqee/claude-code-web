@@ -29,6 +29,7 @@ import { NzProgressModule } from 'ng-zorro-antd/progress';
 import { AppSettingsService } from '../../../core/app-settings.service';
 import { DirectoryManagerService } from '../../../core/directory-manager.service';
 import { REQUEST_CFG_JSON_KEY } from '../../../core/runtime-settings-sync.service';
+import { MODEL_CATALOG, findCatalogEntry, type ModelCatalogEntry } from '../../../core/model-catalog';
 import { ModelUsageLedgerService } from '../../../core/model-usage-ledger.service';
 import { AgentMemoryService } from '../../../core/agent-memory.service';
 import { SkillIndexService, type SkillRecord } from '../../../core/skill-index.service';
@@ -158,6 +159,11 @@ const VAULT_EXPLORER_FIXED_CHILDREN: Record<string, Array<{ name: string; path: 
   '03-AGENT-TOOLS': [
     { name: '01-Skills', path: '03-AGENT-TOOLS/01-Skills' },
     { name: '02-Plugins', path: '03-AGENT-TOOLS/02-Plugins' },
+    { name: '03-Roles', path: '03-AGENT-TOOLS/03-Roles' },
+    { name: '04-Structs', path: '03-AGENT-TOOLS/04-Structs' },
+    { name: '05-Teams', path: '03-AGENT-TOOLS/05-Teams' },
+    { name: '06-Tasks', path: '03-AGENT-TOOLS/06-Tasks' },
+    { name: '07-Messages', path: '03-AGENT-TOOLS/07-Messages' },
   ],
   '05-RESOURCES': [
     { name: 'images', path: '05-RESOURCES/images' },
@@ -185,8 +191,7 @@ function stripAssistantContentForHistoryReplay(content: string): string {
   t = t.replace(/<analysis>[\s\S]*?<\/analysis>/gi, '');
   t = t.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
   t = t.replace(/```(?:thinking|reasoning|analysis)[\s\S]*?```/gi, '');
-  // 与主终端 [回答]/[超体]/[架构师] 头重复时去掉，回放已用 [助手] 前缀
-  t = t.replace(/^\[(?:回答|超体|架构师)\]\s*/m, '');
+  t = t.replace(/^\[(?:回答|超体|架构师|助手)\]\s*/m, '');
   const lines = t.split('\n');
   const kept: string[] = [];
   for (const line of lines) {
@@ -200,7 +205,52 @@ function stripAssistantContentForHistoryReplay(content: string): string {
   t = kept.join('\n');
   return t.replace(/\n{3,}/g, '\n\n').trim();
 }
+function extractReplayThinkingAndAnswer(content: string): { thinking: string; answer: string } {
+  const raw = String(content ?? '').replace(/\r\n/g, '\n');
+  const thinkingBlocks = [...raw.matchAll(/\[(?:Thinking|思考中)\s*#?\d*\][\s\S]*?(?=(?:\n\[(?:Thinking|回答|超体|助手)|$))/gi)].map((m) => m[0]);
+  const latestThinking = thinkingBlocks.length > 0 ? thinkingBlocks[thinkingBlocks.length - 1] : '';
+  let thinking = latestThinking || '';
+  if (thinking) {
+    thinking = thinking.replace(/^\[(?:Thinking|思考中)\s*#?\d*\]\s*/i, '');
+    thinking = thinking.replace(/^\s*[-—•·]{2,}\s*/gm, '');
+    thinking = thinking.replace(/^(?:\s*\[(?:Answer|回答|超体|助手)\].*)$/gim, '').trim();
+  }
 
+  let answer = raw;
+  const lastAnswerIdx = Math.max(
+    answer.lastIndexOf('[超体]'),
+    answer.lastIndexOf('[回答]'),
+    answer.lastIndexOf('[助手]'),
+  );
+  if (lastAnswerIdx >= 0) answer = answer.slice(lastAnswerIdx).replace(/^\[(?:超体|回答|助手)\]\s*/i, '');
+  else if (latestThinking) answer = answer.slice(raw.lastIndexOf(latestThinking) + latestThinking.length);
+  answer = stripAssistantContentForHistoryReplay(answer);
+  if (thinking) {
+    const idx = answer.indexOf(thinking);
+    if (idx >= 0) answer = answer.slice(idx + thinking.length).trim();
+  }
+  return { thinking, answer };
+}
+
+function splitReplayLines(content: string): string[] {
+  return String(content ?? '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line, idx, arr) => !(line === '' && arr[idx - 1] === ''));
+}
+
+function renderReplayThinkingBox(thinking: string): string {
+  const cleaned = stripAssistantContentForHistoryReplay(thinking);
+  const lines = splitReplayLines(cleaned).filter(Boolean).slice(-3);
+  const displayLines = lines.length > 0 ? lines : [''];
+  const width = Math.max(18, ...displayLines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, '').length));
+  const top = `┌${'─'.repeat(width + 2)}┐`;
+  const body = displayLines.map((line) => `│ ${line.padEnd(width)} │`);
+  const hint = `│ ${'…仅保留最新 3 行'.padEnd(width)} │`;
+  const bottom = `└${'─'.repeat(width + 2)}┘`;
+  return [top, ...body.slice(0, 3), hint, bottom].join('\n');
+}
 interface RecentTranscriptLine {
   role: 'user' | 'assistant' | 'tool';
   content: string;
@@ -374,7 +424,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly runtime = inject<ClaudeCoreRuntime>(CLAUDE_RUNTIME);
   private readonly router = inject(CommandRouterService);
   private readonly route = inject(ActivatedRoute);
-  private readonly appSettings = inject(AppSettingsService);
+  protected readonly appSettings = inject(AppSettingsService);
   private readonly usageLedger = inject(ModelUsageLedgerService);
   private readonly memoryGraph = inject(TerminalMemoryGraphService);
   private readonly agentMemory = inject(AgentMemoryService);
@@ -526,6 +576,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly gitCommitDetailOpen = signal(false);
   protected readonly gitCommitDetailText = signal('');
   protected readonly gitUiMessage = signal('');
+
+  protected readonly taskListExpanded = signal(false);
   /** 中间编辑器：普通高亮 / diff 文本 */
   protected readonly previewKind = signal<'code' | 'diff'>('code');
   /** Monaco 编辑内容与磁盘是否一致 */
@@ -1256,9 +1308,69 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return this.teammateTeamVm()?.teammates?.find((x) => x.agentId === id)?.name ?? id;
   }
 
+  protected availableModelCatalog(): ModelCatalogEntry[] {
+    return [...MODEL_CATALOG];
+  }
 
+  protected currentModelEntry(): ModelCatalogEntry | undefined {
+    return findCatalogEntry(this.appSettings.value.model?.trim() ?? '') ?? this.availableModelCatalog()[0];
+  }
 
+  protected currentModelProviderLabel(): string {
+    return this.currentModelEntry()?.providerLabel ?? 'Custom';
+  }
 
+  protected currentModelName(): string {
+    return this.currentModelEntry()?.shortName ?? this.appSettings.value.model?.trim() ?? 'unknown model';
+  }
+
+  protected currentModelLabel(): string {
+    const entry = this.currentModelEntry();
+    return entry ? `${entry.providerLabel} · ${entry.shortName}` : `${this.currentModelProviderLabel()} · ${this.currentModelName()}`;
+  }
+
+  protected currentTaskSummary(): string {
+    const task = this.currentLoopState();
+    if (!task) return '暂无当前任务';
+    const done = task.completedSteps.length;
+    const total = task.completedSteps.length + task.currentPlan.length;
+    const status = task.status === 'paused' ? '暂停中' : task.status === 'blocked' ? '阻塞' : task.status === 'executing' ? '执行中' : task.status === 'completed' ? '已完成' : '进行中';
+    return `${status} · ${done}/${total || 0} 步`;
+  }
+
+  protected toggleTaskListExpanded(): void {
+    this.taskListExpanded.update((v) => !v);
+  }
+
+  protected currentModeLabel(): string {
+    const mode = this.coordinatorMode();
+    const labels: Record<CoordinationMode, string> = {
+      single: '单智能体',
+      plan: '计划',
+      parallel: '并行',
+    };
+    return labels[mode] ?? mode;
+  }
+
+  protected currentModeList(): string[] {
+    return ['single', 'plan', 'parallel'].map((mode) => (mode === this.coordinatorMode() ? `● ${this.currentModeLabel()}` : `○ ${mode === 'single' ? '单智能体' : mode === 'plan' ? '计划' : '并行'}`));
+  }
+
+  protected setCoordinatorMode(mode: 'single' | 'plan' | 'parallel'): void {
+    this.coordinatorMode.set(mode);
+  }
+
+  protected currentModelList(): string[] {
+    return [
+      `${this.currentModelProviderLabel()} · ${this.currentModelName()}`,
+      this.appSettings.value.apiKey?.trim() ? 'API Key 已配置' : 'API Key 未配置',
+      this.appSettings.value.proxy.enabled ? `代理：${this.appSettings.value.proxy.baseUrl || '已启用'}` : '代理：关闭',
+    ];
+  }
+
+  protected imageBadgeText(): string {
+    return this.composerImages().length > 0 ? `${this.composerImages().length} 张图片` : '无图片';
+  }
 
   protected onAgentChatInput(event: Event): void {
     const value = String((event.target as HTMLInputElement | null)?.value ?? '');
@@ -1905,33 +2017,35 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const norm = rel.replace(/\\/g, '/');
     const tabLabel = `${scope}:${norm}`;
     this.persistTabState(this.activeTab());
-    const result = await window.zytrader.fs.read(norm, { scope });
-    if (!result.ok) {
-      this.previewKind.set('code');
-      this.selectedPath.set(norm);
-      this.selectedFileTreeRoot.set(scope);
-      this.selectedContent.set('无法读取该文件。');
-      this.editorDirty.set(false);
-      this.tabEditorState.set(tabLabel, {
-        relPath: norm,
-        content: '无法读取该文件。',
-        previewKind: 'code',
-        dirty: false,
-        fsScope: scope,
-      });
-      this.addTabIfMissing(tabLabel);
-      this.activeTab.set(tabLabel);
-      this.editorDiagnostics.set([]);
-      this.sidebarView.set('explorer');
-      queueMicrotask(() => {
-        this.fitAddon?.fit();
-        this.psFitAddon?.fit();
-      });
-      this.cdr.markForCheck();
-      return;
+    
+    let content = '';
+    let readError = false;
+    
+    try {
+      const result = await window.zytrader.fs.read(norm, { scope });
+      if (result.ok && result.content) {
+        content = result.content.slice(0, 800_000);
+      } else {
+        readError = true;
+        content = `无法读取文件: ${norm}\n\n可能原因:\n- 文件不存在\n- 权限不足\n- 文件系统错误`;
+      }
+    } catch (e) {
+      readError = true;
+      content = `读取文件时发生错误: ${e instanceof Error ? e.message : String(e)}`;
     }
-    const content = result.content.slice(0, 800_000);
-    this.tabEditorState.set(tabLabel, { relPath: norm, content, previewKind: 'code', dirty: false, fsScope: scope });
+    
+    this.previewKind.set('code');
+    this.selectedPath.set(norm);
+    this.selectedFileTreeRoot.set(scope);
+    this.selectedContent.set(content);
+    this.editorDirty.set(false);
+    this.tabEditorState.set(tabLabel, {
+      relPath: norm,
+      content,
+      previewKind: 'code',
+      dirty: false,
+      fsScope: scope,
+    });
     this.addTabIfMissing(tabLabel);
     this.setTab(tabLabel);
     this.editorDiagnostics.set([]);
@@ -2538,6 +2652,38 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.composerImages.update(prev => prev.filter((_, i) => i !== index));
   }
 
+  protected triggerImageUpload(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = (e) => {
+      const files = (e.target as HTMLInputElement).files;
+      if (!files) return;
+      Array.from(files).forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const imageData = ev.target?.result as string;
+          this.composerImages.update(prev => [...prev, imageData]);
+        };
+        reader.readAsDataURL(file);
+      });
+    };
+    input.click();
+  }
+
+  protected onModelSelectChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    const selectedId = select.value.trim();
+    const selected = findCatalogEntry(selectedId);
+    if (!selected) return;
+
+    this.appSettings.update({
+      modelProvider: selected.provider,
+      model: selected.id,
+    });
+  }
+
   /** 切换项目资源展开状态 */
   protected toggleProjectTree(): void {
     this.projectTreeExpanded.set(!this.projectTreeExpanded());
@@ -2655,26 +2801,42 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       rows = [{ role: 'user' as const, content: turn.prompt.trim() }, ...rows];
     }
 
-    const showThinking = this.recentThinkingVisibleIds().includes(turn.id);
+    const pairs: Array<{ user?: RecentTranscriptLine; assistant?: RecentTranscriptLine }> = [];
+    let current: { user?: RecentTranscriptLine; assistant?: RecentTranscriptLine } = {};
     for (const row of rows) {
-      const raw = typeof row.content === 'string' ? row.content : '';
-      const text = raw.replace(/\r\n/g, '\n').trim();
+      const text = String(row.content ?? '').replace(/\r\n/g, '\n').trim();
       if (!text) continue;
-
       if (row.role === 'user') {
-        const display = stripUserContentForHistoryReplay(text) || turn.prompt.trim();
-        if (!display) continue;
-        this.aiXtermWrite(`\x1b[32m>\x1b[0m ${display.replaceAll('\n', '\r\n')}\r\n`);
-        continue;
+        if (current.user || current.assistant) pairs.push(current);
+        current = { user: row };
+      } else if (row.role === 'assistant') {
+        current.assistant = row;
+        pairs.push(current);
+        current = {};
       }
-      if (row.role === 'assistant') {
-        const cleaned = showThinking ? text : stripAssistantContentForHistoryReplay(text);
-        if (!cleaned) continue;
-        this.aiXtermWrite(`\r\n\x1b[35m[助手]\x1b[0m\r\n`);
-        this.aiXtermWrite(`${cleaned.replaceAll('\n', '\r\n')}\r\n`);
-        continue;
+    }
+    if (current.user || current.assistant) pairs.push(current);
+
+    if (pairs.length === 0) {
+      this.writeMainTerminalPrompt();
+      return;
+    }
+
+    for (const pair of pairs) {
+      const userText = stripUserContentForHistoryReplay(String(pair.user?.content ?? '').trim()) || turn.prompt.trim();
+      if (!userText) continue;
+      this.aiXtermWrite(`\x1b[37m[用户]\x1b[0m ${userText.replaceAll('\n', '\r\n')}\r\n`);
+
+      const assistantRaw = String(pair.assistant?.content ?? '').trim();
+      if (!assistantRaw) continue;
+      const { thinking, answer } = extractReplayThinkingAndAnswer(assistantRaw);
+      if (thinking) {
+        this.aiXtermWrite(`\r\n[Thinking #${turn.id}]\r\n`);
+        this.aiXtermWrite(`${renderReplayThinkingBox(thinking)}\r\n`);
       }
-      // tool 角色内容保存但不展示，历史回放只展示用户输入和助手回答
+      if (answer) {
+        this.aiXtermWrite(`\r\n[超体] ${answer.replaceAll('\n', '\r\n')}\r\n`);
+      }
     }
 
     this.writeMainTerminalPrompt();
@@ -3118,12 +3280,42 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private async capturePromptContextSnapshot(sessionId: string, userQuery: string, systemPrompt?: string): Promise<void> {
+    const runtimeModel = this.getActiveRuntimeModelLabel();
+    const augmentedSystemPrompt = [
+      systemPrompt?.trim() || '',
+      runtimeModel ? `【当前运行模型】${runtimeModel}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
     await this.promptBuildContext.build({
       sessionId,
       userQuery,
-      systemPrompt,
+      systemPrompt: augmentedSystemPrompt || systemPrompt,
       builtAt: Date.now(),
     });
+  }
+
+  private getActiveRuntimeModelLabel(): string {
+    try {
+      const raw = localStorage.getItem('zyfront:active-model-runtime');
+      if (raw?.trim()) {
+        const parsed = JSON.parse(raw) as { provider?: string; model?: string };
+        const provider = String(parsed.provider ?? '').trim();
+        const model = String(parsed.model ?? '').trim();
+        if (provider || model) {
+          return `${provider || 'unknown'}:${model || 'unknown'}`;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const settings = this.appSettings.value;
+    if (settings.modelProvider || settings.model) {
+      return `${settings.modelProvider}:${settings.model}`;
+    }
+    return '';
   }
 
   private async refreshWorkbenchContextSnapshot(): Promise<void> {
@@ -3142,11 +3334,23 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     const fragmentText = presentation.fullText || result.content;
     if (!fragmentText) return;
+    const normalized = String(result.route) === 'directive' ? 'directive' : String(result.route) === 'shell' ? 'shell' : 'assistant';
+    const cleaned = fragmentText
+      .replace(/\[\/directive\s+directive\]\s*\[directive\]\s*/gi, '')
+      .replace(/\[\/directive\s+team-role\]\s*\[team-role\]\s*/gi, '')
+      .replace(/\[\/directive\s+team-struct\]\s*\[team-struct\]\s*/gi, '')
+      .replace(/\[\/directive\s+directive\]/gi, '')
+      .replace(/\[\/directive\s+team-role\]/gi, '')
+      .replace(/\[\/directive\s+team-struct\]/gi, '')
+      .replace(/\/directive\s+directive/gi, '')
+      .replace(/\/directive\s+team-role/gi, '')
+      .replace(/\/directive\s+team-struct/gi, '')
+      .replace(/^\s+/, '');
     this.renderCommandPresentation(this.commandPresentation.formatExecutionResult(
-      result.route === 'directive' ? 'directive' : result.route === 'shell' ? 'shell' : 'assistant',
+      normalized,
       String(result.route),
       result.success,
-      fragmentText,
+      cleaned,
     ));
   }
 
@@ -3176,7 +3380,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const thinkingEligible = cfg.showThinking && !cfg.thinkingVerboseMode;
     if (thinkingEligible) {
       const id = this.ensureStreamingThinkingBlockId();
-      const thHeader = `\r\n\x1b[90m[Thinking #${id}]\x1b[0m `;
+      const thHeader = `\r\n\x1b[90m[Thinking #${id}]\x1b[0m \x1b[2m思考过程已开始记录\x1b[0m`;
       this.aiXtermWrite(thHeader);
       this.bumpStreamLineBudgetForWrite(thHeader);
       this.thinkingHeaderShown = true;
@@ -3271,44 +3475,28 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   /**
-   * 将思考内容用 Unicode 边框包裹，生成类似 Claude Code 的长方形框效果。
-   * 布局：
-   *   ┄┄┄ [已思考 #N] ┄┄┄┄┄┄┄┄
-   *   │ 思考内容第一行                            │
-   *   │ 思考内容第二行                            │
-   *   ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+   * 将思考内容整理成更接近 Claude Code 的终端卡片：
+   * - 顶部状态行：突出 [Thinking #N]
+   * - 内容主体：保留原始推理，允许折行
+   * - 底部收束行：给出“收起/展开”语义，便于快速扫读
    */
   private frameThinkingContent(blockId: number, text: string, cols: number): string {
-    const MAX_CONTENT_ROWS = 6;
-    const innerWidth = Math.max(20, cols - 4);
-    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '').split('\n');
+    const innerWidth = Math.max(24, cols - 6);
+    const allLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '').split('\n');
+    const lines = allLines;
+    
+    const titlePlain = `[Thinking #${blockId}]`;
+    const sideGap = Math.max(4, Math.floor((innerWidth - titlePlain.length - 2) / 2));
+    const topLine = `\x1b[90m┌${'─'.repeat(sideGap)} [Thinking #${blockId}] ${'─'.repeat(Math.max(4, innerWidth - titlePlain.length - 2 - sideGap))}┐\x1b[0m`;
 
-    // 统一边框风格（参考 Claude Code）：上/下用 ┄ 虚线，左/右用 │ 轻实线
-    const title = `\x1b[90m[Thinking #${blockId}]\x1b[0m`;
-    const titlePlainLen = `[Thinking #${blockId}]`.length;
-    const leftDashes = 2;
-    const rightDashes = Math.max(1, innerWidth - titlePlainLen - leftDashes);
-    const topLine = `\x1b[90m┄${'┄'.repeat(leftDashes)} ${title} ${'┄'.repeat(rightDashes)}┄\x1b[0m`;
-
-    // 内容行：逐行包装，限制最大行数，左右使用 │ 轻实线边框
     const contentLines: string[] = [];
-    let truncated = false;
     for (const rawLine of lines) {
-      if (contentLines.length >= MAX_CONTENT_ROWS) {
-        truncated = true;
-        break;
-      }
       const displayW = this.stringDisplayWidth(rawLine);
       if (displayW <= innerWidth) {
         const padLen = Math.max(0, innerWidth - displayW);
         contentLines.push(`\x1b[90m│\x1b[0m ${rawLine}${' '.repeat(padLen)} \x1b[90m│\x1b[0m`);
       } else {
-        const wrapped = this.wrapAnsiLine(rawLine, innerWidth);
-        for (const seg of wrapped) {
-          if (contentLines.length >= MAX_CONTENT_ROWS) {
-            truncated = true;
-            break;
-          }
+        for (const seg of this.wrapAnsiLine(rawLine, innerWidth)) {
           const segW = this.stringDisplayWidth(seg);
           const padLen = Math.max(0, innerWidth - segW);
           contentLines.push(`\x1b[90m│\x1b[0m ${seg}${' '.repeat(padLen)} \x1b[90m│\x1b[0m`);
@@ -3316,10 +3504,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
     }
 
-    // 底部线：如果被截断，显示省略提示
-    const bottomLine = truncated
-      ? `\x1b[90m┄${'┄'.repeat(innerWidth + 2)}┄ \x1b[2m···\x1b[0m`
-      : `\x1b[90m┄${'┄'.repeat(innerWidth + 2)}┄\x1b[0m`;
+    const bottomLine = `\x1b[90m└${'─'.repeat(innerWidth)}┘\x1b[0m`;
 
     return [topLine, ...contentLines, bottomLine].join('\n');
   }
@@ -4027,7 +4212,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           const answerLabel = this.workbenchMode.isDevMode() ? '架构师' : '超体';
           xterm.write(`\x1b[35m[${answerLabel}]\x1b[0m `);
         }
-        xterm.write(answer.replaceAll('\n', '\r\n'));
+        xterm.write(answer.replace(/\r?\n+/g, ' '));
       }
 
       // 安全网：清除从当前光标到屏幕底部的一切残留
@@ -4074,6 +4259,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     answerHeaderShown: boolean;
     streamRouteDeltaToThinking: boolean;
     streamRequestStartMs: number;
+    currentThinkingBlockIndex: number;
   } {
     return {
       thinkingBuffer: this.thinkingBuffer,
@@ -4083,6 +4269,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       answerHeaderShown: this.answerHeaderShown,
       streamRouteDeltaToThinking: this.streamRouteDeltaToThinking,
       streamRequestStartMs: this.streamRequestStartMs,
+      currentThinkingBlockIndex: this.streamingThinkingBlockId ?? -1,
     };
   }
 
@@ -4094,35 +4281,51 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     answerHeaderShown: boolean;
     streamRouteDeltaToThinking: boolean;
     streamRequestStartMs: number;
+    currentThinkingBlockIndex: number;
   }): void {
-    this.thinkingBuffer = next.thinkingBuffer;
+    if (next.thinkingBuffer.length > 0) {
+      this.thinkingBuffer = next.thinkingBuffer;
+    }
     this.thinkingPrintedLen = next.thinkingPrintedLen;
-    this.thinkingHasNonChinese = next.thinkingHasNonChinese;
+    if (next.thinkingHasNonChinese) {
+      this.thinkingHasNonChinese = true;
+    }
     this.thinkingHeaderShown = next.thinkingHeaderShown;
     this.answerHeaderShown = next.answerHeaderShown;
     this.streamRouteDeltaToThinking = next.streamRouteDeltaToThinking;
     this.streamRequestStartMs = next.streamRequestStartMs;
+    if (next.currentThinkingBlockIndex >= 0) {
+      this.streamingThinkingBlockId = next.currentThinkingBlockIndex;
+    }
   }
 
   private renderThinkingHeader(blockId: number): void {
-    const thHeader = `\r\n\x1b[90m[Thinking #${blockId}]\x1b[0m `;
+    const thHeader = `\r\n[Thinking #${blockId}] `;
     this.aiXtermWrite(thHeader);
     this.bumpStreamLineBudgetForWrite(thHeader);
     this.ensureAssistantStreamOutputStartMarker();
   }
 
+  private renderThinkingBlockEnd(blockId: number): void {
+    const thFooter = `\r\n\x1b[90m[Thinking #${blockId} · 完成]\x1b[0m`;
+    this.aiXtermWrite(thFooter);
+    this.bumpStreamLineBudgetForWrite(thFooter);
+    this.streamingThinkingBlockId = null;
+  }
+
   private renderAnswerHeader(): void {
     const label = this.workbenchMode.isDevMode() ? '架构师' : '超体';
-    const hdr = `\x1b[35m[${label}]\x1b[0m `;
+    const hdr = `\r\n[${label}] `;
     this.aiXtermWrite(hdr);
     this.bumpStreamLineBudgetForWrite(hdr);
     this.ensureAssistantStreamOutputStartMarker();
   }
 
   private renderToolLine(line: string): void {
-    this.aiXtermWrite(line);
-    this.streamToolEchoes.push(line);
-    this.bumpStreamLineBudgetForWrite(line);
+    const decorated = line.replace(/\[Tool\]/g, '[Tool]');
+    this.aiXtermWrite(decorated);
+    this.streamToolEchoes.push(decorated);
+    this.bumpStreamLineBudgetForWrite(decorated);
     this.ensureAssistantStreamOutputStartMarker();
   }
 
@@ -4163,7 +4366,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
     if (!this.thinkingHeaderShown) {
       const id = this.ensureStreamingThinkingBlockId();
-      const thHeader = `\r\n\x1b[90m[Thinking #${id}]\x1b[0m `;
+      const thHeader = `\r\n\x1b[90m[Thinking #${id}]\x1b[0m \x1b[2m思考过程已开始记录\x1b[0m`;
       this.aiXtermWrite(thHeader);
       this.bumpStreamLineBudgetForWrite(thHeader);
       this.thinkingHeaderShown = true;
@@ -4196,6 +4399,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         budget: (text) => this.bumpStreamLineBudgetForWrite(text),
         ensureMarker: () => this.ensureAssistantStreamOutputStartMarker(),
         onThinkingBlockStart: (blockId) => this.renderThinkingHeader(blockId),
+        onThinkingBlockEnd: (blockId) => this.renderThinkingBlockEnd(blockId),
         onToolMemory: (text) => this.pushToolMemory(text),
         onToolStart: (name) => {
           this.streamRouteDeltaToThinking = false;
@@ -4730,10 +4934,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private writeMainTerminalPrompt(): void {
     const cols = Math.max(40, this.xterm?.cols ?? 80);
-    // 对话间虚线分隔（参考 Claude Code 风格），首轮之前不画线
     if (this.hasCompletedTurn) {
-      const sepWidth = Math.min(cols, 60);
-      const sep = `\x1b[90m${'┄'.repeat(sepWidth)}\x1b[0m`;
+      const sep = `\x1b[90m${'┄'.repeat(cols)}\x1b[0m`;
       this.aiXtermWrite(`\r\n${sep}\r\n\x1b[36m[用户]\x1b[0m `);
     } else {
       this.aiXtermWrite(`\r\n\x1b[36m[用户]\x1b[0m `);
@@ -5150,11 +5352,59 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         preservePrefixes: false,
         allowBridgeSlashCommands: true,
       });
-      if (processedTeam.executionResult.responseType !== 'directive') {
+      
+      const hasTabKey = !!processedTeam.executionResult.metadata?.['tabKey'];
+      const hasOpenInEditor = !!processedTeam.executionResult.metadata?.['openInEditor'];
+      const filePath = typeof processedTeam.executionResult.metadata?.['filePath'] === 'string' 
+        ? String(processedTeam.executionResult.metadata['filePath']) : '';
+      
+      if (hasTabKey) {
+        const tabKey = String(processedTeam.executionResult.metadata!['tabKey']);
+        const isTeamRole = /^team-role:/i.test(tabKey);
+        
+        if (isTeamRole && filePath) {
+          this.addTabIfMissing(tabKey);
+          const openScope = processedTeam.executionResult.metadata?.['openScope'] === 'workspace' ? 'workspace' : 'vault';
+          
+          this.projectTreeExpanded.set(false);
+          this.recentSessionsExpanded.set(false);
+          this.memoryVaultExpanded.set(true);
+          
+          void this.openFileByPath(filePath, openScope).then(async () => {
+            await this.expandAndSelectFile(filePath, openScope);
+            this.setTab(tabKey);
+            const markdown = String(processedTeam.executionResult.metadata?.['markdown'] ?? processedTeam.executionResult.content ?? '');
+            if (markdown) {
+              this.selectedContent.set(markdown);
+            }
+            this.editorDirty.set(false);
+            this.tabEditorState.set(tabKey, {
+              relPath: filePath,
+              content: markdown,
+              previewKind: 'code',
+              dirty: false,
+              fsScope: openScope,
+            });
+          });
+        } else {
+          this.presentUnifiedCommandEntry(processedTeam.executionResult);
+        }
+      } else {
         this.presentUnifiedCommandEntry(processedTeam.executionResult);
-        return;
+        
+        if (hasOpenInEditor && filePath) {
+          const openScope = processedTeam.executionResult.metadata?.['openScope'] === 'workspace' ? 'workspace' : 'vault';
+          
+          this.projectTreeExpanded.set(false);
+          this.recentSessionsExpanded.set(false);
+          this.memoryVaultExpanded.set(true);
+          
+          void this.openFileByPath(filePath, openScope).then(async () => {
+            await this.expandAndSelectFile(filePath, openScope);
+          });
+        }
       }
-      await this.runDirective(processedTeam.preprocessed.normalized);
+      this.writeMainTerminalPrompt();
       return;
     }
 
@@ -5332,6 +5582,40 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.psFitAddon?.fit();
     });
     this.cdr.markForCheck();
+  }
+
+  protected async expandAndSelectFile(filePath: string, scope: 'workspace' | 'vault' = 'vault'): Promise<void> {
+    const parts = filePath.split('/').filter(Boolean);
+    if (parts.length === 0) return;
+
+    const tree = scope === 'workspace' ? this.workspaceTree() : this.memoryTree();
+    const treeSignal = scope === 'workspace' ? this.workspaceTree : this.memoryTree;
+    
+    let currentNodes = tree;
+    let currentPath = '';
+    
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      
+      const dirNode = currentNodes.find(n => n.type === 'dir' && n.name === part);
+      if (!dirNode) break;
+      
+      if (!dirNode.loaded) {
+        await this.loadDir(currentPath, dirNode, scope);
+      }
+      
+      dirNode.expanded = true;
+      currentNodes = dirNode.children || [];
+    }
+    
+    treeSignal.set([...treeSignal()]);
+    
+    const fileName = parts[parts.length - 1];
+    const fileNode = currentNodes.find(n => n.type === 'file' && n.name === fileName);
+    if (fileNode) {
+      await this.openFile(fileNode);
+    }
   }
 
   // ── Loop 需求收集处理 ────────────────────────────────────
@@ -5780,8 +6064,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       },
     });
 
-    // 有 tabKey 的命令结果（/debug, /loop）展示到独立终端 tab，主终端不输出重复内容
+    // 有 tabKey 的命令结果展示到独立 tab，主终端不输出重复内容
     const hasTabKey = !!result.metadata?.['tabKey'];
+    const hasOpenInEditor = !!result.metadata?.['openInEditor'];
+    const filePath = typeof result.metadata?.['filePath'] === 'string' ? String(result.metadata['filePath']) : '';
+    
     if (hasTabKey) {
       const tabKey = String(result.metadata!['tabKey']);
       const isLoop = this.isLoopTab(tabKey);
@@ -5823,6 +6110,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       }
 
       this.writeMainTerminalPrompt();
+      
+      if (hasOpenInEditor && filePath) {
+        const openScope = result.metadata?.['openScope'] === 'workspace' ? 'workspace' : 'vault';
+        void this.openFileByPath(filePath, openScope);
+      }
     } else {
       this.renderCommandPresentation(this.commandPresentation.formatExecutionResult(
         'directive',
@@ -5830,6 +6122,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         result.success,
         result.content,
       ));
+      
+      // 如果有 openInEditor 且有 filePath，打开文件到单独 tab
+      if (hasOpenInEditor && filePath) {
+        const openScope = result.metadata?.['openScope'] === 'workspace' ? 'workspace' : 'vault';
+        void this.openFileByPath(filePath, openScope);
+      }
     }
 
     if (result.metadata?.['mode']) {
@@ -6153,6 +6451,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.handleStreamChunk(chunk);
         },
         onDevDelta: (text, chunk) => {
+          this.handleStreamChunk(chunk);
+        },
+        onChunk: (chunk) => {
           this.handleStreamChunk(chunk);
         },
         onPlanDone: (text) => {
@@ -6494,8 +6795,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           if (cfg.showThinking) {
             this.thinkingBuffer += value.textDelta;
             const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
-            // Buffer at least 5 characters to avoid character-by-character output
-            if (rest && rest.length >= 5) {
+            // 立即输出思考内容，不等待缓冲，支持多段思考
+            if (rest && rest.length > 0) {
               const visible = this.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(rest) : rest;
               const out = this.highlightThinkingSteps(visible);
               this.aiXtermWrite(out);
@@ -6880,7 +7181,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       showThinking: true,
       showToolActivity: false,
       showSkillHitBanner: true,
-      thinkingCollapsedByDefault: true,
+      thinkingCollapsedByDefault: false,
       thinkingVerboseMode: false,
       layoutSplitThinkingAnswer: true,
       thinkingToggleShortcut: 'Ctrl+O',
@@ -6977,8 +7278,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private highlightThinkingSteps(text: string): string {
     if (!text) return text;
     return text
-      .replace(/(第\s*[一二三四五六七八九十\d]+\s*步)/g, '\x1b[36m$1\x1b[0m')
-      .replace(/(step\s*\d+)/gi, '\x1b[36m$1\x1b[0m');
+      .replace(/(第\s*[一二三四五六七八九十\d]+\s*步)/g, '$1')
+      .replace(/(step\s*\d+)/gi, '$1')
+      .replace(/\b(TODO|FIXME|WIP|NOTE)\b/g, '$1');
   }
 
   private decorateDevModeText(text: string): string {
@@ -7002,7 +7304,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         if (!hasHan && asciiWords >= 4) return '[内容已折叠：英文思考段]';
         return line;
       })
-      .join('\n');
+      .join('\n')
+      .replace(/\b(architecture|analysis|reasoning|implementation|verification)\b/gi, '\x1b[2m$1\x1b[0m');
     return cleaned;
   }
 

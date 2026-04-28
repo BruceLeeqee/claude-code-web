@@ -1,29 +1,28 @@
-feat(workbench): 新增 DeepSeek 支持、Loop 多任务管理与团队编排
+feat(multi-agent): 多智能体架构重构与Workbench深度优化
 
 【背景】
-- 需要支持 DeepSeek 作为 LLM 提供方，其工具名正则限制要求对 API 层做兼容适配
-- Loop 系统需要支持多任务并发管理、团队编排、自动验证矩阵等能力
-- Models 页面需要重构以支持新模型配置结构
+- 原有架构在多智能体协作时存在事件流处理瓶颈
+- Sidebar 组件与 Workbench 页面耦合严重，扩展性差
+- API 层缺乏统一的流式处理抽象
 
 【本次改动】
-- 新增 DeepSeek 工具名清理/还原逻辑（sanitize → restore），兼容 ^[a-zA-Z0-9_-]+$ 限制
-- Loop 执行器新增多任务管理与团队编排（teamManager.createTeam/assignSteps）
-- Loop 非开发任务（analysis/docs/general）自动标记验证矩阵通过
-- Workbench 页面新增 Loop 多视图模式（cards/terminal）、多任务切换与日志缓冲
-- Models 页面重构：新增 590 行 UI 逻辑与样式更新，支持新模型配置展示
-- 桌面端 main.js 与 preload.js 更新 IPC 桥接能力
-- 桌面端模型目录重构（model-catalog.ts），运行时设置同步优化
-- App settings 服务跨桌面端/Web 端统一调整
+- 重构 zyfront-core API 层，新增 anthropic-sse.ts 和 stream 处理模块
+- 全新侧边栏组件 multi-agent-sidebar，支持多智能体切换与事件分发
+- Workbench 页面深度优化：指令解析、命令执行、流式协调
+- 新增 intent-classifier.service.ts 实现意图分类
+- 优化 runtime-settings-sync.service.ts 实现设置实时同步
+- 新增 command-executor.service.ts 统一命令执行入口
 
 【影响范围】
-- zyfront-core：API 层（anthropic-messages、anthropic-stream、api/index、types）
-- zyfront-desktop：workbench 模块、models 页面、main/preload 进程、settings 服务
-- zyfront-web：settings 页面
+- zyfront-core/src/api/（API 重构）
+- zyfront-desktop/src/app/core/multi-agent/（多智能体核心）
+- zyfront-desktop/src/app/features/prototype/workbench/（Workbench 模块）
 
 【验证】
-- 本地编译通过（32 文件变更，2637 行新增，480 行删除）
-- Diff 审查确认改动逻辑完整
+- 本地编译通过
+- 手动测试多智能体切换正常
+- Workbench 页面指令执行正常
 
 【风险与回滚】
-- 低风险：改动集中在新增逻辑与重构，未破坏已有接口
-- 回滚方式：`git revert HEAD` 恢复
+- 中等风险，涉及核心模块重构
+- 回滚：git revert 本次提交

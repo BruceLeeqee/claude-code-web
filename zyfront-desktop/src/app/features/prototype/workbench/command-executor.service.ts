@@ -16,6 +16,7 @@ import { LoopCommandService } from './debug/loop-command.service';
 import { LoopExecutorService } from './debug/loop-executor.service';
 import { LoopVerifierService } from './debug/loop-verifier.service';
 import { buildLoopDebugViewModel } from './debug/loop-debug-tab.adapter';
+import { TeamCommandRouterService } from '../../../core/multi-agent/team/team-command-router.service';
 
 export interface ExecutionInput {
   raw: string;
@@ -54,6 +55,7 @@ export class CommandExecutorService {
   private readonly loopCommand = inject(LoopCommandService);
   private readonly loopExecutor = inject(LoopExecutorService);
   private readonly loopVerifier = inject(LoopVerifierService);
+  private readonly teamCommandRouter = inject(TeamCommandRouterService);
   private readonly directiveExecutors = new Map<string, DirectiveExecutorFn>();
   private readonly loopTimers = new Map<string, ReturnType<typeof setInterval>>();
 
@@ -388,6 +390,74 @@ export class CommandExecutorService {
         content: 'Superpowers 功能尚未实现',
         shouldQuery: false,
         displayType: 'error',
+      };
+    });
+
+    this.registerDirectiveExecutor('team_role', async (ctx) => {
+      const result = await this.teamCommandRouter.execute(`/team-role ${ctx.parsed.args}`);
+      const renderedList = result.metadata?.['renderedList'];
+      return {
+        success: result.ok,
+        route: 'directive',
+        responseType: result.ok ? 'directive' : 'error',
+        content: result.ok
+          ? (typeof renderedList === 'string' && renderedList.trim().length > 0 ? renderedList : result.message)
+          : `错误: ${result.message}`,
+        metadata: result.metadata as Record<string, unknown> | undefined,
+        shouldQuery: false,
+        displayType: result.ok ? 'success' : 'error',
+      };
+    });
+
+    this.registerDirectiveExecutor('team_struct', async (ctx) => {
+      const result = await this.teamCommandRouter.execute(`/team-struct ${ctx.parsed.args}`);
+      return {
+        success: result.ok,
+        route: 'directive',
+        responseType: result.ok ? 'directive' : 'error',
+        content: result.ok ? result.message : `错误: ${result.message}`,
+        metadata: result.metadata as Record<string, unknown> | undefined,
+        shouldQuery: false,
+        displayType: result.ok ? 'success' : 'error',
+      };
+    });
+
+    this.registerDirectiveExecutor('team_run', async (ctx) => {
+      const result = await this.teamCommandRouter.execute(`/team run ${ctx.parsed.args}`);
+      return {
+        success: result.ok,
+        route: 'directive',
+        responseType: result.ok ? 'directive' : 'error',
+        content: result.ok ? result.message : `错误: ${result.message}`,
+        metadata: result.data as Record<string, unknown> | undefined,
+        shouldQuery: false,
+        displayType: result.ok ? 'success' : 'error',
+      };
+    });
+
+    this.registerDirectiveExecutor('team_subagent', async (ctx) => {
+      const result = await this.teamCommandRouter.execute(`/team-subagent ${ctx.parsed.args}`);
+      return {
+        success: result.ok,
+        route: 'directive',
+        responseType: result.ok ? 'directive' : 'error',
+        content: result.ok ? result.message : `错误: ${result.message}`,
+        metadata: result.data as Record<string, unknown> | undefined,
+        shouldQuery: false,
+        displayType: result.ok ? 'success' : 'error',
+      };
+    });
+
+    this.registerDirectiveExecutor('team_agent', async (ctx) => {
+      const result = await this.teamCommandRouter.execute(`/team-agent ${ctx.parsed.args}`);
+      return {
+        success: result.ok,
+        route: 'directive',
+        responseType: result.ok ? 'directive' : 'error',
+        content: result.ok ? result.message : `错误: ${result.message}`,
+        metadata: result.data as Record<string, unknown> | undefined,
+        shouldQuery: false,
+        displayType: result.ok ? 'success' : 'error',
       };
     });
   }

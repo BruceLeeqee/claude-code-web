@@ -104,3 +104,34 @@ export function findCatalogEntry(modelId: string): ModelCatalogEntry | undefined
 export function defaultCatalogEntry(): ModelCatalogEntry {
   return MODEL_CATALOG[0]!;
 }
+
+export const ROLE_MODEL_MAP: Record<string, string> = {
+  'frontend-developer': 'MiniMax-M2.7',
+  'backend-developer': 'MiniMax-M2.7',
+  'qa-engineer': 'abab6.5s-chat',
+  'architect': 'deepseek-v4-pro',
+  'security-reviewer': 'MiniMax-M2.7',
+  'devops': 'abab6.5s-chat',
+  'reviewer': 'deepseek-v4-pro',
+  'researcher': 'MiniMax-M2.7',
+  'planner': 'deepseek-v4-pro',
+  'executor': 'MiniMax-M2.7',
+  'validator': 'abab6.5s-chat',
+  'leader': 'deepseek-v4-pro',
+};
+
+export function getModelForRole(roleName: string): ModelCatalogEntry {
+  const modelId = ROLE_MODEL_MAP[roleName];
+  if (modelId) {
+    return findCatalogEntry(modelId) ?? defaultCatalogEntry();
+  }
+
+  if (/前端|frontend|ui/i.test(roleName)) return findCatalogEntry('MiniMax-M2.7')!;
+  if (/后端|backend|api/i.test(roleName)) return findCatalogEntry('MiniMax-M2.7')!;
+  if (/测试|qa|test|验证/i.test(roleName)) return findCatalogEntry('abab6.5s-chat')!;
+  if (/架构|architect/i.test(roleName)) return findCatalogEntry('deepseek-v4-pro')!;
+  if (/安全|security/i.test(roleName)) return findCatalogEntry('MiniMax-M2.7')!;
+  if (/运维|devops/i.test(roleName)) return findCatalogEntry('abab6.5s-chat')!;
+
+  return defaultCatalogEntry();
+}

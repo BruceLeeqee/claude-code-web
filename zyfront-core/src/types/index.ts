@@ -69,6 +69,8 @@ export interface AnthropicTurnSnapshot {
 export type StreamChunk =
   | { type: 'delta'; textDelta: string }
   | { type: 'thinking_delta'; textDelta: string }
+  | { type: 'thinking_start'; blockIndex: number }
+  | { type: 'thinking_done'; blockIndex: number }
   | { type: 'done'; message?: ChatMessage; usage?: Usage }
   | { type: 'error'; error: string }
   | { type: 'tool_call'; toolCall: ToolCall }

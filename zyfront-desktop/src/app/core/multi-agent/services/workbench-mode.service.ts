@@ -4,7 +4,7 @@ import { MultiAgentEventBusService } from '../multi-agent.event-bus.service';
 import { EVENT_TYPES } from '../multi-agent.events';
 import type { AgentRole, AgentDescriptor, AgentRuntimeState } from '../domain/types';
 
-export type WorkbenchMode = 'solo' | 'plan' | 'dev';
+export type WorkbenchMode = 'solo' | 'plan' | 'dev' | 'team' | 'subagent' | 'hybrid';
 
 export interface DevTeamConfig {
   architect: AgentDescriptor;
@@ -13,12 +13,20 @@ export interface DevTeamConfig {
   tester: AgentDescriptor;
 }
 
+export interface TeamModeConfig {
+  teamId: string;
+  structName: string;
+  mode: 'subagent' | 'agent-team' | 'hybrid';
+  memberRoleNames: string[];
+}
+
 export interface ModeState {
   current: WorkbenchMode;
   previousMode: WorkbenchMode | null;
   switchedAt: number;
   reason: string;
   devTeam?: DevTeamConfig;
+  teamConfig?: TeamModeConfig;
   planDocument?: string;
 }
 
@@ -42,6 +50,18 @@ const MODE_DESCRIPTIONS: Record<WorkbenchMode, { name: string; desc: string }> =
     name: '开发者模式',
     desc: '实例化开发团队（架构师、前端、后端、测试），采用主从多智能体协作',
   },
+  team: {
+    name: '团队协作模式',
+    desc: '基于角色定义和协作结构，多个智能体共享上下文协作完成任务',
+  },
+  subagent: {
+    name: '子智能体模式',
+    desc: '多个子智能体并行独立执行任务，互不共享上下文',
+  },
+  hybrid: {
+    name: '混合编排模式',
+    desc: '结合子智能体并行执行和团队协作，按阶段切换运行模式',
+  },
 };
 
 @Injectable({ providedIn: 'root' })
@@ -62,7 +82,12 @@ export class WorkbenchModeService {
   readonly isSoloMode = computed(() => this.state().current === 'solo');
   readonly isPlanMode = computed(() => this.state().current === 'plan');
   readonly isDevMode = computed(() => this.state().current === 'dev');
+  readonly isTeamMode = computed(() => this.state().current === 'team');
+  readonly isSubagentMode = computed(() => this.state().current === 'subagent');
+  readonly isHybridMode = computed(() => this.state().current === 'hybrid');
+  readonly isMultiAgentMode = computed(() => ['dev', 'team', 'subagent', 'hybrid'].includes(this.state().current));
   readonly devTeam = computed(() => this.state().devTeam);
+  readonly teamConfig = computed(() => this.state().teamConfig);
 
   getModeDescriptions(): Record<WorkbenchMode, { name: string; desc: string }> {
     return MODE_DESCRIPTIONS;
@@ -78,6 +103,10 @@ export class WorkbenchModeService {
       this.cleanupDevTeam();
     }
 
+    if (['team', 'subagent', 'hybrid'].includes(current) && this.state().teamConfig) {
+      this.cleanupTeamConfig();
+    }
+
     const now = Date.now();
     this.state.update(s => ({
       ...s,
@@ -86,6 +115,7 @@ export class WorkbenchModeService {
       switchedAt: now,
       reason,
       devTeam: undefined,
+      teamConfig: undefined,
       planDocument: undefined,
     }));
 
@@ -152,6 +182,13 @@ export class WorkbenchModeService {
     }));
   }
 
+  setTeamConfig(config: TeamModeConfig): void {
+    this.state.update(s => ({
+      ...s,
+      teamConfig: config,
+    }));
+  }
+
   private createAgentDescriptor(
     role: AgentRole,
     name: string,
@@ -206,5 +243,21 @@ export class WorkbenchModeService {
         },
       } as any);
     });
+  }
+
+  private cleanupTeamConfig(): void {
+    const config = this.state().teamConfig;
+    if (!config) return;
+
+    this.eventBus.emit({
+      type: EVENT_TYPES.TEAM_RUNTIME_CLOSED,
+      sessionId: config.teamId,
+      source: 'system',
+      ts: Date.now(),
+      payload: {
+        teamId: config.teamId,
+        cleanedUp: [`team:${config.teamId}`],
+      },
+    } as any);
   }
 }

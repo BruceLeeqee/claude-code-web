@@ -50,6 +50,17 @@ export class AnthropicSseTurnAccumulator {
   private readonly blocks = new Map<number, BlockState>();
   private stopReason: string | null = null;
   private usage: Usage | undefined;
+  private reasoningShadowIdx = -1;
+
+  private findOrCreateThinkingBlockForReasoning(currentIdx: number): number {
+    if (this.reasoningShadowIdx >= 0 && this.blocks.has(this.reasoningShadowIdx)) {
+      return this.reasoningShadowIdx;
+    }
+    const shadowIdx = currentIdx + 10000;
+    this.blocks.set(shadowIdx, { kind: 'thinking', thinking: '' });
+    this.reasoningShadowIdx = shadowIdx;
+    return shadowIdx;
+  }
 
   /** 处理一行完整 SSE（含 `data:` 前缀与 JSON 负载） */
   consumeLine(line: string): void {
@@ -94,8 +105,18 @@ export class AnthropicSseTurnAccumulator {
       if (b.kind === 'text' && d['type'] === 'text_delta' && typeof d['text'] === 'string') {
         b.text += d['text'];
       }
+      if (b.kind === 'text' && typeof d['reasoning_content'] === 'string') {
+        const thinkingIdx = this.findOrCreateThinkingBlockForReasoning(idx);
+        const tb = this.blocks.get(thinkingIdx);
+        if (tb && tb.kind === 'thinking') {
+          tb.thinking += d['reasoning_content'];
+        }
+      }
       if (b.kind === 'thinking' && d['type'] === 'thinking_delta' && typeof d['thinking'] === 'string') {
         b.thinking += d['thinking'];
+      }
+      if (b.kind === 'thinking' && typeof d['reasoning_content'] === 'string') {
+        b.thinking += d['reasoning_content'];
       }
       if (b.kind === 'tool_use' && d['type'] === 'input_json_delta' && typeof d['partial_json'] === 'string') {
         b.jsonBuf += d['partial_json'];

@@ -9,6 +9,11 @@ export type DirectiveKind =
   | 'mode_plan'
   | 'mode_dev'
   | 'team'
+  | 'team_role'
+  | 'team_struct'
+  | 'team_run'
+  | 'team_subagent'
+  | 'team_agent'
   | 'loop'
   | 'task'
   | 'plugin_list'
@@ -123,6 +128,56 @@ export const DIRECTIVE_REGISTRY: DirectiveDefinition[] = [
     requiresArgs: true,
   },
   {
+    name: '/team-role',
+    desc: '管理角色定义（new/list/info）',
+    template: '/team-role <new|list|info> [args]',
+    kind: 'team_role',
+    group: 'development',
+    usage: '/team-role new "角色提示词"  /team-role list  /team-role info <角色名>',
+    visibleInHelp: true,
+    requiresArgs: true,
+  },
+  {
+    name: '/team-struct',
+    desc: '管理协作结构（new/list/info）',
+    template: '/team-struct <new|list|info> [args]',
+    kind: 'team_struct',
+    group: 'development',
+    usage: '/team-struct new "协作流程"  /team-struct list  /team-struct info <结构名>',
+    visibleInHelp: true,
+    requiresArgs: true,
+  },
+  {
+    name: '/team run',
+    desc: '按协作结构启动团队执行',
+    template: '/team run <struct> <task>',
+    kind: 'team_run',
+    group: 'development',
+    usage: '/team run <结构名> <团队任务>',
+    visibleInHelp: true,
+    requiresArgs: true,
+  },
+  {
+    name: '/team-subagent',
+    desc: '并行隔离执行多角色子智能体',
+    template: '/team-subagent <roles> <task>',
+    kind: 'team_subagent',
+    group: 'development',
+    usage: '/team-subagent frontend,backend "实现模块"',
+    visibleInHelp: true,
+    requiresArgs: true,
+  },
+  {
+    name: '/team-agent',
+    desc: '多角色协作运行（共享上下文）',
+    template: '/team-agent <roles> <task>',
+    kind: 'team_agent',
+    group: 'development',
+    usage: '/team-agent frontend,backend,qa "解决登录 500 错误"',
+    visibleInHelp: true,
+    requiresArgs: true,
+  },
+  {
     name: '/loop',
     desc: '自动拆解并循环执行任务，直到完成或阻塞',
     template: '/loop <goal> [--every=10s]',
@@ -203,9 +258,23 @@ export function parseDirective(raw: string): ParsedDirective {
     argsStartIndex = 2;
   }
 
-  const args = words.slice(argsStartIndex).join(' ');
+  let def: DirectiveDefinition | null = null;
 
-  const def = findDirectiveDefinition(commandName);
+  if (words.length > argsStartIndex) {
+    const twoWordName = `${words[0]} ${words[argsStartIndex]}`;
+    const twoWordDef = findDirectiveDefinition(twoWordName);
+    if (twoWordDef) {
+      commandName = twoWordName;
+      argsStartIndex += 1;
+      def = twoWordDef;
+    }
+  }
+
+  if (!def) {
+    def = findDirectiveDefinition(commandName);
+  }
+
+  const args = words.slice(argsStartIndex).join(' ');
 
   let confidence = 0;
   if (def) {

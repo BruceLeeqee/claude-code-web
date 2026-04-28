@@ -68,7 +68,6 @@ const RUNTIME = {
 
 const APP_CONFIG_FILENAME = 'zytrader-workspace.json'
 
-/** 避免 executeJavaScript / 页面挂起导致 IPC 永不返回（如 SSL 握手重试） */
 function promiseWithTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
@@ -85,78 +84,152 @@ function promiseWithTimeout(promise, ms, label) {
   })
 }
 
-const DEFAULT_DIRECTORY_CONFIG = {
-  version: 1,
-  keys: {
-    inbox: '00-HUMAN-TEMP',
-    'inbox-human': '00-HUMAN-TEMP/human',
-    'inbox-agent': '00-HUMAN-TEMP/agent',
-    'human-notes': '01-HUMAN-NOTES',
-    'agent-memory': '02-AGENT-MEMORY',
-    'agent-short-term': '02-AGENT-MEMORY/01-Short-Term',
-    /** 兼容旧工具名：与 agent-long-user 同目录 */
-    'agent-long-term': '02-AGENT-MEMORY/02-Long-User',
-    'agent-long-user': '02-AGENT-MEMORY/02-Long-User',
-    'agent-long-feedback': '02-AGENT-MEMORY/03-Long-Feedback',
-    'agent-long-project': '02-AGENT-MEMORY/04-Long-Projects',
-    'agent-long-reference': '02-AGENT-MEMORY/05-Long-Reference',
-    'agent-context': '02-AGENT-MEMORY/06-Context',
-    /** 索引与元数据同层 07-Meta */
-    'agent-meta': '02-AGENT-MEMORY/07-Meta',
-    /** 长期记忆索引：manifest / time-index / topic-index */
-    'agent-memory-index': '02-AGENT-MEMORY/07-Meta',
-    'agent-skills': '03-AGENT-TOOLS/01-Skills',
-    'agent-plugins': '03-AGENT-TOOLS/02-Plugins',
-    projects: '04-PROJECTS',
-    resources: '05-RESOURCES',
-    system: '06-SYSTEM',
-  },
+const VAULT_STRUCTURE = {
+  dirs: [
+    {
+      name: '00-HUMAN-TEMP',
+      desc: '临时收纳（人类随手记、Agent 临时记忆）',
+      key: 'inbox',
+      children: [
+        { name: 'human', key: 'inbox-human' },
+        { name: 'agent', key: 'inbox-agent' },
+      ],
+    },
+    {
+      name: '01-HUMAN-NOTES',
+      desc: '人类正式笔记',
+      key: 'human-notes',
+      children: [
+        { name: '01-Daily' },
+        { name: '02-Knowledge' },
+        { name: '03-Notes' },
+        { name: '04-Tags' },
+      ],
+    },
+    {
+      name: '02-AGENT-MEMORY',
+      desc: 'Agent 记忆',
+      key: 'agent-memory',
+      children: [
+        { name: '01-Short-Term', key: 'agent-short-term' },
+        { name: '02-Long-User', key: 'agent-long-user', aliasKeys: ['agent-long-term'] },
+        { name: '03-Long-Feedback', key: 'agent-long-feedback' },
+        { name: '04-Long-Projects', key: 'agent-long-project' },
+        { name: '05-Long-Reference', key: 'agent-long-reference' },
+        { name: '06-Context', key: 'agent-context' },
+        { name: '07-Meta', key: 'agent-meta', aliasKeys: ['agent-memory-index'], desc: '索引 manifest / time-index / topic-index；子目录 tools 构建索引', children: [{ name: 'tools' }] },
+      ],
+    },
+    {
+      name: '03-AGENT-TOOLS',
+      children: [
+        { name: '01-Skills', key: 'agent-skills', desc: '技能根：每技能一子目录，入口须为 SKILL.md 或 Skill.md 或 skill.md' },
+        { name: '02-Plugins', key: 'agent-plugins', desc: '插件根' },
+        { name: '03-Roles' },
+        { name: '04-Structs' },
+        { name: '05-Teams' },
+        { name: '06-Tasks' },
+        { name: '07-Messages' },
+      ],
+    },
+    {
+      name: '04-PROJECTS',
+      desc: '工程与代码仓库（唯一 projects 根）',
+      key: 'projects',
+    },
+    {
+      name: '05-RESOURCES',
+      key: 'resources',
+      children: [
+        { name: 'images' },
+        { name: 'files' },
+        { name: 'media' },
+        { name: 'templates' },
+      ],
+    },
+    {
+      name: '06-SYSTEM',
+      desc: 'directory.config.json / rule.config.json / agent.config.json',
+      key: 'system',
+    },
+  ],
 }
 
-const VAULT_SUBDIRS = [
-  path.join('00-HUMAN-TEMP', 'human'),
-  path.join('00-HUMAN-TEMP', 'agent'),
-  path.join('01-HUMAN-NOTES', '01-Daily'),
-  path.join('01-HUMAN-NOTES', '02-Knowledge'),
-  path.join('01-HUMAN-NOTES', '03-Notes'),
-  path.join('01-HUMAN-NOTES', '04-Tags'),
-  path.join('02-AGENT-MEMORY', '01-Short-Term'),
-  path.join('02-AGENT-MEMORY', '02-Long-User'),
-  path.join('02-AGENT-MEMORY', '03-Long-Feedback'),
-  path.join('02-AGENT-MEMORY', '04-Long-Projects'),
-  path.join('02-AGENT-MEMORY', '05-Long-Reference'),
-  path.join('02-AGENT-MEMORY', '06-Context'),
-  path.join('02-AGENT-MEMORY', '07-Meta'),
-  path.join('02-AGENT-MEMORY', '07-Meta', 'tools'),
-  path.join('03-AGENT-TOOLS', '01-Skills'),
-  path.join('03-AGENT-TOOLS', '02-Plugins'),
-  '04-PROJECTS',
-  path.join('05-RESOURCES', 'images'),
-  path.join('05-RESOURCES', 'files'),
-  path.join('05-RESOURCES', 'media'),
-  path.join('05-RESOURCES', 'templates'),
-  '06-SYSTEM',
-]
+function buildDirectoryKeys(dirs, parentPath = '') {
+  const keys = {}
+  for (const dir of dirs) {
+    const fullPath = parentPath ? `${parentPath}/${dir.name}` : dir.name
+    if (dir.key) {
+      keys[dir.key] = fullPath
+    }
+    if (dir.aliasKeys) {
+      for (const alias of dir.aliasKeys) {
+        keys[alias] = fullPath
+      }
+    }
+    if (dir.children) {
+      Object.assign(keys, buildDirectoryKeys(dir.children, fullPath))
+    }
+  }
+  return keys
+}
 
-const VAULT_README_CONTENT = `AGENT-ROOT/  # 根目录（可自定义路径）
-├── 00-HUMAN-TEMP/     # 临时收纳（人类随手记、Agent 临时记忆）
-│   ├── human/
-│   └── agent/
-├── 01-HUMAN-NOTES/    # 人类正式笔记
-├── 02-AGENT-MEMORY/   # Agent 记忆
-│   ├── 01-Short-Term/
-│   ├── 02-Long-User/
-│   ├── 03-Long-Feedback/
-│   ├── 04-Long-Projects/
-│   ├── 05-Long-Reference/
-│   ├── 06-Context/
-│   └── 07-Meta/       # 索引 manifest / time-index / topic-index；子目录 tools 构建索引
-├── 03-AGENT-TOOLS/
-│   ├── 01-Skills/     # 技能根：每技能一子目录，入口须为 SKILL.md 或 Skill.md 或 skill.md
-│   └── 02-Plugins/    # 插件根
-├── 04-PROJECTS/       # 工程与代码仓库（唯一 projects 根）
-├── 05-RESOURCES/
-└── 06-SYSTEM/         # directory.config.json / rule.config.json / agent.config.json`
+function buildSubdirs(dirs, parentPath = '', isTopLevel = true) {
+  const subdirs = []
+  for (const dir of dirs) {
+    const fullPath = parentPath ? path.join(parentPath, dir.name) : dir.name
+    if (dir.children) {
+      for (const child of dir.children) {
+        subdirs.push(path.join(fullPath, child.name))
+        if (child.children) {
+          subdirs.push(...buildSubdirs(child.children, path.join(fullPath, child.name), false))
+        }
+      }
+    } else if (isTopLevel) {
+      subdirs.push(fullPath)
+    }
+  }
+  return subdirs
+}
+
+function buildReadmeContent(structure) {
+  const lines = ['AGENT-ROOT/  # 根目录（可自定义路径）']
+  for (const dir of structure.dirs) {
+    const desc = dir.desc ? `     # ${dir.desc}` : ''
+    if (dir.children && dir.children.length > 0) {
+      lines.push(`├── ${dir.name}/${desc}`)
+      for (let i = 0; i < dir.children.length; i++) {
+        const child = dir.children[i]
+        const childDesc = child.desc ? `       # ${child.desc}` : ''
+        const isLast = i === dir.children.length - 1
+        const prefix = isLast ? '│   └──' : '│   ├──'
+        if (child.children && child.children.length > 0) {
+          lines.push(`${prefix} ${child.name}/${childDesc}`)
+          for (let j = 0; j < child.children.length; j++) {
+            const grandchild = child.children[j]
+            const grandchildIsLast = j === child.children.length - 1
+            const grandchildPrefix = grandchildIsLast ? '│       └──' : '│       ├──'
+            lines.push(`${grandchildPrefix} ${grandchild.name}/`)
+          }
+        } else {
+          lines.push(`${prefix} ${child.name}/${childDesc}`)
+        }
+      }
+    } else {
+      lines.push(`├── ${dir.name}/${desc}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+const DEFAULT_DIRECTORY_CONFIG = {
+  version: 1,
+  keys: buildDirectoryKeys(VAULT_STRUCTURE.dirs),
+}
+
+const VAULT_SUBDIRS = buildSubdirs(VAULT_STRUCTURE.dirs)
+
+const VAULT_README_CONTENT = buildReadmeContent(VAULT_STRUCTURE)
 
 function normalizeRelPath(p = '') {
   return String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '')
@@ -825,12 +898,25 @@ function registerIpcHandlers() {
   ipcMain.handle('zytrader:fs:list', async (_event, dir = '.', opts = {}) => {
     const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
     const abs = resolveScopedPath(dir, scope)
-    const entries = await fs.readdir(abs, { withFileTypes: true })
-    return {
-      ok: true,
-      dir,
-      scope,
-      entries: entries.map((e) => ({ name: e.name, type: e.isDirectory() ? 'dir' : 'file' })),
+    try {
+      const entries = await fs.readdir(abs, { withFileTypes: true })
+      return {
+        ok: true,
+        dir,
+        scope,
+        entries: entries.map((e) => ({ name: e.name, type: e.isDirectory() ? 'dir' : 'file' })),
+      }
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+      if (code === 'ENOENT') {
+        return { ok: true, dir, scope, entries: [] }
+      }
+      return {
+        ok: false,
+        dir,
+        scope,
+        error: error instanceof Error ? error.message : String(error),
+      }
     }
   })
 
@@ -1266,10 +1352,26 @@ function createWindow() {
   })
 
   if (process.env.NODE_ENV === 'development') {
-    win.loadURL('http://localhost:4200')
+    loadDevServerWithRetry()
+    win.webContents.openDevTools()
   } else {
     win.loadFile(path.join(__dirname, 'dist/zyfront-desktop-web/browser/index.html'))
   }
+}
+
+async function loadDevServerWithRetry(maxRetries = 30, delayMs = 1000) {
+  const url = 'http://localhost:4200'
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      await win.loadURL(url)
+      console.log(`[electron] Loaded dev server: ${url}`)
+      return
+    } catch (err) {
+      console.log(`[electron] Dev server not ready (attempt ${i + 1}/${maxRetries}), retrying in ${delayMs}ms...`)
+      await new Promise((r) => setTimeout(r, delayMs))
+    }
+  }
+  console.error(`[electron] Failed to load dev server after ${maxRetries} attempts`)
 }
 
 /** 与渲染进程 computer.use 一致：补全协议，空则默认百度 */

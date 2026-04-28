@@ -1,5 +1,6 @@
 import type { BackendCapability, BackendType, ExecutionModeSnapshot, TeammateIdentity, TeammateMode, TeammateRuntimeStatus } from './multi-agent.types';
 import type { AgentDescriptor, AgentIntent, AgentLifecycleStatus, AgentRuntimeState, ModelRouteDecision, RecoveryAction, SessionContext, SessionSnapshot, TaskGraph, TeamContext } from './domain/types';
+import type { RoleDefinition, StructDefinition, TeamRuntimeState, TeamTask, TeamMessage, TeamRuntimeStatus as TeamRuntimeStatusType, TeamRunMode, TeamStageDefinition, CommandResult } from './team/team.types';
 
 export type MultiAgentEventSource = 'system' | 'leader' | 'teammate' | 'backend' | 'user' | 'planner' | 'auto-scale' | 'recovery' | 'executor' | 'validator' | 'constraint';
 
@@ -24,9 +25,9 @@ export type MultiAgentEventType =
   | 'multiagent.teammate.message'
   | 'multiagent.team.updated'
   | 'multiagent.error'
-  | 'mode.single'
-  | 'mode.multi'
-  | 'mode.auto'
+  | 'team.mode.single'
+  | 'team.mode.multi'
+  | 'team.mode.auto'
   | 'session.created'
   | 'session.resumed'
   | 'session.paused'
@@ -68,7 +69,35 @@ export type MultiAgentEventType =
   | 'execution.warning'
   | 'execution.paused'
   | 'execution.resumed'
-  | 'input.submitted';
+  | 'input.submitted'
+  | 'team.role.created'
+  | 'team.role.listed'
+  | 'team.role.opened'
+  | 'team.struct.created'
+  | 'team.struct.listed'
+  | 'team.struct.opened'
+  | 'team.runtime.created'
+  | 'team.runtime.status.changed'
+  | 'team.runtime.member.joined'
+  | 'team.runtime.member.left'
+  | 'team.runtime.stage.changed'
+  | 'team.runtime.completed'
+  | 'team.runtime.failed'
+  | 'team.runtime.closed'
+  | 'team.mailbox.message.sent'
+  | 'team.mailbox.message.received'
+  | 'team.mailbox.message.read'
+  | 'team.task.created'
+  | 'team.task.assigned'
+  | 'team.task.status.changed'
+  | 'team.task.completed'
+  | 'team.subagent.started'
+  | 'team.subagent.completed'
+  | 'team.subagent.failed'
+  | 'team.agent.started'
+  | 'team.agent.completed'
+  | 'team.agent.failed'
+  | 'team.command.executed';
 
 export interface MultiAgentModeCapturedPayload extends ExecutionModeSnapshot {
   snapshotAt: number;
@@ -391,6 +420,185 @@ export interface InputSubmittedPayload {
   source: 'user' | 'shortcut' | 'script';
 }
 
+export interface TeamRoleCreatedPayload {
+  role: RoleDefinition;
+  filePath: string;
+  teamId?: string;
+}
+
+export interface TeamRoleListedPayload {
+  roles: Array<Pick<RoleDefinition, 'name' | 'slug' | 'type' | 'description' | 'model' | 'status' | 'updatedAt'>>;
+  teamId?: string;
+}
+
+export interface TeamRoleOpenedPayload {
+  role: RoleDefinition;
+  filePath: string;
+  teamId?: string;
+}
+
+export interface TeamStructCreatedPayload {
+  struct: StructDefinition;
+  filePath: string;
+  teamId?: string;
+}
+
+export interface TeamStructListedPayload {
+  structs: Array<Pick<StructDefinition, 'name' | 'slug' | 'type' | 'description' | 'roles' | 'status' | 'updatedAt'>>;
+  teamId?: string;
+}
+
+export interface TeamStructOpenedPayload {
+  struct: StructDefinition;
+  filePath: string;
+  teamId?: string;
+}
+
+export interface TeamRuntimeCreatedPayload {
+  runtime: TeamRuntimeState;
+  teamId: string;
+  structName: string;
+}
+
+export interface TeamRuntimeStatusChangedPayload {
+  teamId: string;
+  previousStatus: TeamRuntimeStatusType;
+  newStatus: TeamRuntimeStatusType;
+  reason?: string;
+  structName?: string;
+}
+
+export interface TeamRuntimeMemberJoinedPayload {
+  teamId: string;
+  agentId: string;
+  roleName: string;
+  structName?: string;
+}
+
+export interface TeamRuntimeMemberLeftPayload {
+  teamId: string;
+  agentId: string;
+  roleName: string;
+  reason?: string;
+  structName?: string;
+}
+
+export interface TeamRuntimeStageChangedPayload {
+  teamId: string;
+  previousStageIndex: number;
+  newStageIndex: number;
+  stageName: string;
+  stageMode: TeamRunMode;
+  structName?: string;
+}
+
+export interface TeamRuntimeCompletedPayload {
+  teamId: string;
+  finalStatus: TeamRuntimeStatusType;
+  durationMs: number;
+  completedTasks: number;
+  failedTasks: number;
+  structName?: string;
+}
+
+export interface TeamRuntimeFailedPayload {
+  teamId: string;
+  error: string;
+  stage?: string;
+  structName?: string;
+}
+
+export interface TeamRuntimeClosedPayload {
+  teamId: string;
+  cleanedUp: string[];
+  structName?: string;
+}
+
+export interface TeamMailboxMessageSentPayload {
+  teamId: string;
+  message: TeamMessage;
+}
+
+export interface TeamMailboxMessageReceivedPayload {
+  teamId: string;
+  message: TeamMessage;
+}
+
+export interface TeamMailboxMessageReadPayload {
+  teamId: string;
+  messageId: string;
+  readBy: string;
+}
+
+export interface TeamTaskCreatedPayload {
+  teamId: string;
+  task: TeamTask;
+}
+
+export interface TeamTaskAssignedPayload {
+  teamId: string;
+  taskId: string;
+  assignee: string;
+}
+
+export interface TeamTaskStatusChangedPayload {
+  teamId: string;
+  taskId: string;
+  previousStatus: TeamTask['status'];
+  newStatus: TeamTask['status'];
+  reason?: string;
+}
+
+export interface TeamTaskCompletedPayload {
+  teamId: string;
+  taskId: string;
+  outputs?: string;
+}
+
+export interface TeamSubagentStartedPayload {
+  teamId: string;
+  roles: string[];
+  task: string;
+}
+
+export interface TeamSubagentCompletedPayload {
+  teamId: string;
+  results: Array<{
+    roleName: string;
+    success: boolean;
+    summary: string;
+    files: string[];
+    durationMs: number;
+  }>;
+}
+
+export interface TeamSubagentFailedPayload {
+  teamId: string;
+  roleName: string;
+  error: string;
+}
+
+export interface TeamAgentStartedPayload {
+  teamId: string;
+  roles: string[];
+  task: string;
+}
+
+export interface TeamAgentCompletedPayload {
+  teamId: string;
+  summary: string;
+}
+
+export interface TeamAgentFailedPayload {
+  teamId: string;
+  error: string;
+}
+
+export interface TeamCommandExecutedPayload {
+  command: string;
+  result: CommandResult;
+}
+
 export type MultiAgentEventMap = {
   'multiagent.mode.captured': MultiAgentModeCapturedPayload;
   'multiagent.backend.detected': MultiAgentBackendDetectedPayload;
@@ -403,9 +611,9 @@ export type MultiAgentEventMap = {
   'multiagent.teammate.message': MultiAgentTeammateMessagePayload;
   'multiagent.team.updated': MultiAgentTeamUpdatedPayload;
   'multiagent.error': MultiAgentErrorPayload;
-  'mode.single': ModeSinglePayload;
-  'mode.multi': ModeMultiPayload;
-  'mode.auto': ModeAutoPayload;
+  'team.mode.single': ModeSinglePayload;
+  'team.mode.multi': ModeMultiPayload;
+  'team.mode.auto': ModeAutoPayload;
   'session.created': SessionCreatedPayload;
   'session.resumed': SessionResumedPayload;
   'session.paused': SessionPausedPayload;
@@ -448,12 +656,40 @@ export type MultiAgentEventMap = {
   'execution.paused': ExecutionPausedPayload;
   'execution.resumed': ExecutionResumedPayload;
   'input.submitted': InputSubmittedPayload;
+  'team.role.created': TeamRoleCreatedPayload;
+  'team.role.listed': TeamRoleListedPayload;
+  'team.role.opened': TeamRoleOpenedPayload;
+  'team.struct.created': TeamStructCreatedPayload;
+  'team.struct.listed': TeamStructListedPayload;
+  'team.struct.opened': TeamStructOpenedPayload;
+  'team.runtime.created': TeamRuntimeCreatedPayload;
+  'team.runtime.status.changed': TeamRuntimeStatusChangedPayload;
+  'team.runtime.member.joined': TeamRuntimeMemberJoinedPayload;
+  'team.runtime.member.left': TeamRuntimeMemberLeftPayload;
+  'team.runtime.stage.changed': TeamRuntimeStageChangedPayload;
+  'team.runtime.completed': TeamRuntimeCompletedPayload;
+  'team.runtime.failed': TeamRuntimeFailedPayload;
+  'team.runtime.closed': TeamRuntimeClosedPayload;
+  'team.mailbox.message.sent': TeamMailboxMessageSentPayload;
+  'team.mailbox.message.received': TeamMailboxMessageReceivedPayload;
+  'team.mailbox.message.read': TeamMailboxMessageReadPayload;
+  'team.task.created': TeamTaskCreatedPayload;
+  'team.task.assigned': TeamTaskAssignedPayload;
+  'team.task.status.changed': TeamTaskStatusChangedPayload;
+  'team.task.completed': TeamTaskCompletedPayload;
+  'team.subagent.started': TeamSubagentStartedPayload;
+  'team.subagent.completed': TeamSubagentCompletedPayload;
+  'team.subagent.failed': TeamSubagentFailedPayload;
+  'team.agent.started': TeamAgentStartedPayload;
+  'team.agent.completed': TeamAgentCompletedPayload;
+  'team.agent.failed': TeamAgentFailedPayload;
+  'team.command.executed': TeamCommandExecutedPayload;
 };
 
 export const EVENT_TYPES = {
-  MODE_SINGLE: 'mode.single' as const,
-  MODE_MULTI: 'mode.multi' as const,
-  MODE_AUTO: 'mode.auto' as const,
+  MODE_SINGLE: 'team.mode.single' as const,
+  MODE_MULTI: 'team.mode.multi' as const,
+  MODE_AUTO: 'team.mode.auto' as const,
   SESSION_CREATED: 'session.created' as const,
   SESSION_RESUMED: 'session.resumed' as const,
   SESSION_PAUSED: 'session.paused' as const,
@@ -497,6 +733,34 @@ export const EVENT_TYPES = {
   EXECUTION_PAUSED: 'execution.paused' as const,
   EXECUTION_RESUMED: 'execution.resumed' as const,
   INPUT_SUBMITTED: 'input.submitted' as const,
+  TEAM_ROLE_CREATED: 'team.role.created' as const,
+  TEAM_ROLE_LISTED: 'team.role.listed' as const,
+  TEAM_ROLE_OPENED: 'team.role.opened' as const,
+  TEAM_STRUCT_CREATED: 'team.struct.created' as const,
+  TEAM_STRUCT_LISTED: 'team.struct.listed' as const,
+  TEAM_STRUCT_OPENED: 'team.struct.opened' as const,
+  TEAM_RUNTIME_CREATED: 'team.runtime.created' as const,
+  TEAM_RUNTIME_STATUS_CHANGED: 'team.runtime.status.changed' as const,
+  TEAM_RUNTIME_MEMBER_JOINED: 'team.runtime.member.joined' as const,
+  TEAM_RUNTIME_MEMBER_LEFT: 'team.runtime.member.left' as const,
+  TEAM_RUNTIME_STAGE_CHANGED: 'team.runtime.stage.changed' as const,
+  TEAM_RUNTIME_COMPLETED: 'team.runtime.completed' as const,
+  TEAM_RUNTIME_FAILED: 'team.runtime.failed' as const,
+  TEAM_RUNTIME_CLOSED: 'team.runtime.closed' as const,
+  TEAM_MAILBOX_MESSAGE_SENT: 'team.mailbox.message.sent' as const,
+  TEAM_MAILBOX_MESSAGE_RECEIVED: 'team.mailbox.message.received' as const,
+  TEAM_MAILBOX_MESSAGE_READ: 'team.mailbox.message.read' as const,
+  TEAM_TASK_CREATED: 'team.task.created' as const,
+  TEAM_TASK_ASSIGNED: 'team.task.assigned' as const,
+  TEAM_TASK_STATUS_CHANGED: 'team.task.status.changed' as const,
+  TEAM_TASK_COMPLETED: 'team.task.completed' as const,
+  TEAM_SUBAGENT_STARTED: 'team.subagent.started' as const,
+  TEAM_SUBAGENT_COMPLETED: 'team.subagent.completed' as const,
+  TEAM_SUBAGENT_FAILED: 'team.subagent.failed' as const,
+  TEAM_AGENT_STARTED: 'team.agent.started' as const,
+  TEAM_AGENT_COMPLETED: 'team.agent.completed' as const,
+  TEAM_AGENT_FAILED: 'team.agent.failed' as const,
+  TEAM_COMMAND_EXECUTED: 'team.command.executed' as const,
 } as const;
 
 /**
