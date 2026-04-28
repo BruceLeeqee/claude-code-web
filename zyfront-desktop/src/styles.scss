@@ -43,6 +43,12 @@ body {
   cursor: text !important;
 }
 
+.xterm .xterm-cursor {
+  z-index: 10 !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

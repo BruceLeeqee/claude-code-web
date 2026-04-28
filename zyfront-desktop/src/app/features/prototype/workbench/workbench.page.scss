@@ -1054,7 +1054,7 @@
   margin: 8px;
   overflow: hidden;
   border: 1px solid #2a2a2a;
-  border-radius: 12px;
+  border-radius: 5px;
   background: #121212;
 }
 
@@ -1139,6 +1139,20 @@
   height: 10px;
   border-radius: 50%;
   border: 1.5px solid currentColor;
+}
+
+.mode-icon {
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 600;
+}
+
+.composer-model-select-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .icon-text {
@@ -1473,12 +1487,6 @@
   overflow: auto;
 }
 
-.task-list-empty {
-  color: #71717a;
-  font-size: 10px;
-  padding: 4px 2px;
-}
-
 .task-list-item {
   display: flex;
   flex-direction: column;
@@ -1523,6 +1531,117 @@
 .task-item-meta {
   font-size: 10px;
   color: #71717a;
+}
+
+.changed-files-strip {
+  margin: 6px 8px 0;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  background: #111111;
+  overflow: hidden;
+}
+
+.changed-badge {
+  color: #f59e0b !important;
+  border-color: #44371d !important;
+}
+
+.changed-files-body {
+  border-top: 1px solid #242424;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow: auto;
+
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-track { background: transparent; }
+  &::-webkit-scrollbar-thumb { background: #2f2f2f; border-radius: 999px; }
+}
+
+.changed-file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #e5e7eb;
+  border-radius: 6px;
+  padding: 5px 8px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+}
+
+.changed-file-status {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+
+  &.status-modified {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+  }
+  &.status-added {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+  }
+  &.status-deleted {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+  }
+  &.status-renamed {
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+  }
+  &.status-untracked {
+    background: rgba(161, 161, 170, 0.15);
+    color: #a1a1aa;
+  }
+  &.status-other {
+    background: rgba(161, 161, 170, 0.1);
+    color: #71717a;
+  }
+}
+
+.changed-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e5e7eb;
+  flex-shrink: 1;
+}
+
+.changed-file-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #52525b;
+  font-size: 10px;
+  flex: 1;
+}
+
+.changed-file-time {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: #52525b;
+  white-space: nowrap;
 }
 
 .right-panel-footer {

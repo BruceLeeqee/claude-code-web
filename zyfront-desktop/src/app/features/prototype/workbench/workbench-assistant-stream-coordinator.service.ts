@@ -95,24 +95,19 @@ export class WorkbenchAssistantStreamCoordinatorService {
 
     if (value.type === 'thinking_start') {
       if (!ctx.showThinking) return next;
-      if (next.thinkingHeaderShown) {
-        cb.onThinkingBlockEnd(next.currentThinkingBlockIndex);
+      if (!next.thinkingHeaderShown) {
+        const id = nextThinkingBlockId();
+        cb.onThinkingBlockStart(id);
+        next.thinkingHeaderShown = true;
+        next.currentThinkingBlockIndex = id;
+        cb.ensureMarker();
       }
-      const reset = this.resetThinkingRenderState(next);
-      const id = nextThinkingBlockId();
-      cb.onThinkingBlockStart(id);
-      reset.thinkingHeaderShown = true;
-      reset.currentThinkingBlockIndex = id;
-      cb.ensureMarker();
-      return reset;
+      return next;
     }
 
     if (value.type === 'thinking_done') {
       if (!ctx.showThinking) return next;
-      if (next.thinkingHeaderShown && next.currentThinkingBlockIndex >= 0) {
-        cb.onThinkingBlockEnd(next.currentThinkingBlockIndex);
-      }
-      return this.resetThinkingRenderState(next);
+      return next;
     }
 
     if (value.type === 'delta') {

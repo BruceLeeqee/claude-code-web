@@ -355,6 +355,12 @@ interface GitChangedFile {
   status: string;
 }
 
+interface RightPanelChangedFile {
+  path: string;
+  status: string;
+  mtime: string;
+}
+
 interface GitCommitLine {
   hash: string;
   subject: string;
@@ -578,6 +584,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly gitUiMessage = signal('');
 
   protected readonly taskListExpanded = signal(false);
+  protected readonly changedFilesExpanded = signal(true);
+  protected readonly rightPanelChangedFiles = signal<RightPanelChangedFile[]>([]);
   /** 中间编辑器：普通高亮 / diff 文本 */
   protected readonly previewKind = signal<'code' | 'diff'>('code');
   /** Monaco 编辑内容与磁盘是否一致 */
@@ -1331,7 +1339,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected currentTaskSummary(): string {
     const task = this.currentLoopState();
-    if (!task) return '暂无当前任务';
+    if (!task) return '';
     const done = task.completedSteps.length;
     const total = task.completedSteps.length + task.currentPlan.length;
     const status = task.status === 'paused' ? '暂停中' : task.status === 'blocked' ? '阻塞' : task.status === 'executing' ? '执行中' : task.status === 'completed' ? '已完成' : '进行中';
@@ -1340,6 +1348,81 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected toggleTaskListExpanded(): void {
     this.taskListExpanded.update((v) => !v);
+  }
+
+  protected toggleChangedFilesExpanded(): void {
+    this.changedFilesExpanded.update((v) => !v);
+    if (this.changedFilesExpanded()) {
+      void this.refreshRightPanelChangedFiles();
+    }
+  }
+
+  protected changedFileStatusClass(status: string): string {
+    if (status === 'M' || status === 'MM') return 'status-modified';
+    if (status === 'A' || status === 'AM') return 'status-added';
+    if (status === 'D') return 'status-deleted';
+    if (status === 'R') return 'status-renamed';
+    if (status === '?' || status === '!!') return 'status-untracked';
+    return 'status-other';
+  }
+
+  protected async refreshRightPanelChangedFiles(): Promise<void> {
+    try {
+      const por = await window.zytrader.terminal.exec('cmd.exe /c git status --porcelain=1 -u 2>nul', '.');
+      const files: RightPanelChangedFile[] = [];
+      if (por.stdout) {
+        const rawFiles: { path: string; status: string }[] = [];
+        for (const line of por.stdout.split(/\r?\n/)) {
+          const raw = line.trim();
+          if (!raw) continue;
+          const status = raw.slice(0, 2).trim();
+          const pathPart = raw.slice(3).trim();
+          const path = pathPart.includes(' -> ') ? pathPart.split(' -> ').pop()?.trim() ?? pathPart : pathPart;
+          if (path) rawFiles.push({ path: path.replace(/\\/g, '/'), status: status || '?' });
+        }
+        if (rawFiles.length > 0) {
+          const mtimeMap = new Map<string, string>();
+          const psScript = rawFiles.map(f => {
+            const escaped = f.path.replace(/'/g, "''");
+            return `try { $i=Get-Item -LiteralPath '${escaped}' -ErrorAction SilentlyContinue; if($i) { Write-Output ('${f.path}|' + $i.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')) } } catch {}`;
+          }).join('; ');
+          try {
+            const r = await window.zytrader.terminal.exec(
+              `powershell -NoProfile -NonInteractive -Command "${psScript}"`,
+              '.',
+            );
+            if (r.stdout) {
+              for (const line of r.stdout.split(/\r?\n/)) {
+                const t = line.trim();
+                if (!t) continue;
+                const sepIdx = t.lastIndexOf('|');
+                if (sepIdx < 0) continue;
+                const fpath = t.slice(0, sepIdx);
+                const mtime = t.slice(sepIdx + 1);
+                if (fpath && mtime) mtimeMap.set(fpath, mtime);
+              }
+            }
+          } catch {}
+          for (const f of rawFiles) {
+            files.push({
+              path: f.path,
+              status: f.status,
+              mtime: mtimeMap.get(f.path) || '',
+            });
+          }
+          files.sort((a, b) => {
+            if (a.mtime && b.mtime) return b.mtime.localeCompare(a.mtime);
+            if (a.mtime) return -1;
+            if (b.mtime) return 1;
+            return a.path.localeCompare(b.path);
+          });
+        }
+      }
+      this.rightPanelChangedFiles.set(files);
+    } catch {
+      this.rightPanelChangedFiles.set([]);
+    }
+    this.cdr.markForCheck();
   }
 
   protected currentModeLabel(): string {
@@ -2623,7 +2706,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.mainLineBuffer = '';
     this.clearSlashHintRow();
     this.directiveTabCycle = 0;
-    this.aiXtermWrite(`\r\n\x1b[32m>\x1b[0m ${text}\r\n`);
+    this.aiXtermWrite(`\r\n\x1b[90m>\x1b[0m ${text}\r\n`);
     void this.dispatchMainTerminalLine(text);
   }
 
@@ -2907,6 +2990,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected focusPowerShellTerminal(): void {
     this.psTerminal?.focus();
+    this.psTerminal?.write('\x1b[?25h');
   }
 
   protected onBottomResizeStart(event: MouseEvent): void {
@@ -2929,6 +3013,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected toggleRightPanel(): void {
     this.rightPanelVisible.update((v) => !v);
+    if (this.rightPanelVisible()) {
+      void this.refreshRightPanelChangedFiles();
+    }
     queueMicrotask(() => {
       this.fitAddon?.fit();
       this.updateTabOverflow();
@@ -2975,6 +3062,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       parallel: '执行模式',
     };
     return map[mode] ?? mode;
+  }
+
+  protected workbenchModeLabel(): string {
+    const mode = this.runtime.coordinator.getState().mode;
+    const map: Record<CoordinationMode, string> = { single: '∞', plan: '◌', parallel: '◫' };
+    return map[mode] ?? '?';
   }
 
   protected syncPlanFromPrompt(): void {
@@ -4110,6 +4203,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
      * 现在严格以 marker 为锚点：marker 定位了本轮流式输出的起始行，
      * 上移到 marker 行后用 \x1b[0J 擦到屏幕底即可，无需额外上移。
      * 仅在 marker 不可用时才退化到 streamConsumedLines 估算。
+     * 额外 +1 行用于擦除 [用户] 行，让 tail() 重绘时替换而非追加。
      */
     const rows = Math.max(1, this.xterm.rows);
     const maxErase = rows * 4; // 硬上限防止单轮极端长输出溢出
@@ -4118,8 +4212,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const top = mk.line;
       const span = cursorAbs - top + 1;
       if (span > 0) {
-        // 精确擦除：仅上移到 marker 行，不加余量，避免破坏上一轮内容
-        linesToErase = Math.min(span, maxErase);
+        // 精确擦除：上移到 marker 行，额外 +1 行用于擦除 [用户] 行
+        linesToErase = Math.min(span + 1, maxErase);
       } else {
         // marker 在光标下方（异常），用极小回退
         linesToErase = Math.min(Math.max(1, base), maxErase);
@@ -4212,7 +4306,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           const answerLabel = this.workbenchMode.isDevMode() ? '架构师' : '超体';
           xterm.write(`\x1b[35m[${answerLabel}]\x1b[0m `);
         }
-        xterm.write(answer.replace(/\r?\n+/g, ' '));
+        xterm.write(answer.replaceAll('\n', '\r\n'));
       }
 
       // 安全网：清除从当前光标到屏幕底部的一切残留
@@ -4300,17 +4394,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private renderThinkingHeader(blockId: number): void {
-    const thHeader = `\r\n[Thinking #${blockId}] `;
+    const thHeader = `\r\n\x1b[90m[Thinking #${blockId}]\x1b[0m`;
     this.aiXtermWrite(thHeader);
     this.bumpStreamLineBudgetForWrite(thHeader);
     this.ensureAssistantStreamOutputStartMarker();
   }
 
   private renderThinkingBlockEnd(blockId: number): void {
-    const thFooter = `\r\n\x1b[90m[Thinking #${blockId} · 完成]\x1b[0m`;
-    this.aiXtermWrite(thFooter);
-    this.bumpStreamLineBudgetForWrite(thFooter);
-    this.streamingThinkingBlockId = null;
   }
 
   private renderAnswerHeader(): void {
@@ -4366,11 +4456,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
     if (!this.thinkingHeaderShown) {
       const id = this.ensureStreamingThinkingBlockId();
-      const thHeader = `\r\n\x1b[90m[Thinking #${id}]\x1b[0m \x1b[2m思考过程已开始记录\x1b[0m`;
+      const thHeader = `\r\n\x1b[90m[Thinking #${id}]\x1b[0m`;
       this.aiXtermWrite(thHeader);
       this.bumpStreamLineBudgetForWrite(thHeader);
       this.thinkingHeaderShown = true;
-      // header 写入后再钉 marker，避免 marker 落在换行前的上一行（用户输入行）
       this.ensureAssistantStreamOutputStartMarker();
     }
     const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
@@ -5305,7 +5394,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.redrawInputLine();
   }
 
-  private cycleWorkbenchCoordinationMode(): void {
+  protected cycleWorkbenchCoordinationMode(): void {
     if (this.terminalBusy()) return;
     const order: CoordinationMode[] = ['single', 'plan', 'parallel'];
     const cur = this.runtime.coordinator.getState().mode;
@@ -6944,7 +7033,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.psFitAddon = new FitAddon();
     this.psTerminal = new Terminal({
       cursorBlink: true,
-      cursorStyle: 'block',
+      cursorStyle: 'underline',
+      cursorWidth: 2,
       fontFamily:
         "'JetBrains Mono', 'Cascadia Mono', Consolas, 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC', monospace",
       fontSize: 12,
@@ -6952,7 +7042,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       theme: {
         background: '#080b14',
         foreground: '#dbe7ff',
-        cursor: '#60a5fa',
+        cursor: '#93c5fd',
         cursorAccent: '#080b14',
         selectionBackground: '#1f2937',
         black: '#0b1020',
@@ -6979,7 +7069,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.psTerminal.loadAddon(this.psFitAddon);
     this.psTerminal.open(host);
     this.psFitAddon.fit();
-    queueMicrotask(() => this.focusPowerShellTerminal());
+    this.psTerminal.focus();
+    this.psTerminal.write('\x1b[?25h');
 
     this.psTerminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== 'keydown') return true;
@@ -7021,7 +7112,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     this.detachPsData = window.zytrader.terminal.onData((payload) => {
       if (payload.id !== this.activePsSessionId()) return;
-      this.psTerminal?.write(payload.data);
+      const data = payload.data.replace(/\x1b\[\?25l/g, '\x1b[?25h');
+      this.psTerminal?.write(data);
       this.psSessions.update((arr) =>
         arr.map((s) => (s.id === payload.id ? { ...s, output: (s.output + payload.data).slice(-24000) } : s)),
       );
@@ -7047,6 +7139,17 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.psResizeObserver.observe(host);
 
     await this.createPsSession('powershell');
+
+    const ensurePsFocus = (delay: number): void => {
+      setTimeout(() => {
+        this.psFitAddon?.fit();
+        this.syncPowerShellSize();
+        this.focusPowerShellTerminal();
+      }, delay);
+    };
+    ensurePsFocus(100);
+    ensurePsFocus(300);
+    ensurePsFocus(600);
   }
 
   private syncPowerShellSize(): void {
@@ -7294,19 +7397,130 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private sanitizeThinkingForDisplay(text: string): string {
     if (!text) return text;
-    const lines = text.split(/\r?\n/);
-    const cleaned = lines
-      .map((line) => {
-        const t = line.trim();
-        if (!t) return line;
-        const hasHan = /[\u4e00-\u9fff]/.test(t);
-        const asciiWords = t.match(/[A-Za-z]{3,}/g)?.length ?? 0;
-        if (!hasHan && asciiWords >= 4) return '[内容已折叠：英文思考段]';
-        return line;
-      })
-      .join('\n')
-      .replace(/\b(architecture|analysis|reasoning|implementation|verification)\b/gi, '\x1b[2m$1\x1b[0m');
-    return cleaned;
+    const rawLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    const segments: Array<{ tag: 'user' | 'skill' | 'thinking' | 'answer' | 'other'; lines: string[] }> = [];
+    let cur: Array<{ tag: 'user' | 'skill' | 'thinking' | 'answer' | 'other'; lines: string[] }> | null = null;
+    let curTag: string = '';
+
+    for (const rawLine of rawLines) {
+      const trimmed = rawLine.trim();
+      let tag: 'user' | 'skill' | 'thinking' | 'answer' | 'other' = 'other';
+      if (/^\[用户\]/.test(trimmed) || /^\[超体\]/.test(trimmed) || /^\[架构师\]/.test(trimmed)) {
+        tag = trimmed.startsWith('[用户]') ? 'user' : 'answer';
+      } else if (/^【已命中技能/.test(trimmed) || /^【技能强制命中】/.test(trimmed) || /^\[命中技能/.test(trimmed) || /^技能文件：/.test(trimmed) || /^\[SKILL\.md/.test(trimmed)) {
+        tag = 'skill';
+      } else if (/^\[Thinking\s*#\d+/.test(trimmed) || /^\[Thinking\s*#\d+.*完成\]/.test(trimmed) || /^思考过程已开始/.test(trimmed)) {
+        tag = 'thinking';
+      }
+      if (tag !== curTag || !cur) {
+        const seg = { tag, lines: [rawLine] };
+        segments.push(seg);
+        cur = segments;
+        curTag = tag;
+      } else {
+        segments[segments.length - 1].lines.push(rawLine);
+      }
+    }
+
+    const seenStepKeys = new Set<string>();
+    const seenContentHashes = new Set<string>();
+    const outputLines: string[] = [];
+    let lastStepNum = 0;
+    let prevWasBlank = false;
+
+    for (const seg of segments) {
+      if (seg.tag === 'user') {
+        if (!seenContentHashes.has('user')) {
+          seenContentHashes.add('user');
+          for (const l of seg.lines) outputLines.push(l);
+        }
+        continue;
+      }
+      if (seg.tag === 'skill') {
+        if (!seenContentHashes.has('skill')) {
+          seenContentHashes.add('skill');
+          const skillNameMatch = seg.lines.join('\n').match(/已命中技能[：:]\s*(.+?)】/);
+          if (skillNameMatch) {
+            outputLines.push(`\x1b[33m▸ 命中技能：${skillNameMatch[1].trim()}\x1b[0m`);
+          }
+        }
+        continue;
+      }
+      if (seg.tag === 'thinking') {
+        continue;
+      }
+      for (const rawLine of seg.lines) {
+        let line = rawLine;
+        const trimmed = line.trim();
+        if (!trimmed) {
+          if (!prevWasBlank) { outputLines.push(''); prevWasBlank = true; }
+          continue;
+        }
+        prevWasBlank = false;
+
+        const stepMatch = trimmed.match(/^\*?\*?\s*(?:步骤|Step)\s*(\d+|\d*[一二三四五六七八九十]+)\s*[:：\.。]?\s*/i);
+        if (stepMatch) {
+          const stepNum = stepMatch[1];
+          const stepKey = `step_${stepNum}`;
+          if (seenStepKeys.has(stepKey)) continue;
+          seenStepKeys.add(stepKey);
+          const num = isNaN(parseInt(stepNum)) ? ++lastStepNum : parseInt(stepNum);
+          lastStepNum = num;
+          const rest = trimmed.slice(stepMatch[0].length);
+          const contentHash = `step_content_${rest.slice(0, 40)}`;
+          if (seenContentHashes.has(contentHash)) continue;
+          seenContentHashes.add(contentHash);
+          outputLines.push(`\x1b[33m**${num}.\x1b[0m ${rest}`);
+          continue;
+        }
+
+        const contentHash = `line_${trimmed.replace(/\x1b\[[0-9;]*m/g, '').slice(0, 60)}`;
+        if (seenContentHashes.has(contentHash)) continue;
+        seenContentHashes.add(contentHash);
+
+        if (this.isNoiseLine(trimmed)) continue;
+
+        outputLines.push(line);
+      }
+    }
+
+    let result = outputLines.join('\n');
+    result = result.replace(/\n{3,}/g, '\n\n');
+    return result;
+  }
+
+  private isNoiseLine(line: string): boolean {
+    const t = line.replace(/\x1b\[[0-9;]*m/g, '').trim();
+    if (!t) return false;
+    if (/^ok:\s*(true|false)$/i.test(t)) return true;
+    if (/^The page has loaded$/i.test(t)) return true;
+    if (/^Good, the navigation was successful/i.test(t)) return true;
+    if (/^Let me\s+(start|take|execute|report|wait|check|try|now|begin|proceed)\b/i.test(t)) return true;
+    if (/^Now I need to\b/i.test(t)) return true;
+    if (/^Let's\b/i.test(t)) return true;
+    if (/^I\s+(will|need to|should|can|have to|am going to|shall)\b/i.test(t)) return true;
+    if (/^This\s+(is|means|indicates|shows|suggests|confirms)\b/i.test(t)) return true;
+    if (/^The\s+(video|page|result|output|data|text|content|user|skill|navigation|search|current|next|following|above|below)\b/i.test(t)) return true;
+    if (/^Following the skill/i.test(t)) return true;
+    if (/has been\s+(命中|triggered|hit)/i.test(t)) return true;
+    if (/^The skill\b.*has been/i.test(t)) return true;
+    if (/^Let me report/i.test(t)) return true;
+    if (/^用户想要/i.test(t)) return true;
+    if (/^技能步骤/i.test(t)) return true;
+    if (/^让我开始/i.test(t)) return true;
+    if (/^关键词是/i.test(t)) return true;
+    if (/^页面已打开/i.test(t)) return true;
+    if (/^页面已加载/i.test(t)) return true;
+    if (/^确认视频/i.test(t)) return true;
+    if (/^找到视频链接/i.test(t)) return true;
+    if (/^任务完成/i.test(t)) return true;
+    if (/^视频已打开/i.test(t)) return true;
+    if (/^视频数据加载中/i.test(t)) return true;
+    if (/^正在加载/i.test(t)) return true;
+    if (/^正在跳转/i.test(t)) return true;
+    if (/^JS执行成功/i.test(t)) return true;
+    if (/^当前页面：/i.test(t)) return true;
+    return false;
   }
 
   private matchesShortcut(event: KeyboardEvent, shortcut: string): boolean {

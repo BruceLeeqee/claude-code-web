@@ -1,31 +1,23 @@
-feat(multi-agent): 重构多智能体侧边栏与Workbench交互层
+feat(workbench): 优化助手流协调器与页面交互体验
 
 【背景】
-- 原有架构中多智能体侧边栏与Workbench模块耦合过紧，事件流不清晰
-- intent-classifier等新服务需要集成但缺乏统一入口
-- API层(anthropic-sse/stream)需要支撑更复杂的多轮对话场景
+- Workbench 模块的助手流协调器需要更好的流式响应处理
+- 页面样式与交互体验有优化空间
+- assistant stream coordinator 的错误处理需要完善
 
 【本次改动】
-- 重构multi-agent-sidebar组件(HTML/SCSS/TS)，分离展示与业务逻辑
-- 新增intent-classifier.service.ts提供意图分类统一入口
-- 扩展multi-agent.events.ts事件总线，支持更多异步场景
-- 优化workbench页面组件，增强指令解析与执行链路
-- 升级anthropic-stream/ sse API，支撑streaming与SSE双通道
-- 新增command-executor.service.ts统一命令执行
-- 完善directive-registry.directive-parser指令体系
-- 修复runtime-settings-sync.service.ts同步时序问题
+- 优化 workbench-assistant-stream-coordinator.service.ts 流式响应处理
+- 改进 workbench.page.html 布局结构
+- 完善 workbench.page.scss 样式定义
+- 增强 workbench.page.ts 组件逻辑
+- 更新 styles.scss 全局样式
 
 【影响范围】
-- zyfront-desktop: multi-agent模块、workbench模块
-- zyfront-core: API层(anthropic-sse/stream)
-- 新增team/目录(待填充团队协作逻辑)
+- workbench 模块，助手流协调与页面交互
 
 【验证】
-- 本地编译通过(npm run build)
-- 手动测试侧边栏切换与Workbench交互正常
-- 未破坏现有功能链路
+- 本地编译通过
+- 手动测试流式响应正常
 
 【风险与回滚】
-- 中等风险，涉及多个核心模块联动
-- 回滚: git revert <commit-hash> 即可恢复
-- 建议在dev环境充分回归后再合并到main
+- 低风险，回滚只需 git revert 本次提交

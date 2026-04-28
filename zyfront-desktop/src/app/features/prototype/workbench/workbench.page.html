@@ -417,14 +417,13 @@
             <div class="task-list-strip" [class.expanded]="taskListExpanded()">
               <button type="button" class="task-list-header" (click)="toggleTaskListExpanded()">
                 <div class="task-list-left">
-                  <span class="task-list-badge">任务</span>
-                  <span class="task-list-title">{{ currentTaskSummary() }}</span>
+                  <span class="task-list-badge">&gt;To-dos</span>
+                  <span class="task-list-title" *ngIf="loopTaskList().length">{{ currentTaskSummary() }}</span>
                 </div>
                 <span class="task-list-arrow">{{ taskListExpanded() ? '▾' : '▸' }}</span>
               </button>
 
               <div class="task-list-body" *ngIf="taskListExpanded()">
-                <div class="task-list-empty" *ngIf="!loopTaskList().length">暂无任务，输入 /loop 创建一个任务。</div>
                 <button
                   type="button"
                   class="task-list-item"
@@ -437,6 +436,31 @@
                     <span class="task-item-status">{{ task.status }}</span>
                   </span>
                   <span class="task-item-meta">{{ task.teamName }} · {{ task.iteration }}/{{ task.maxIterations }} 轮</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="changed-files-strip" [class.expanded]="changedFilesExpanded()">
+              <button type="button" class="task-list-header" (click)="toggleChangedFilesExpanded()">
+                <div class="task-list-left">
+                  <span class="task-list-badge changed-badge">&gt;变更文件</span>
+                  <span class="task-list-title" *ngIf="rightPanelChangedFiles().length">{{ rightPanelChangedFiles().length }} 个文件</span>
+                </div>
+                <span class="task-list-arrow">{{ changedFilesExpanded() ? '▾' : '▸' }}</span>
+              </button>
+
+              <div class="changed-files-body" *ngIf="changedFilesExpanded()">
+                <button
+                  type="button"
+                  class="changed-file-item"
+                  *ngFor="let f of rightPanelChangedFiles()"
+                  (click)="openGitDiffFile(f.path)"
+                  [title]="f.path"
+                >
+                  <span class="changed-file-status" [class]="changedFileStatusClass(f.status)">{{ f.status }}</span>
+                  <span class="changed-file-name">{{ f.path.split('/').pop() }}</span>
+                  <span class="changed-file-dir">{{ f.path.includes('/') ? f.path.substring(0, f.path.lastIndexOf('/')) : '' }}</span>
+                  <span class="changed-file-time">{{ f.mtime }}</span>
                 </button>
               </div>
             </div>
@@ -466,19 +490,17 @@
 
               <div class="composer-footer-row compact">
                 <div class="footer-left compact">
-                  <select class="composer-mode-select" (change)="coordinatorMode.set($any($event.target).value)">
-                    <option value="single" [selected]="coordinatorMode() === 'single'">∞ Agent</option>
-                    <option value="plan" [selected]="coordinatorMode() === 'plan'">◌ Plan</option>
-                    <option value="parallel" [selected]="coordinatorMode() === 'parallel'">◫ Debug</option>
+                  <button type="button" class="composer-circle-btn" title="模式" (click)="cycleWorkbenchCoordinationMode()">
+                    <span class="mode-icon">{{ workbenchModeLabel() }}</span>
+                  </button>
+                  <button type="button" class="composer-circle-btn" [title]="currentModelLabel()" (click)="modelSelectRef?.showPicker?.()">
+                    <span nz-icon nzType="robot"></span>
+                  </button>
+                  <select #modelSelectRef class="composer-model-select-hidden" (change)="onModelSelectChange($event)">
+                    <option *ngFor="let model of availableModelCatalog()" [value]="model.id" [selected]="currentModelEntry()?.id === model.id">
+                      {{ model.providerLabel }} · {{ model.shortName }}
+                    </option>
                   </select>
-                  <div class="composer-model-shell">
-                    <select class="composer-model-select" (change)="onModelSelectChange($event)">
-                      <option *ngFor="let model of availableModelCatalog()" [value]="model.id" [selected]="currentModelEntry()?.id === model.id">
-                        {{ model.providerLabel }} · {{ model.shortName }}
-                      </option>
-                    </select>
-                    <span class="composer-model-value">{{ currentModelLabel() }}</span>
-                  </div>
                   <button type="button" class="composer-circle-btn" title="上下文">
                     <span class="circle-ring"></span>
                   </button>
