@@ -1,28 +1,31 @@
-feat(multi-agent): 多智能体架构重构与Workbench深度优化
+feat(multi-agent): 重构多智能体侧边栏与Workbench交互层
 
 【背景】
-- 原有架构在多智能体协作时存在事件流处理瓶颈
-- Sidebar 组件与 Workbench 页面耦合严重，扩展性差
-- API 层缺乏统一的流式处理抽象
+- 原有架构中多智能体侧边栏与Workbench模块耦合过紧，事件流不清晰
+- intent-classifier等新服务需要集成但缺乏统一入口
+- API层(anthropic-sse/stream)需要支撑更复杂的多轮对话场景
 
 【本次改动】
-- 重构 zyfront-core API 层，新增 anthropic-sse.ts 和 stream 处理模块
-- 全新侧边栏组件 multi-agent-sidebar，支持多智能体切换与事件分发
-- Workbench 页面深度优化：指令解析、命令执行、流式协调
-- 新增 intent-classifier.service.ts 实现意图分类
-- 优化 runtime-settings-sync.service.ts 实现设置实时同步
-- 新增 command-executor.service.ts 统一命令执行入口
+- 重构multi-agent-sidebar组件(HTML/SCSS/TS)，分离展示与业务逻辑
+- 新增intent-classifier.service.ts提供意图分类统一入口
+- 扩展multi-agent.events.ts事件总线，支持更多异步场景
+- 优化workbench页面组件，增强指令解析与执行链路
+- 升级anthropic-stream/ sse API，支撑streaming与SSE双通道
+- 新增command-executor.service.ts统一命令执行
+- 完善directive-registry.directive-parser指令体系
+- 修复runtime-settings-sync.service.ts同步时序问题
 
 【影响范围】
-- zyfront-core/src/api/（API 重构）
-- zyfront-desktop/src/app/core/multi-agent/（多智能体核心）
-- zyfront-desktop/src/app/features/prototype/workbench/（Workbench 模块）
+- zyfront-desktop: multi-agent模块、workbench模块
+- zyfront-core: API层(anthropic-sse/stream)
+- 新增team/目录(待填充团队协作逻辑)
 
 【验证】
-- 本地编译通过
-- 手动测试多智能体切换正常
-- Workbench 页面指令执行正常
+- 本地编译通过(npm run build)
+- 手动测试侧边栏切换与Workbench交互正常
+- 未破坏现有功能链路
 
 【风险与回滚】
-- 中等风险，涉及核心模块重构
-- 回滚：git revert 本次提交
+- 中等风险，涉及多个核心模块联动
+- 回滚: git revert <commit-hash> 即可恢复
+- 建议在dev环境充分回归后再合并到main
