@@ -275,6 +275,18 @@ export class TeamCommandRouterService {
         const prompt = promptParts.join(' ');
         return this.structCmd.executeNew(name || '', prompt);
       }
+      case 'confirm': {
+        const name = parsed.args[0] || '';
+        return this.structCmd.executeConfirm(name);
+      }
+      case 'reject': {
+        const name = parsed.args[0] || '';
+        return this.structCmd.executeReject(name);
+      }
+      case 'update': {
+        const userInput = parsed.args.join(' ');
+        return this.structCmd.updatePlanWithUserInput(userInput);
+      }
       case 'delete': {
         const name = parsed.args[0] || '';
         return this.structCmd.executeDelete(name);
@@ -298,7 +310,7 @@ export class TeamCommandRouterService {
           ok: false,
           command: parsed.raw,
           message: `未知的 /team-struct 子命令：${parsed.subcommand}`,
-          errors: ['支持：new, delete, list, info'],
+          errors: ['支持：new, confirm, reject, delete, list, info'],
         };
     }
   }
@@ -430,6 +442,8 @@ export class TeamCommandRouterService {
       '/team-role list',
       '/team-role info <role-name>',
       '/team-struct new <struct-name> <struct-prompt>',
+      '/team-struct confirm <struct-name>',
+      '/team-struct reject <struct-name>',
       '/team-struct delete <struct-name>',
       '/team-struct list',
       '/team-struct info <struct-name>',
@@ -457,7 +471,9 @@ export class TeamCommandRouterService {
         { usage: '/team-role delete <role-name>', description: '删除指定角色定义文件' },
         { usage: '/team-role list', description: '列出所有已定义的角色' },
         { usage: '/team-role info <role-name>', description: '查看指定角色的详细信息' },
-        { usage: '/team-struct new <struct-name> <struct-prompt>', description: '创建新的协作结构定义' },
+        { usage: '/team-struct new <struct-name> <struct-prompt>', description: '创建新的协作结构定义（需确认）' },
+        { usage: '/team-struct confirm <struct-name>', description: '确认并正式创建待确认的协作结构' },
+        { usage: '/team-struct reject <struct-name>', description: '取消待确认的协作结构方案' },
         { usage: '/team-struct delete <struct-name>', description: '删除指定协作结构定义文件' },
         { usage: '/team-struct list', description: '列出所有已定义的协作结构' },
         { usage: '/team-struct info <struct-name>', description: '查看指定协作结构的详细信息' },

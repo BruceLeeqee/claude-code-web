@@ -191,7 +191,33 @@ export class StructRegistryService {
   }
 
   validateRoles(roles: string[]): { valid: boolean; missing: string[] } {
-    const missing = roles.filter(r => !this.roleRegistry.exists(r) && !this.roleRegistry.existsByName(r));
+    const registeredRoles = this.roleRegistry.roleList();
+    const missing: string[] = [];
+
+    for (const r of roles) {
+      const exactMatch = this.roleRegistry.exists(r) || this.roleRegistry.existsByName(r);
+      if (exactMatch) continue;
+
+      const semanticMatch = registeredRoles.some(role => {
+        const nameLower = role.name.toLowerCase();
+        const descLower = (role.description ?? '').toLowerCase();
+        const slugLower = role.slug.toLowerCase();
+        const rLower = r.toLowerCase();
+        return (
+          nameLower.includes(rLower) ||
+          rLower.includes(nameLower) ||
+          descLower.includes(rLower) ||
+          slugLower.includes(rLower) ||
+          rLower.includes(slugLower) ||
+          (role.capabilities ?? []).some(cap => cap.toLowerCase().includes(rLower) || rLower.includes(cap.toLowerCase()))
+        );
+      });
+
+      if (!semanticMatch) {
+        missing.push(r);
+      }
+    }
+
     return { valid: missing.length === 0, missing };
   }
 

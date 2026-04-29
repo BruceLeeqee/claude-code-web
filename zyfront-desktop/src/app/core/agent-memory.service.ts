@@ -270,14 +270,22 @@ export class AgentMemoryService {
 
     const lastUser = [...turn.messages].reverse().find((m) => m.role === 'user');
     const lastAssistant = [...turn.messages].reverse().find((m) => m.role === 'assistant');
-    const userText = String(lastUser?.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 320);
-    const assistantText = String(lastAssistant?.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 560);
+
+    const allUserMsgs = turn.messages.filter((m) => m.role === 'user');
+    const allAssistantMsgs = turn.messages.filter((m) => m.role === 'assistant');
+
+    const userText = allUserMsgs.length > 1
+      ? allUserMsgs.map((m, i) => `[${i + 1}] ${String(m.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)}`).join(' | ')
+      : String(lastUser?.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 320);
+    const assistantText = allAssistantMsgs.length > 1
+      ? allAssistantMsgs.map((m, i) => `[${i + 1}] ${String(m.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 350)}`).join(' | ')
+      : String(lastAssistant?.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 560);
 
     const block = [
       `## ${new Date(turn.timestamp).toISOString()} / ${turn.turnId}`,
       `- session: ${turn.sessionId}`,
-      `- user: ${userText || '(empty)'}`,
-      `- assistant: ${assistantText || '(empty)'}`,
+      `- user (${allUserMsgs.length}): ${userText || '(empty)'}`,
+      `- assistant (${allAssistantMsgs.length}): ${assistantText || '(empty)'}`,
       '',
     ].join('\n');
 

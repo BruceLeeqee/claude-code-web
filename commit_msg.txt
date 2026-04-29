@@ -1,23 +1,25 @@
-feat(workbench): 优化助手流协调器与页面交互体验
+feat(workbench): 增强工作台指令路由与多智能体团队协作
 
 【背景】
-- Workbench 模块的助手流协调器需要更好的流式响应处理
-- 页面样式与交互体验有优化空间
-- assistant stream coordinator 的错误处理需要完善
+- 工作台指令系统需要支持更复杂的团队协作场景
+- 多智能体模块需要更灵活的 struct 命令注册机制
 
 【本次改动】
-- 优化 workbench-assistant-stream-coordinator.service.ts 流式响应处理
-- 改进 workbench.page.html 布局结构
-- 完善 workbench.page.scss 样式定义
-- 增强 workbench.page.ts 组件逻辑
-- 更新 styles.scss 全局样式
+- team-struct-command.service.ts 新增结构化命令解析与路由（+1049行）
+- workbench.page.ts 增强工作台页面交互逻辑（+269行）
+- multi-agent-sidebar.component.ts 优化侧边栏组件（+156行变更）
+- 新增 struct-registry.service.ts 结构注册服务
+- team-command-router.service.ts 重构命令路由分发
+- agent-memory.service.ts / session-memory.service.ts 优化记忆服务
+- command-executor.service.ts / directive-registry.ts 完善指令执行链
 
 【影响范围】
-- workbench 模块，助手流协调与页面交互
+- workbench 模块：指令执行与工作台交互
+- multi-agent 模块：团队协作与结构化命令
+- memory 模块：会话与提取服务
 
 【验证】
-- 本地编译通过
-- 手动测试流式响应正常
+- 本地编译通过，Angular 服务注入正常
 
 【风险与回滚】
-- 低风险，回滚只需 git revert 本次提交
+- 中等风险，涉及多模块联动，建议通过 git bisect 定位问题

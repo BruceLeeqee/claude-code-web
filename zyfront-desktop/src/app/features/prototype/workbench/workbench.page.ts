@@ -685,8 +685,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private xtermBackspaceKeydown?: (e: Event) => void;
   private aiXtermContextMenu?: (e: Event) => void;
   private psXtermContextMenu?: (e: Event) => void;
-  /** ? onData ? \\b ????????? */
   private backspaceHandledTs = 0;
+  private lastInputRowCount = 1;
 
   private mainLineBuffer = '';
   private mainEscSkip = false;
@@ -1035,6 +1035,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly loopViewMode = signal<'cards' | 'terminal'>('cards');
   /** 当前 Loop 会话状态（从 LoopCommandService 获取） */
   protected readonly currentLoopState = signal<import('./debug/loop-command.types').LoopState | null>(null);
+
+  // ── Team Struct 确认模式 ──
+  /** 是否正在主终端等待 struct 方案确认 */
+  protected readonly structConfirmMode = signal(false);
+  /** 待确认的 struct 名称 */
+  protected readonly structConfirmName = signal('');
+  /** struct 确认模式是否已回显过用户输入 */
+  protected readonly structConfirmInputEchoed = signal(false);
 
   // ── 多任务管理 ──
   /** 所有 Loop 任务的摘要列表 */
@@ -4199,27 +4207,21 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const mk = this.assistantStreamOutputStartMarker;
     /**
      * 擦除行数必须精确：仅擦除本轮 marker 起到光标止的内容。
-     * 过去用 streamConsumedLines + 余量作为安全网，导致多轮对话时上一轮的 [用户]/[超体] 被擦掉。
-     * 现在严格以 marker 为锚点：marker 定位了本轮流式输出的起始行，
-     * 上移到 marker 行后用 \x1b[0J 擦到屏幕底即可，无需额外上移。
-     * 仅在 marker 不可用时才退化到 streamConsumedLines 估算。
-     * 额外 +1 行用于擦除 [用户] 行，让 tail() 重绘时替换而非追加。
+     * 额外 +2 行用于擦除 marker 上方的用户输入行（sendDraftToMainTerminal 写入的 \r\n> xxx\r\n 占2行），
+     * 让 tail() 重绘 [用户] xxx 时替换而非追加。
      */
     const rows = Math.max(1, this.xterm.rows);
-    const maxErase = rows * 4; // 硬上限防止单轮极端长输出溢出
+    const maxErase = rows * 4;
     let linesToErase: number;
     if (mk && !mk.isDisposed && mk.line >= 0) {
       const top = mk.line;
       const span = cursorAbs - top + 1;
       if (span > 0) {
-        // 精确擦除：上移到 marker 行，额外 +1 行用于擦除 [用户] 行
-        linesToErase = Math.min(span + 1, maxErase);
+        linesToErase = Math.min(span + 2, maxErase);
       } else {
-        // marker 在光标下方（异常），用极小回退
         linesToErase = Math.min(Math.max(1, base), maxErase);
       }
     } else {
-      // 无 marker：退化到估算，但仍做上限保护
       linesToErase = Math.min(Math.max(1, base), maxErase);
     }
     this.disposeAssistantStreamOutputStartMarker();
@@ -4306,7 +4308,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           const answerLabel = this.workbenchMode.isDevMode() ? '架构师' : '超体';
           xterm.write(`\x1b[35m[${answerLabel}]\x1b[0m `);
         }
-        xterm.write(answer.replaceAll('\n', '\r\n'));
+        const renderedAnswer = answer
+          .replace(/\[架构师\]/g, '\x1b[35m[架构师]\x1b[0m')
+          .replace(/\[前端开发\]/g, '\x1b[32m[前端开发]\x1b[0m')
+          .replace(/\[后端开发\]/g, '\x1b[33m[后端开发]\x1b[0m')
+          .replace(/\[测试工程师\]/g, '\x1b[36m[测试工程师]\x1b[0m');
+        xterm.write(renderedAnswer.replaceAll('\n', '\r\n'));
       }
 
       // 安全网：清除从当前光标到屏幕底部的一切残留
@@ -4585,7 +4592,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     this.xterm.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== 'keydown') return true;
-      // 思考折叠/展开快捷键已禁用（思考内容固定显示）
+      if (event.key === 'Delete') return false;
       return true;
     });
 
@@ -4599,9 +4606,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       if (!(t instanceof Node) || !host.contains(t)) return;
       if (this.terminalBusy()) return;
       if (ke.key !== 'Backspace') return;
-      if (this.mainLineBuffer.length === 0) return;
       ke.preventDefault();
-      this.backspaceHandledTs = performance.now();
+      ke.stopPropagation();
+      if (this.mainLineBuffer.length === 0) return;
       this.mainLineBuffer = this.popLastUserGrapheme(this.mainLineBuffer);
       this.redrawInputLine();
     };
@@ -5022,6 +5029,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private writeMainTerminalPrompt(): void {
+    this.lastInputRowCount = 1;
     const cols = Math.max(40, this.xterm?.cols ?? 80);
     if (this.hasCompletedTurn) {
       const sep = `\x1b[90m${'┄'.repeat(cols)}\x1b[0m`;
@@ -5080,6 +5088,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.mainEscAcc = '';
           continue;
         }
+        if (acc === '\x1b[3~') {
+          this.mainEscSkip = false;
+          this.mainEscAcc = '';
+          continue;
+        }
         if ((/[A-Za-z~]/.test(ch) && acc.length >= 2) || acc.length > 48) {
           this.mainEscSkip = false;
           this.mainEscAcc = '';
@@ -5096,14 +5109,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         this.clearSlashHintRow();
         const line = this.mainLineBuffer;
         this.mainLineBuffer = '';
+        this.lastInputRowCount = 1;
         this.aiXtermWrite('\r\n');
         void this.dispatchMainTerminalLine(line);
         continue;
       }
       if (ch === '\x7f' || ch === '\b') {
-        if (performance.now() - this.backspaceHandledTs < 45) continue;
         if (this.mainLineBuffer.length > 0) {
-          this.backspaceHandledTs = performance.now();
           this.mainLineBuffer = this.popLastUserGrapheme(this.mainLineBuffer);
           this.redrawInputLine();
         }
@@ -5117,6 +5129,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.mainLineBuffer += ch;
       this.xterm?.write(ch);
       this.syncSlashCompletionRow();
+
+      const cols = this.xterm?.cols ?? 80;
+      const promptLen = 7;
+      const bufferLen = this.computeDisplayWidth(this.mainLineBuffer);
+      this.lastInputRowCount = Math.max(1, Math.ceil((promptLen + bufferLen) / cols));
     }
   }
 
@@ -5206,8 +5223,55 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private redrawInputLine(): void {
     this.clearSlashHintRow();
-    this.aiXtermWrite(`\r\x1b[2K\x1b[36m[用户]\x1b[0m ${this.mainLineBuffer}`);
+
+    const cols = this.xterm?.cols ?? 80;
+    const promptLen = 7;
+    const bufferLen = this.computeDisplayWidth(this.mainLineBuffer);
+    const newRowCount = Math.max(1, Math.ceil((promptLen + bufferLen) / cols));
+    const eraseRows = Math.max(this.lastInputRowCount, newRowCount);
+
+    if (eraseRows > 1) {
+      this.aiXtermWrite(`\x1b[${eraseRows - 1}A`);
+    }
+    for (let i = 0; i < eraseRows; i++) {
+      if (i > 0) this.aiXtermWrite('\x1b[1B');
+      this.aiXtermWrite('\r\x1b[2K');
+    }
+    if (eraseRows > 1) {
+      this.aiXtermWrite(`\x1b[${eraseRows - 1}A`);
+    }
+
+    this.aiXtermWrite(`\x1b[36m[用户]\x1b[0m ${this.mainLineBuffer}`);
+
+    this.lastInputRowCount = newRowCount;
+
     this.syncSlashCompletionRow();
+  }
+
+  private computeDisplayWidth(s: string): number {
+    let w = 0;
+    for (const ch of s) {
+      const cp = ch.codePointAt(0) ?? 0;
+      if (
+        (cp >= 0x1100 && cp <= 0x115F) ||
+        (cp >= 0x2329 && cp <= 0x232A) ||
+        (cp >= 0x2E80 && cp <= 0xA4CF && cp !== 0x303F) ||
+        (cp >= 0xAC00 && cp <= 0xD7A3) ||
+        (cp >= 0xF900 && cp <= 0xFAFF) ||
+        (cp >= 0xFE10 && cp <= 0xFE19) ||
+        (cp >= 0xFE30 && cp <= 0xFE6F) ||
+        (cp >= 0xFF01 && cp <= 0xFF60) ||
+        (cp >= 0xFFE0 && cp <= 0xFFE6) ||
+        (cp >= 0x1F300 && cp <= 0x1FAFF) ||
+        (cp >= 0x20000 && cp <= 0x2FFFD) ||
+        (cp >= 0x30000 && cp <= 0x3FFFD)
+      ) {
+        w += 2;
+      } else {
+        w += 1;
+      }
+    }
+    return w;
   }
 
   private toggleThinkingCollapse(): void {
@@ -5410,6 +5474,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private async dispatchMainTerminalLine(raw: string): Promise<void> {
     const t = raw.trim();
     if (!t) {
+      this.lastInputRowCount = 1;
       this.aiXtermWrite(`\r\x1b[2K\x1b[36m[用户]\x1b[0m `);
       return;
     }
@@ -5422,6 +5487,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     // ── Loop 需求收集模式：用户正在回答需求澄清问题 ──
     if (this.loopGatheringMode()) {
       await this.handleLoopGatheringInput(t);
+      return;
+    }
+
+    // ── Team Struct 确认模式：用户正在确认/取消 struct 方案 ──
+    if (this.structConfirmMode()) {
+      await this.handleStructConfirmInput(t);
       return;
     }
 
@@ -5447,17 +5518,43 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const filePath = typeof processedTeam.executionResult.metadata?.['filePath'] === 'string' 
         ? String(processedTeam.executionResult.metadata['filePath']) : '';
       
+      const isConfirmationRequired = !!processedTeam.executionResult.metadata?.['confirmationRequired'];
+      
+      if (isConfirmationRequired) {
+        const structName = String(processedTeam.executionResult.metadata?.['structName'] ?? '');
+        const planText = String(processedTeam.executionResult.metadata?.['planText'] ?? processedTeam.executionResult.content ?? '');
+        
+        this.structConfirmMode.set(true);
+        this.structConfirmName.set(structName);
+        this.structConfirmInputEchoed.set(false);
+        
+        this.presentUnifiedCommandEntry(processedTeam.executionResult);
+        this.writeMainTerminalPrompt();
+        return;
+      }
+      
       if (hasTabKey) {
         const tabKey = String(processedTeam.executionResult.metadata!['tabKey']);
-        const isTeamRole = /^team-role:/i.test(tabKey);
+        const isTeamCommand = /^team-(role|struct):/i.test(tabKey);
         
-        if (isTeamRole && filePath) {
+        if (isTeamCommand && filePath) {
           this.addTabIfMissing(tabKey);
           const openScope = processedTeam.executionResult.metadata?.['openScope'] === 'workspace' ? 'workspace' : 'vault';
           
           this.projectTreeExpanded.set(false);
           this.recentSessionsExpanded.set(false);
           this.memoryVaultExpanded.set(true);
+          
+          const tree = openScope === 'workspace' ? this.workspaceTree() : this.memoryTree();
+          this.collapseAllDirNodes(tree);
+          if (openScope === 'workspace') {
+            this.workspaceTree.set([...tree]);
+          } else {
+            this.memoryTree.set([...tree]);
+          }
+          
+          const generatedRoleFiles = Array.isArray(processedTeam.executionResult.metadata?.['generatedRoleFiles'])
+            ? processedTeam.executionResult.metadata!['generatedRoleFiles'] as string[] : [];
           
           void this.openFileByPath(filePath, openScope).then(async () => {
             await this.expandAndSelectFile(filePath, openScope);
@@ -5474,6 +5571,19 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
               dirty: false,
               fsScope: openScope,
             });
+            
+            if (generatedRoleFiles.length > 0) {
+              const rolesDir = '03-AGENT-TOOLS/03-Roles';
+              const rolesDirNode = this.memoryTree().find(n => n.type === 'dir' && n.name === '03-AGENT-TOOLS');
+              if (rolesDirNode) {
+                await this.loadDir('03-AGENT-TOOLS', rolesDirNode, 'vault');
+                const rolesNode = (rolesDirNode.children || []).find(n => n.type === 'dir' && n.name === '03-Roles');
+                if (rolesNode) {
+                  await this.loadDir(rolesDir, rolesNode, 'vault');
+                }
+                this.memoryTree.set([...this.memoryTree()]);
+              }
+            }
           });
         } else {
           this.presentUnifiedCommandEntry(processedTeam.executionResult);
@@ -5487,6 +5597,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.projectTreeExpanded.set(false);
           this.recentSessionsExpanded.set(false);
           this.memoryVaultExpanded.set(true);
+          
+          const tree = openScope === 'workspace' ? this.workspaceTree() : this.memoryTree();
+          this.collapseAllDirNodes(tree);
+          if (openScope === 'workspace') {
+            this.workspaceTree.set([...tree]);
+          } else {
+            this.memoryTree.set([...tree]);
+          }
           
           void this.openFileByPath(filePath, openScope).then(async () => {
             await this.expandAndSelectFile(filePath, openScope);
@@ -5673,6 +5791,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.cdr.markForCheck();
   }
 
+  private collapseAllDirNodes(nodes: FileNode[]): void {
+    for (const n of nodes) {
+      if (n.type === 'dir') {
+        n.expanded = false;
+        if (n.children?.length) this.collapseAllDirNodes(n.children);
+      }
+    }
+  }
+
   protected async expandAndSelectFile(filePath: string, scope: 'workspace' | 'vault' = 'vault'): Promise<void> {
     const parts = filePath.split('/').filter(Boolean);
     if (parts.length === 0) return;
@@ -5690,9 +5817,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const dirNode = currentNodes.find(n => n.type === 'dir' && n.name === part);
       if (!dirNode) break;
       
-      if (!dirNode.loaded) {
-        await this.loadDir(currentPath, dirNode, scope);
-      }
+      dirNode.loaded = false;
+      await this.loadDir(currentPath, dirNode, scope);
       
       dirNode.expanded = true;
       currentNodes = dirNode.children || [];
@@ -5738,6 +5864,41 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     this.aiXtermWrite('\x1b[90m[loop] 已记录。继续回答问题，或输入"确认"进入执行页面、"取消"退出。\x1b[0m\r\n');
     this.writeMainTerminalPrompt();
+  }
+
+  private static readonly STRUCT_CONFIRM_WORDS = /^(确认|confirm|yes|ok|好|确定|继续|go)$/i;
+  private static readonly STRUCT_CANCEL_WORDS = /^(取消|cancel|退出|quit|stop|abort|no|放弃)$/i;
+
+  private async handleStructConfirmInput(input: string): Promise<void> {
+    if (!this.structConfirmInputEchoed()) {
+      this.aiXtermWrite(`\r\n\x1b[90m[用户]\x1b[0m ${input}\r\n`);
+      this.structConfirmInputEchoed.set(true);
+    }
+
+    const structName = this.structConfirmName();
+
+    if (WorkbenchPageComponent.STRUCT_CONFIRM_WORDS.test(input)) {
+      this.structConfirmMode.set(false);
+      this.structConfirmName.set('');
+      this.structConfirmInputEchoed.set(false);
+      this.aiXtermWrite('\x1b[36m[team-struct] 正在创建协作结构...\x1b[0m\r\n');
+      await this.dispatchMainTerminalLine(`/team-struct confirm ${structName}`);
+      return;
+    }
+
+    if (WorkbenchPageComponent.STRUCT_CANCEL_WORDS.test(input)) {
+      this.structConfirmMode.set(false);
+      this.structConfirmName.set('');
+      this.structConfirmInputEchoed.set(false);
+      this.aiXtermWrite('\x1b[33m[team-struct] 方案已取消。\x1b[0m\r\n');
+      this.writeMainTerminalPrompt();
+      return;
+    }
+
+    this.structConfirmMode.set(false);
+    this.structConfirmInputEchoed.set(false);
+    this.aiXtermWrite('\x1b[36m[team-struct] 正在更新方案...\x1b[0m\r\n');
+    await this.dispatchMainTerminalLine(`/team-struct update ${input}`);
   }
 
   /** Loop tab 中的输入：用于继续执行或回到主终端 */
@@ -6626,6 +6787,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     }
 
     this.streamInterruptRequested = false;
+    this.resetThinkingStreamState();
     this.terminalBusy.set(true);
     this.streamRequestStartMs = Date.now();
 
@@ -6669,6 +6831,23 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         if (value.type === 'error' && value.error) {
           streamFailed = true;
           this.aiXtermWrite(`\r\n[error] ${value.error}${this.hintIfUnauthorized(value.error)}`);
+        } else if (value.type === 'thinking_delta' && value.textDelta) {
+          const cfg = this.readModelRequestUiConfig();
+          if (cfg.showThinking && !this.thinkingHeaderShown) {
+            this.renderThinkingHeader(this.ensureStreamingThinkingBlockId());
+            this.thinkingHeaderShown = true;
+          }
+          if (cfg.showThinking) {
+            this.thinkingBuffer += value.textDelta;
+            const rest = this.thinkingBuffer.slice(this.thinkingPrintedLen);
+            if (rest && rest.length > 0) {
+              const visible = this.thinkingHasNonChinese ? this.sanitizeThinkingForDisplay(rest) : rest;
+              const out = this.highlightThinkingSteps(visible);
+              this.aiXtermWrite(out);
+              this.bumpStreamLineBudgetForWrite(out);
+              this.thinkingPrintedLen = this.thinkingBuffer.length;
+            }
+          }
         } else if (value.type === 'delta' && value.textDelta) {
           planDocument += value.textDelta;
           this.aiXtermWrite(value.textDelta);
@@ -6686,9 +6865,26 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.streamStop = undefined;
       this.terminalBusy.set(false);
 
-      if (!streamFailed && planDocument) {
-        this.workbenchMode.setPlanDocument(planDocument);
-        this.aiXtermWrite('\r\n\r\n\x1b[32m[计划文档已生成]\x1b[0m 计划已保存，可随时查看或修改。\r\n');
+      if (!streamFailed) {
+        const cfg = this.readModelRequestUiConfig();
+        this.finalizeAssistantStreamUi({
+          ok: true,
+          interrupted: false,
+          userPrompt: raw,
+          thinking: this.thinkingBuffer,
+          thinkingHasNonChinese: this.thinkingHasNonChinese,
+          answer: planDocument,
+          layoutSplitThinkingAnswer: cfg.layoutSplitThinkingAnswer,
+          thinkingToggleShortcut: cfg.thinkingToggleShortcut,
+          thinkingToggleAllShortcut: cfg.thinkingToggleAllShortcut,
+        });
+
+        this.resetThinkingStreamState();
+
+        if (planDocument) {
+          this.workbenchMode.setPlanDocument(planDocument);
+          this.aiXtermWrite('\r\n\r\n\x1b[32m[计划文档已生成]\x1b[0m 计划已保存，可随时查看或修改。\r\n');
+        }
       }
 
       if (!streamFailed) this.hasCompletedTurn = true;
@@ -6947,12 +7143,25 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.streamStop = undefined;
       this.terminalBusy.set(false);
 
-      this.resetThinkingStreamState();
-
       if (this.streamInterruptRequested) {
         this.aiXtermWrite('\r\n\x1b[33m[已中断]\x1b[0m\r\n');
         this.streamInterruptRequested = false;
       } else if (!streamFailed) {
+        const cfg = this.readModelRequestUiConfig();
+        this.finalizeAssistantStreamUi({
+          ok: true,
+          interrupted: false,
+          userPrompt: raw,
+          thinking: this.thinkingBuffer,
+          thinkingHasNonChinese: this.thinkingHasNonChinese,
+          answer: this.roundAnswerAccumulator,
+          layoutSplitThinkingAnswer: cfg.layoutSplitThinkingAnswer,
+          thinkingToggleShortcut: cfg.thinkingToggleShortcut,
+          thinkingToggleAllShortcut: cfg.thinkingToggleAllShortcut,
+        });
+
+        this.resetThinkingStreamState();
+
         this.aiXtermWrite('\r\n\r\n\x1b[35m[架构师]\x1b[0m 任务执行完成\r\n');
         
         if (currentThinkingAgent) {
@@ -7430,10 +7639,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     for (const seg of segments) {
       if (seg.tag === 'user') {
-        if (!seenContentHashes.has('user')) {
-          seenContentHashes.add('user');
-          for (const l of seg.lines) outputLines.push(l);
-        }
         continue;
       }
       if (seg.tag === 'skill') {

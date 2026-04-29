@@ -38,10 +38,22 @@ export class SessionMemoryService {
 
       const lastUser = [...turn.messages].reverse().find((m) => m.role === 'user');
       const lastAssistant = [...turn.messages].reverse().find((m) => m.role === 'assistant');
+
+      const allUserMsgs = turn.messages.filter((m) => m.role === 'user');
+      const allAssistantMsgs = turn.messages.filter((m) => m.role === 'assistant');
+
+      const userSummary = allUserMsgs.length > 1
+        ? allUserMsgs.map((m, i) => `[${i + 1}] ${String(m.content ?? '').slice(0, 150)}`).join(' | ')
+        : String(lastUser?.content ?? '').slice(0, 220);
+
+      const assistantSummary = allAssistantMsgs.length > 1
+        ? allAssistantMsgs.map((m, i) => `[${i + 1}] ${String(m.content ?? '').slice(0, 200)}`).join(' | ')
+        : String(lastAssistant?.content ?? '').slice(0, 320);
+
       const block = [
         `## ${new Date(turn.timestamp).toISOString()} / ${turn.turnId}`,
-        `- user: ${String(lastUser?.content ?? '').slice(0, 220)}`,
-        `- assistant: ${String(lastAssistant?.content ?? '').slice(0, 320)}`,
+        `- user (${allUserMsgs.length}): ${userSummary}`,
+        `- assistant (${allAssistantMsgs.length}): ${assistantSummary}`,
         '',
       ].join('\n');
 

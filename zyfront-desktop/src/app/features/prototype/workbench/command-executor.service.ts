@@ -411,11 +411,14 @@ export class CommandExecutorService {
 
     this.registerDirectiveExecutor('team_struct', async (ctx) => {
       const result = await this.teamCommandRouter.execute(`/team-struct ${ctx.parsed.args}`);
+      const planText = result.metadata?.['planText'];
       return {
         success: result.ok,
         route: 'directive',
         responseType: result.ok ? 'directive' : 'error',
-        content: result.ok ? result.message : `错误: ${result.message}`,
+        content: result.ok
+          ? (typeof planText === 'string' && planText.trim().length > 0 ? planText : result.message)
+          : `错误: ${result.message}`,
         metadata: result.metadata as Record<string, unknown> | undefined,
         shouldQuery: false,
         displayType: result.ok ? 'success' : 'error',

@@ -306,7 +306,7 @@ export class ExtractService {
     const compactAsst = assistantText.replace(/\s+/g, ' ').slice(0, 360);
     if (type === 'user' && !/(我是|I am|my role|偏好|习惯|负责|经验|背景)/i.test(userText)) return null;
     if (type === 'feedback' && !/(不要|别|请|建议|prefer|should|must|风格|格式)/i.test(userText)) return null;
-    if (type === 'project' && !/(项目|计划|里程碑|发布|deadline|freeze|roadmap|本周|下周)/i.test(userText)) return null;
+    if (type === 'project' && !/(项目|计划|里程碑|发布|deadline|freeze|roadmap|本周|下周|生成|创建|新增|添加|角色|文件|配置|编写|实现)/i.test(userText)) return null;
     if (type === 'reference' && !/(http|链接|文档|Linear|Jira|Grafana|看板|地址)/i.test(userText)) return null;
 
     const content = [
@@ -318,7 +318,7 @@ export class ExtractService {
       .filter(Boolean)
       .join('\n\n');
 
-    const topicSource = `${type}|${compactUser.slice(0, 120).toLowerCase()}`;
+    const topicSource = `${type}|${compactUser.slice(0, 120).toLowerCase()}|${turn.turnId}`;
     const topicKey = this.fingerprint(topicSource).slice(0, 18);
     return { type, content, topicKey };
   }
