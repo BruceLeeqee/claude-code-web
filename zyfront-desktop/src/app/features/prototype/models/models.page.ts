@@ -413,9 +413,20 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
     const nextTheme = this.resolveThemeFromConfig(parsedCfg, this.settings().theme ?? 'dark');
 
     let apiKeyFromJson = this.settings().apiKey ?? '';
+    let apiKeysFromConfig: AppSettings['api_keys'] = this.settings().api_keys;
+    
     const apiKeysObj = parsedCfg['api_keys'];
     if (apiKeysObj && typeof apiKeysObj === 'object' && !Array.isArray(apiKeysObj)) {
       const apiKeys = apiKeysObj as Record<string, Record<string, unknown>>;
+      apiKeysFromConfig = apiKeysFromConfig || {};
+      
+      if (apiKeys['MiniMax']?.['api_key']) {
+        apiKeysFromConfig['MiniMax'] = { api_key: String(apiKeys['MiniMax']['api_key']) };
+      }
+      if (apiKeys['DeepSeek']?.['api_key']) {
+        apiKeysFromConfig['DeepSeek'] = { api_key: String(apiKeys['DeepSeek']['api_key']) };
+      }
+      
       const modelEntry = findCatalogEntry(effectiveModel) ?? cur;
       const providerKey = modelEntry.provider === 'minimax' ? 'MiniMax' : modelEntry.provider === 'deepseek' ? 'DeepSeek' : null;
       if (providerKey && apiKeys[providerKey]) {
@@ -438,6 +449,7 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
       compression: nextCompression,
       cost: nextCost,
       theme: nextTheme,
+      api_keys: apiKeysFromConfig,
     });
     try {
       if (opts.syncTextarea) {

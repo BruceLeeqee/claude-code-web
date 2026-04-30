@@ -11,6 +11,8 @@ export interface ModelCatalogEntry {
   providerLabel: string;
   /** 典型上下文窗口（tokens） */
   maxContextTokens: number;
+  /** 单次请求最大输出 tokens */
+  maxTokens: number;
   /** 估算：输入 $ / 1M tokens */
   usdPer1MInput: number;
   /** 估算：输出 $ / 1M tokens */
@@ -43,6 +45,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     provider: 'minimax',
     providerLabel: 'MiniMax',
     maxContextTokens: 200_000,
+    maxTokens: 81920,
     usdPer1MInput: 0.15,
     usdPer1MOutput: 0.6,
     kind: 'cloud',
@@ -55,6 +58,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     provider: 'minimax',
     providerLabel: 'MiniMax',
     maxContextTokens: 200_000,
+    maxTokens: 81920,
     usdPer1MInput: 0.1,
     usdPer1MOutput: 0.4,
     kind: 'cloud',
@@ -67,6 +71,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     provider: 'minimax',
     providerLabel: 'MiniMax',
     maxContextTokens: 200_000,
+    maxTokens: 81920,
     usdPer1MInput: 0.12,
     usdPer1MOutput: 0.5,
     kind: 'cloud',
@@ -79,6 +84,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     provider: 'deepseek',
     providerLabel: 'DeepSeek',
     maxContextTokens: 128_000,
+    maxTokens: 128000,
     usdPer1MInput: 0.5,
     usdPer1MOutput: 2,
     kind: 'cloud',
@@ -91,6 +97,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     provider: 'deepseek',
     providerLabel: 'DeepSeek',
     maxContextTokens: 128_000,
+    maxTokens: 128000,
     usdPer1MInput: 2,
     usdPer1MOutput: 8,
     kind: 'cloud',
@@ -98,7 +105,25 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
 ];
 
 export function findCatalogEntry(modelId: string): ModelCatalogEntry | undefined {
-  return MODEL_CATALOG.find((m) => m.id === modelId);
+  const trimmed = modelId.trim();
+  
+  const exactMatch = MODEL_CATALOG.find((m) => m.id === trimmed);
+  if (exactMatch) return exactMatch;
+  
+  const normalizedInput = trimmed.toLowerCase().replace(/[\s-_]/g, '');
+  const fuzzyMatch = MODEL_CATALOG.find((m) => {
+    const normalizedId = m.id.toLowerCase().replace(/[\s-_]/g, '');
+    return normalizedId === normalizedInput;
+  });
+  if (fuzzyMatch) return fuzzyMatch;
+  
+  const partialMatch = MODEL_CATALOG.find((m) => 
+    m.id.toLowerCase().includes(normalizedInput) || 
+    normalizedInput.includes(m.id.toLowerCase().replace(/[\s-_]/g, ''))
+  );
+  if (partialMatch) return partialMatch;
+  
+  return undefined;
 }
 
 export function defaultCatalogEntry(): ModelCatalogEntry {

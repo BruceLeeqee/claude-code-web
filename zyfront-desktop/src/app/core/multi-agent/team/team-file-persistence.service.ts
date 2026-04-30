@@ -59,82 +59,185 @@ export class TeamFilePersistenceService {
     const frontmatter: FrontmatterData = {};
 
     const lines = frontmatterStr.split(/\r?\n/);
-    let currentKey = '';
-    let currentArray: string[] | null = null;
-    let inArray = false;
-    let inNestedKey = '';
-    let nestedObj: FrontmatterData = {};
+    let i = 0;
 
-    for (const line of lines) {
+    const parseValue = (val: string): unknown => {
+      if (val === 'true') return true;
+      if (val === 'false') return false;
+      if (/^-?\d+$/.test(val)) return parseInt(val, 10);
+      if (/^-?\d+\.\d+$/.test(val)) return parseFloat(val);
+      if (val.startsWith('[') && val.endsWith(']')) {
+        const inner = val.slice(1, -1).trim();
+        if (inner === '') return [];
+        try {
+          return JSON.parse(val);
+        } catch {
+          return inner.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, ''));
+        }
+      }
+      return val.replace(/^['"]|['"]$/g, '');
+    };
+
+    const parseObjectArray = (startIndent: number): Record<string, unknown>[] => {
+      const result: Record<string, unknown>[] = [];
+      let currentObj: Record<string, unknown> | null = null;
+
+      while (i < lines.length) {
+        const line = lines[i];
+        const lineIndent = line.search(/\S|$/);
+        const trimmedLine = line.trim();
+
+        if (lineIndent < startIndent || trimmedLine === '') {
+          if (currentObj) {
+            result.push(currentObj);
+            currentObj = null;
+          }
+          if (trimmedLine === '' && i + 1 < lines.length) {
+            const nextLine = lines[i + 1];
+            const nextIndent = nextLine.search(/\S|$/);
+            if (nextIndent < startIndent) break;
+          }
+          if (lineIndent < startIndent) break;
+          i++;
+          continue;
+        }
+
+        if (trimmedLine.startsWith('-') && (trimmedLine[1] === ' ' || trimmedLine[1] === '\t' || trimmedLine.length === 1)) {
+          if (currentObj) {
+            result.push(currentObj);
+          }
+          currentObj = {};
+          const afterDash = trimmedLine.substring(1).trim();
+          if (afterDash && afterDash.includes(':')) {
+            const colonIdx = afterDash.indexOf(':');
+            const k = afterDash.substring(0, colonIdx).trim();
+            const v = afterDash.substring(colonIdx + 1).trim();
+            if (v) {
+              currentObj[k] = parseValue(v);
+            }
+          }
+          i++;
+          continue;
+        }
+
+        if (trimmedLine.includes(':') && currentObj !== null) {
+          const colonIdx = trimmedLine.indexOf(':');
+          const k = trimmedLine.substring(0, colonIdx).trim();
+          const v = trimmedLine.substring(colonIdx + 1).trim();
+          if (v) {
+            currentObj[k] = parseValue(v);
+          }
+          i++;
+          continue;
+        }
+
+        break;
+      }
+
+      if (currentObj) {
+        result.push(currentObj);
+      }
+
+      return result;
+    };
+
+    while (i < lines.length) {
+      const line = lines[i];
       const trimmedLine = line.trim();
 
-      if (inArray && trimmedLine.startsWith('- ')) {
-        currentArray!.push(trimmedLine.substring(2).trim());
+      if (trimmedLine === '' || !trimmedLine.includes(':')) {
+        i++;
         continue;
       }
 
-      if (inArray && trimmedLine === '') {
-        continue;
-      }
-
-      if (inArray) {
-        frontmatter[currentKey] = currentArray;
-        inArray = false;
-        currentArray = null;
-      }
-
-      if (inNestedKey && trimmedLine.includes(':')) {
-        const [nk, ...nrest] = trimmedLine.split(':');
-        nestedObj[nk.trim()] = nrest.join(':').trim();
-        continue;
-      }
-
+      const lineIndent = line.search(/\S|$/);
       const colonIdx = trimmedLine.indexOf(':');
-      if (colonIdx === -1) continue;
-
       const key = trimmedLine.substring(0, colonIdx).trim();
       const value = trimmedLine.substring(colonIdx + 1).trim();
 
       if (value === '') {
-        const nextLine = lines[lines.indexOf(line) + 1]?.trim() || '';
-        if (nextLine.startsWith('- ')) {
-          currentKey = key;
-          currentArray = [];
-          inArray = true;
-          continue;
-        }
-        if (nextLine.includes(':') && !nextLine.startsWith('-')) {
-          inNestedKey = key;
-          nestedObj = {};
-          continue;
+        if (i + 1 < lines.length) {
+          const nextLine = lines[i + 1];
+          const nextIndent = nextLine.search(/\S|$/);
+          const nextTrimmed = nextLine.trim();
+
+          if (nextTrimmed.startsWith('-')) {
+            const afterDash = nextTrimmed.length > 1 ? nextTrimmed.substring(1).trim() : '';
+            const isObjectArrayStart = afterDash === '' || afterDash.includes(':');
+            
+            if (isObjectArrayStart) {
+              if (afterDash === '' && i + 2 < lines.length) {
+                const afterDashLine = lines[i + 2];
+                const afterDashIndent = afterDashLine.search(/\S|$/);
+                const afterDashTrimmed = afterDashLine.trim();
+                if (afterDashIndent > nextIndent && afterDashTrimmed.includes(':')) {
+                  i++;
+                  frontmatter[key] = parseObjectArray(nextIndent);
+                  continue;
+                }
+              } else if (afterDash.includes(':')) {
+                i++;
+                frontmatter[key] = parseObjectArray(nextIndent);
+                continue;
+              }
+            }
+            i++;
+            const arr: string[] = [];
+            while (i < lines.length) {
+              const arrLine = lines[i].trim();
+              if (arrLine.startsWith('- ')) {
+                const itemAfterDash = arrLine.substring(2).trim();
+                if (itemAfterDash.includes(':')) {
+                  i--;
+                  break;
+                }
+                arr.push(itemAfterDash);
+                i++;
+              } else if (arrLine === '-') {
+                i++;
+              } else if (arrLine === '') {
+                i++;
+              } else {
+                break;
+              }
+            }
+            if (arr.length > 0) {
+              frontmatter[key] = arr;
+            } else {
+              i--;
+            }
+            continue;
+          }
+
+          if (nextTrimmed.includes(':') && !nextTrimmed.startsWith('-')) {
+            i++;
+            const nestedObj: FrontmatterData = {};
+            while (i < lines.length) {
+              const nestedLine = lines[i];
+              const nestedIndent = nestedLine.search(/\S|$/);
+              if (nestedIndent <= lineIndent) break;
+              const nestedTrimmed = nestedLine.trim();
+              if (nestedTrimmed === '' || !nestedTrimmed.includes(':')) {
+                i++;
+                continue;
+              }
+              const nColonIdx = nestedTrimmed.indexOf(':');
+              const nk = nestedTrimmed.substring(0, nColonIdx).trim();
+              const nv = nestedTrimmed.substring(nColonIdx + 1).trim();
+              nestedObj[nk] = parseValue(nv);
+              i++;
+            }
+            frontmatter[key] = nestedObj;
+            continue;
+          }
         }
         frontmatter[key] = [];
+        i++;
         continue;
       }
 
-      if (value.startsWith('[') && value.endsWith(']')) {
-        const inner = value.slice(1, -1).trim();
-        if (inner === '') {
-          frontmatter[key] = [];
-        } else {
-          frontmatter[key] = inner.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, ''));
-        }
-        continue;
-      }
-
-      if (value === 'true') { frontmatter[key] = true; continue; }
-      if (value === 'false') { frontmatter[key] = false; continue; }
-      if (/^-?\d+$/.test(value)) { frontmatter[key] = parseInt(value, 10); continue; }
-      if (/^-?\d+\.\d+$/.test(value)) { frontmatter[key] = parseFloat(value); continue; }
-
-      frontmatter[key] = value.replace(/^['"]|['"]$/g, '');
-    }
-
-    if (inArray && currentArray) {
-      frontmatter[currentKey] = currentArray;
-    }
-    if (inNestedKey && Object.keys(nestedObj).length > 0) {
-      frontmatter[inNestedKey] = nestedObj;
+      frontmatter[key] = parseValue(value);
+      i++;
     }
 
     return { frontmatter, body, raw: content };
@@ -143,17 +246,87 @@ export class TeamFilePersistenceService {
   serializeFrontmatter(frontmatter: FrontmatterData, body: string = ''): string {
     const lines: string[] = ['---'];
 
+    const serializeScalar = (v: unknown): string => {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+      if (typeof v === 'string') {
+        if (v.includes(':') || v.includes('#') || v.includes('\n') || v.includes('"') || v.includes("'")) {
+          return `"${v.replace(/"/g, '\\"')}"`;
+        }
+        return v;
+      }
+      return JSON.stringify(v);
+    };
+
+    const serializeArrayItem = (item: unknown, baseIndent: number): string[] => {
+      const result: string[] = [];
+      const indent = '  '.repeat(baseIndent);
+
+      if (item === null || item === undefined) {
+        result.push(`${indent}- null`);
+      } else if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+        result.push(`${indent}- ${serializeScalar(item)}`);
+      } else if (Array.isArray(item)) {
+        if (item.length === 0) {
+          result.push(`${indent}- []`);
+        } else if (item.every(x => typeof x === 'string' && !x.includes(':'))) {
+          result.push(`${indent}- [${(item as string[]).join(', ')}]`);
+        } else {
+          result.push(`${indent}-`);
+          item.forEach(subItem => {
+            result.push(...serializeArrayItem(subItem, baseIndent + 1));
+          });
+        }
+      } else if (typeof item === 'object') {
+        const entries = Object.entries(item as Record<string, unknown>).filter(([_, v]) => v !== undefined);
+        if (entries.length === 0) {
+          result.push(`${indent}- {}`);
+        } else {
+          result.push(`${indent}-`);
+          entries.forEach(([k, v]) => {
+            const keyIndent = '  '.repeat(baseIndent + 1);
+            if (v === null || v === undefined) {
+              // skip
+            } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+              result.push(`${keyIndent}${k}: ${serializeScalar(v)}`);
+            } else if (Array.isArray(v)) {
+              if (v.length === 0) {
+                result.push(`${keyIndent}${k}: []`);
+              } else if (v.every(x => typeof x === 'string' && !x.includes(':'))) {
+                result.push(`${keyIndent}${k}: [${(v as string[]).join(', ')}]`);
+              } else {
+                result.push(`${keyIndent}${k}:`);
+                v.forEach(subItem => {
+                  result.push(...serializeArrayItem(subItem, baseIndent + 2));
+                });
+              }
+            } else if (typeof v === 'object') {
+              result.push(`${keyIndent}${k}:`);
+              const subEntries = Object.entries(v as Record<string, unknown>).filter(([_, sv]) => sv !== undefined);
+              subEntries.forEach(([sk, sv]) => {
+                const subIndent = '  '.repeat(baseIndent + 2);
+                result.push(`${subIndent}${sk}: ${serializeScalar(sv)}`);
+              });
+            }
+          });
+        }
+      }
+      return result;
+    };
+
     for (const [key, value] of Object.entries(frontmatter)) {
       if (value === undefined || value === null) continue;
 
       if (Array.isArray(value)) {
         if (value.length === 0) {
           lines.push(`${key}: []`);
-        } else if (value.length <= 5 && value.every(v => typeof v === 'string' && v.length < 30)) {
-          lines.push(`${key}: [${value.map(v => v).join(', ')}]`);
+        } else if (value.every(v => typeof v === 'string' && v.length < 30 && !v.includes(':'))) {
+          lines.push(`${key}: [${(value as string[]).join(', ')}]`);
         } else {
           lines.push(`${key}:`);
-          value.forEach(v => lines.push(`  - ${v}`));
+          value.forEach(item => {
+            lines.push(...serializeArrayItem(item, 1));
+          });
         }
         continue;
       }
@@ -161,21 +334,19 @@ export class TeamFilePersistenceService {
       if (typeof value === 'object' && !Array.isArray(value)) {
         lines.push(`${key}:`);
         for (const [sk, sv] of Object.entries(value as FrontmatterData)) {
-          lines.push(`  ${sk}: ${sv}`);
+          if (sv !== undefined && sv !== null) {
+            lines.push(`  ${sk}: ${serializeScalar(sv)}`);
+          }
         }
         continue;
       }
 
       if (typeof value === 'string') {
-        if (value.includes(':') || value.includes('#') || value.includes("'") || value.includes('"') || value.includes('\n')) {
-          lines.push(`${key}: "${value.replace(/"/g, '\\"')}"`);
-        } else {
-          lines.push(`${key}: ${value}`);
-        }
+        lines.push(`${key}: ${serializeScalar(value)}`);
         continue;
       }
 
-      lines.push(`${key}: ${value}`);
+      lines.push(`${key}: ${serializeScalar(value)}`);
     }
 
     lines.push('---');
@@ -259,24 +430,41 @@ export class TeamFilePersistenceService {
   markdownToRole(content: string, filePath: string): RoleDefinition | null {
     const parsed = this.parseFrontmatter(content);
     const fm = parsed.frontmatter;
+    
+    console.log('[TeamFilePersistence] markdownToRole:', { 
+      filePath, 
+      hasName: !!fm['name'], 
+      frontmatterKeys: Object.keys(fm),
+      bodyLength: parsed.body.length 
+    });
 
-    if (!fm['name']) return null;
+    if (!fm['name']) {
+      console.warn('[TeamFilePersistence] markdownToRole: missing name in frontmatter:', filePath);
+      return null;
+    }
+
+    const slugFromPath = filePath.split('/').pop()?.replace(/\.md$/i, '') || '';
+
+    const ensureArray = <T>(value: unknown): T[] => {
+      if (Array.isArray(value)) return value as T[];
+      return [];
+    };
 
     return {
       name: fm['name'] as string,
-      slug: (fm['slug'] as string) || '',
+      slug: (fm['slug'] as string) || slugFromPath,
       type: (fm['type'] as RoleDefinition['type']) || 'agent-team',
       description: (fm['description'] as string) || '',
       model: fm['model'] as string | undefined,
-      tools: (fm['tools'] as string[]) || [],
-      disallowedTools: (fm['disallowedTools'] as string[]) || [],
+      tools: ensureArray<string>(fm['tools']),
+      disallowedTools: ensureArray<string>(fm['disallowedTools']),
       permissionMode: fm['permissionMode'] as string | undefined,
       maxTurns: fm['maxTurns'] as number | undefined,
       prompt: (fm['description'] as string) || '',
-      capabilities: (fm['capabilities'] as string[]) || [],
-      constraints: (fm['constraints'] as string[]) || [],
-      allowedPaths: (fm['allowedPaths'] as string[]) || [],
-      allowedWritePaths: (fm['allowedWritePaths'] as string[]) || [],
+      capabilities: ensureArray<string>(fm['capabilities']),
+      constraints: ensureArray<string>(fm['constraints']),
+      allowedPaths: ensureArray<string>(fm['allowedPaths']),
+      allowedWritePaths: ensureArray<string>(fm['allowedWritePaths']),
       status: (fm['status'] as RoleDefinition['status']) || 'draft',
       filePath,
       createdAt: (fm['createdAt'] as number) || Date.now(),
@@ -353,18 +541,43 @@ export class TeamFilePersistenceService {
     const parsed = this.parseFrontmatter(content);
     const fm = parsed.frontmatter;
 
-    if (!fm['name']) return null;
+    console.log('[TeamFilePersistence] markdownToStruct:', { 
+      filePath, 
+      hasName: !!fm['name'], 
+      frontmatterKeys: Object.keys(fm),
+      hasStages: Array.isArray(fm['stages']),
+      stagesCount: Array.isArray(fm['stages']) ? (fm['stages'] as unknown[]).length : 0
+    });
+
+    if (!fm['name']) {
+      console.warn('[TeamFilePersistence] markdownToStruct: missing name in frontmatter:', filePath);
+      return null;
+    }
+
+    const slugFromPath = filePath.split('/').pop()?.replace(/\.md$/i, '') || '';
+
+    const ensureArray = <T>(value: unknown): T[] => {
+      if (Array.isArray(value)) return value as T[];
+      return [];
+    };
+
+    const ensureStages = (value: unknown): StructDefinition['stages'] => {
+      if (Array.isArray(value)) return value as StructDefinition['stages'];
+      return [];
+    };
+
+    const parsedStages = ensureStages(fm['stages']);
 
     return {
       name: fm['name'] as string,
-      slug: (fm['slug'] as string) || '',
+      slug: (fm['slug'] as string) || slugFromPath,
       type: (fm['type'] as StructDefinition['type']) || 'hybrid',
       description: (fm['description'] as string) || '',
-      roles: (fm['roles'] as string[]) || [],
-      stages: (fm['stages'] as StructDefinition['stages']) || [],
-      handoffRules: (fm['handoffRules'] as string[]) || [],
-      communicationRules: (fm['communicationRules'] as string[]) || [],
-      completionCriteria: (fm['completionCriteria'] as string[]) || [],
+      roles: ensureArray<string>(fm['roles']),
+      stages: parsedStages,
+      handoffRules: ensureArray<string>(fm['handoffRules']),
+      communicationRules: ensureArray<string>(fm['communicationRules']),
+      completionCriteria: ensureArray<string>(fm['completionCriteria']),
       failurePolicy: (fm['failurePolicy'] as string) || '',
       artifactAggregationStrategy: (fm['artifactAggregationStrategy'] as string) || '',
       status: (fm['status'] as StructDefinition['status']) || 'draft',
@@ -426,8 +639,14 @@ export class TeamFilePersistenceService {
   }
 
   async readFile(relativePath: string): Promise<FileReadResult> {
+    console.log('[TeamFilePersistence] readFile called:', relativePath);
     try {
       const diskResult = await this.bridge.read(relativePath, 'vault');
+      console.log('[TeamFilePersistence] bridge.read result:', { 
+        path: relativePath, 
+        ok: diskResult.ok, 
+        contentLength: typeof diskResult.content === 'string' ? diskResult.content.length : 0 
+      });
       if (diskResult.ok && typeof diskResult.content === 'string') {
         this.fileCache.update(cache => {
           const newCache = new Map(cache);
@@ -442,7 +661,8 @@ export class TeamFilePersistenceService {
         return newCache;
       });
       return { path: relativePath, content: null, exists: false };
-    } catch {
+    } catch (e: any) {
+      console.error('[TeamFilePersistence] readFile error:', { path: relativePath, error: e?.message ?? String(e) });
       this.fileCache.update(cache => {
         const newCache = new Map(cache);
         newCache.delete(relativePath);
@@ -475,8 +695,14 @@ export class TeamFilePersistenceService {
   }
 
   async scanDirectory(relativePath: string): Promise<DirectoryScanResult> {
+    console.log('[TeamFilePersistence] scanDirectory called:', relativePath);
     try {
       const diskResult = await this.bridge.list(relativePath, 'vault');
+      console.log('[TeamFilePersistence] bridge.list result:', { 
+        path: relativePath, 
+        ok: diskResult.ok, 
+        entriesCount: diskResult.entries?.length 
+      });
       if (diskResult.ok && diskResult.entries) {
         const files: string[] = [];
         for (const entry of diskResult.entries) {
@@ -492,10 +718,13 @@ export class TeamFilePersistenceService {
             }
           }
         }
+        console.log('[TeamFilePersistence] scanDirectory result:', { path: relativePath, fileCount: files.length, files: files.slice(0, 10) });
         return { path: relativePath, files };
       }
+      console.log('[TeamFilePersistence] scanDirectory failed or empty:', { path: relativePath, ok: diskResult.ok });
       return { path: relativePath, files: [] };
     } catch (e: any) {
+      console.error('[TeamFilePersistence] scanDirectory error:', { path: relativePath, error: e?.message ?? String(e) });
       return { path: relativePath, files: [], error: e?.message ?? String(e) };
     }
   }

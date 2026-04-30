@@ -804,24 +804,28 @@ ${userFeedback}
     lines.push('');
 
     lines.push('🔄 **阶段编排**：');
-    s.stages.forEach((stage, i) => {
-      const modeLabel = stage.mode === 'subagent' ? '独立执行' : '协作执行';
-      const parallelLabel = stage.parallel ? '（并行）' : '';
-      lines.push(`  ${i + 1}. **${stage.name}** [${modeLabel}${parallelLabel}]`);
-      lines.push(`     角色：${stage.roles.join(', ')}`);
-      if (stage.trigger) lines.push(`     触发：${stage.trigger}`);
-      if (stage.output) lines.push(`     产出：${stage.output}`);
-      if (stage.handoffCondition) lines.push(`     切换条件：${stage.handoffCondition}`);
-      if (stage.completionCondition) lines.push(`     完成条件：${stage.completionCondition}`);
-    });
+    if (Array.isArray(s.stages) && s.stages.length > 0) {
+      s.stages.forEach((stage, i) => {
+        const modeLabel = stage.mode === 'subagent' ? '独立执行' : '协作执行';
+        const parallelLabel = stage.parallel ? '（并行）' : '';
+        lines.push(`  ${i + 1}. **${stage.name}** [${modeLabel}${parallelLabel}]`);
+        lines.push(`     角色：${Array.isArray(stage.roles) ? stage.roles.join(', ') : '未指定'}`);
+        if (stage.trigger) lines.push(`     触发：${stage.trigger}`);
+        if (stage.output) lines.push(`     产出：${stage.output}`);
+        if (stage.handoffCondition) lines.push(`     切换条件：${stage.handoffCondition}`);
+        if (stage.completionCondition) lines.push(`     完成条件：${stage.completionCondition}`);
+      });
+    } else {
+      lines.push('  （无阶段定义）');
+    }
 
-    if (s.handoffRules && s.handoffRules.length > 0) {
+    if (Array.isArray(s.handoffRules) && s.handoffRules.length > 0) {
       lines.push('');
       lines.push('🔀 **切换规则**：');
       s.handoffRules.forEach(r => lines.push(`  - ${r}`));
     }
 
-    if (s.completionCriteria && s.completionCriteria.length > 0) {
+    if (Array.isArray(s.completionCriteria) && s.completionCriteria.length > 0) {
       lines.push('');
       lines.push('✅ **完成标准**：');
       s.completionCriteria.forEach(c => lines.push(`  - ${c}`));

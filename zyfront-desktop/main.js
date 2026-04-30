@@ -898,8 +898,10 @@ function registerIpcHandlers() {
   ipcMain.handle('zytrader:fs:list', async (_event, dir = '.', opts = {}) => {
     const scope = opts?.scope === 'vault' ? 'vault' : 'workspace'
     const abs = resolveScopedPath(dir, scope)
+    console.log('[fs:list] dir:', dir, 'scope:', scope, 'abs:', abs, 'vaultRoot:', RUNTIME.vaultRoot)
     try {
       const entries = await fs.readdir(abs, { withFileTypes: true })
+      console.log('[fs:list] entries:', entries.length, 'files/dirs')
       return {
         ok: true,
         dir,

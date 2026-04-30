@@ -16,6 +16,7 @@ export class TeamRunCommandService {
   private readonly eventBus = inject(MultiAgentEventBusService);
 
   async executeStruct(structName: string, task: string): Promise<CommandResult<TeamRuntimeState>> {
+    await this.structRegistry.refreshFromFiles();
     const struct = this.structRegistry.getByName(structName) || this.structRegistry.get(structName);
     if (!struct) {
       return {
@@ -42,6 +43,7 @@ export class TeamRunCommandService {
   }
 
   async executeStructWithStateMachine(structName: string, task: string): Promise<CommandResult> {
+    await this.structRegistry.refreshFromFiles();
     const struct = this.structRegistry.getByName(structName) || this.structRegistry.get(structName);
     if (!struct) {
       return {

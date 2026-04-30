@@ -167,7 +167,17 @@ export class StructRegistryService {
   }
 
   getByName(name: string): StructDefinition | undefined {
-    return this.structList().find(s => s.name === name);
+    const byName = this.structList().find(s => s.name === name);
+    if (byName) return byName;
+
+    const bySlug = this.structs().get(name);
+    if (bySlug) return bySlug;
+
+    const lowerName = name.toLowerCase();
+    return this.structList().find(s =>
+      s.name.toLowerCase() === lowerName ||
+      s.slug.toLowerCase() === lowerName
+    );
   }
 
   list(): StructDefinition[] {
@@ -190,19 +200,21 @@ export class StructRegistryService {
     return this.structList().some(s => s.name === name);
   }
 
-  validateRoles(roles: string[]): { valid: boolean; missing: string[] } {
+  validateRoles(roles: string[]): { valid: boolean; missing: string[]; registeredCount: number } {
     const registeredRoles = this.roleRegistry.roleList();
     const missing: string[] = [];
 
     for (const r of roles) {
-      const exactMatch = this.roleRegistry.exists(r) || this.roleRegistry.existsByName(r);
-      if (exactMatch) continue;
+      if (this.roleRegistry.existsBySlugOrName(r)) continue;
+
+      const rLower = r.toLowerCase();
+      const slugMatch = registeredRoles.some(role => role.slug.toLowerCase() === rLower);
+      if (slugMatch) continue;
 
       const semanticMatch = registeredRoles.some(role => {
         const nameLower = role.name.toLowerCase();
         const descLower = (role.description ?? '').toLowerCase();
         const slugLower = role.slug.toLowerCase();
-        const rLower = r.toLowerCase();
         return (
           nameLower.includes(rLower) ||
           rLower.includes(nameLower) ||
@@ -218,7 +230,7 @@ export class StructRegistryService {
       }
     }
 
-    return { valid: missing.length === 0, missing };
+    return { valid: missing.length === 0, missing, registeredCount: registeredRoles.length };
   }
 
   generateTemplate(
@@ -295,7 +307,7 @@ export class StructRegistryService {
       errors.push('协作结构必须至少包含一个阶段');
     }
 
-    if (struct.stages) {
+    if (Array.isArray(struct.stages)) {
       struct.stages.forEach((stage, i) => {
         if (!stage.name) errors.push(`阶段 ${i + 1} 缺少名称`);
         if (!stage.mode) errors.push(`阶段 ${i + 1} 缺少模式`);

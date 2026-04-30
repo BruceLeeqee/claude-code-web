@@ -39,6 +39,12 @@ export interface AppSettings {
   theme: AppTheme;
   /** 按 provider:model 持久化的模型专属配置 */
   modelProfiles?: Record<string, Pick<AppSettings, 'apiKey' | 'proxy'>>;
+  /** 多提供商 API Keys */
+  api_keys?: {
+    MiniMax?: { api_key: string };
+    DeepSeek?: { api_key: string };
+    [key: string]: { api_key: string } | undefined;
+  };
 }
 
 const STORAGE_KEY = 'claude-web:settings:v1';

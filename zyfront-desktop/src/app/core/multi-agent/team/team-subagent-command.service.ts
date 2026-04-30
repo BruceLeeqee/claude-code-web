@@ -9,6 +9,8 @@ import { MultiAgentEventBusService } from '../multi-agent.event-bus.service';
 import { EVENT_TYPES } from '../multi-agent.events';
 import { ParallelExecutionService } from '../services/parallel-execution.service';
 import { AgentFactoryService } from '../services/agent-factory.service';
+import { TeamLLMExecutionService } from './team-llm-execution.service';
+import { AppSettingsService } from '../../app-settings.service';
 
 export interface SubagentResult {
   roleName: string;
@@ -17,6 +19,10 @@ export interface SubagentResult {
   files: string[];
   durationMs: number;
   error?: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+  };
 }
 
 @Injectable({ providedIn: 'root' })
@@ -28,6 +34,8 @@ export class TeamSubagentCommandService {
   private readonly eventBus = inject(MultiAgentEventBusService);
   private readonly parallel = inject(ParallelExecutionService);
   private readonly factory = inject(AgentFactoryService);
+  private readonly llmExecutor = inject(TeamLLMExecutionService);
+  private readonly appSettings = inject(AppSettingsService);
 
   private readonly results = signal<SubagentResult[]>([]);
   private readonly isRunning = signal(false);
@@ -38,6 +46,7 @@ export class TeamSubagentCommandService {
   async execute(roleNames: string[], task: string): Promise<CommandResult<SubagentResult[]>> {
     this.isRunning.set(true);
     this.results.set([]);
+    await this.registry.refreshFromFiles();
 
     const teamId = `subagent-${uuidv4()}`;
     const now = Date.now();
@@ -135,21 +144,38 @@ export class TeamSubagentCommandService {
       const startTime = Date.now();
 
       try {
-        const summary = await this.simulateSubagentExecution(role, task, teamId);
+        const result = await this.executeWithLLM(role, task, teamId);
         const durationMs = Date.now() - startTime;
 
-        this.taskBoard.completeTask(teamId,
-          this.taskBoard.taskList().find(t => t.assignee === role.name)?.id || '',
-          summary
-        );
+        if (result.success) {
+          this.taskBoard.completeTask(teamId,
+            this.taskBoard.taskList().find(t => t.assignee === role.name)?.id || '',
+            result.content
+          );
 
-        return {
-          roleName: role.name,
-          success: true,
-          summary,
-          files: [],
-          durationMs,
-        };
+          return {
+            roleName: role.name,
+            success: true,
+            summary: result.content,
+            files: [],
+            durationMs,
+            usage: result.usage,
+          };
+        } else {
+          this.taskBoard.failTask(teamId,
+            this.taskBoard.taskList().find(t => t.assignee === role.name)?.id || '',
+            result.error || 'Unknown error'
+          );
+
+          return {
+            roleName: role.name,
+            success: false,
+            summary: `执行失败：${result.error}`,
+            files: [],
+            durationMs,
+            error: result.error,
+          };
+        }
       } catch (error) {
         const durationMs = Date.now() - startTime;
 
@@ -172,10 +198,63 @@ export class TeamSubagentCommandService {
     return Promise.all(promises);
   }
 
-  private async simulateSubagentExecution(role: RoleDefinition, task: string, teamId: string): Promise<string> {
+  async executeWithLLM(role: RoleDefinition, task: string, teamId: string): Promise<{
+    success: boolean;
+    content: string;
+    usage?: { inputTokens: number; outputTokens: number };
+    error?: string;
+  }> {
+    const settings = this.appSettings.value;
+    
+    if (!settings.apiKey) {
+      return this.simulateExecution(role, task);
+    }
+
+    const result = await this.llmExecutor.executeForRole(role, task, teamId, {
+      stream: true,
+      onDelta: (text) => {
+        this.eventBus.emit({
+          type: EVENT_TYPES.AGENT_OUTPUT,
+          sessionId: teamId,
+          source: 'teammate',
+          payload: {
+            agentId: role.slug,
+            output: text,
+          },
+        });
+      },
+      onThinkingDelta: (text) => {
+        this.eventBus.emit({
+          type: EVENT_TYPES.AGENT_THINKING,
+          sessionId: teamId,
+          source: 'teammate',
+          payload: {
+            agentId: role.slug,
+            thinking: text,
+          },
+        });
+      },
+    });
+
+    return {
+      success: result.success,
+      content: result.content,
+      usage: result.usage,
+      error: result.error,
+    };
+  }
+
+  private async simulateExecution(role: RoleDefinition, task: string): Promise<{
+    success: boolean;
+    content: string;
+    error?: string;
+  }> {
     return new Promise((resolve) => {
       setTimeout(() => {
-        resolve(`[${role.name}] 已完成任务：${task}。角色类型：${role.type}，使用模型：${role.model || 'default'}`);
+        resolve({
+          success: true,
+          content: `[${role.name}] 已完成任务：${task}\n\n角色类型：${role.type}\n使用模型：${role.model || 'default'}\n\n注意：未配置 API Key，此为模拟输出。请在设置中配置 API Key 以启用真正的大模型调用。`,
+        });
       }, 100);
     });
   }

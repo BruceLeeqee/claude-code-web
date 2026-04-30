@@ -1,13 +1,12 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { v4 as uuidv4 } from 'uuid';
-import type { TeamRunMode, TeamStageDefinition, TeamRuntimeState, TeamLogEntry, CommandResult } from './team.types';
+import type { TeamRunMode, TeamStageDefinition, TeamRuntimeState, TeamLogEntry, CommandResult, RoleDefinition } from './team.types';
 import { StructRegistryService } from './struct-registry.service';
 import { RoleRegistryService } from './role-registry.service';
 import { TeamRuntimeService } from './team-runtime.service';
 import { TeamTaskBoardService } from './team-task-board.service';
 import { TeamMailboxService } from './team-mailbox.service';
-import { TeamSubagentCommandService, SubagentResult } from './team-subagent-command.service';
-import { TeamAgentCommandService } from './team-agent-command.service';
+import { TeamAgentManager, TeamAgent, AgentTaskResult } from './team-agent-manager.service';
 import { TeamFilePersistenceService } from './team-file-persistence.service';
 import { MultiAgentEventBusService } from '../multi-agent.event-bus.service';
 import { EVENT_TYPES } from '../multi-agent.events';
@@ -21,6 +20,13 @@ export interface OrchestrationProgress {
   currentStageMode: TeamRunMode;
   status: 'idle' | 'running' | 'paused' | 'completed' | 'failed';
   stageResults: StageResult[];
+  agents: AgentInfo[];
+}
+
+export interface AgentInfo {
+  agentId: string;
+  roleName: string;
+  status: string;
 }
 
 export interface StageResult {
@@ -29,7 +35,7 @@ export interface StageResult {
   success: boolean;
   summary: string;
   durationMs: number;
-  subagentResults?: SubagentResult[];
+  agentResults?: AgentTaskResult[];
   error?: string;
 }
 
@@ -40,8 +46,7 @@ export class TeamOrchestrationService {
   private readonly roleRegistry = inject(RoleRegistryService);
   private readonly taskBoard = inject(TeamTaskBoardService);
   private readonly mailbox = inject(TeamMailboxService);
-  private readonly subagentCmd = inject(TeamSubagentCommandService);
-  private readonly agentCmd = inject(TeamAgentCommandService);
+  private readonly agentManager = inject(TeamAgentManager);
   private readonly persistence = inject(TeamFilePersistenceService);
   private readonly eventBus = inject(MultiAgentEventBusService);
 
@@ -53,28 +58,77 @@ export class TeamOrchestrationService {
   });
 
   async executeStruct(structName: string, task: string): Promise<CommandResult<TeamRuntimeState>> {
+    console.log('[TeamOrchestration] executeStruct called:', { structName, task });
+    
+    const structRefreshResult = await this.structRegistry.refreshFromFiles();
+    const roleRefreshResult = await this.roleRegistry.refreshFromFiles();
+    
+    console.log('[TeamOrchestration] File refresh results:', { 
+      structCount: structRefreshResult, 
+      roleCount: roleRefreshResult 
+    });
+    
+    const allStructs = this.structRegistry.list();
+    console.log('[TeamOrchestration] Available structs:', allStructs.map(s => ({ name: s.name, slug: s.slug })));
+    
+    const allRoles = this.roleRegistry.list();
+    console.log('[TeamOrchestration] Available roles:', allRoles.map(r => ({ name: r.name, slug: r.slug })));
+    
     const struct = this.structRegistry.getByName(structName) || this.structRegistry.get(structName);
+    console.log('[TeamOrchestration] Struct lookup result:', struct ? { name: struct.name, stages: struct.stages?.length, roles: struct.roles } : null);
+    
     if (!struct) {
       return {
         ok: false,
         command: '/team run struct',
-        message: `协作结构 "${structName}" 不存在`,
+        message: `协作结构 "${structName}" 不存在（可用结构：${allStructs.map(s => s.slug).join(', ') || '无'}）`,
         errors: [`协作结构 "${structName}" 不存在`],
       };
     }
 
-    const roleValidation = this.structRegistry.validateRoles(struct.roles);
-    if (!roleValidation.valid) {
+    if (!Array.isArray(struct.stages) || struct.stages.length === 0) {
       return {
         ok: false,
         command: '/team run struct',
-        message: `以下角色未定义：${roleValidation.missing.join(', ')}`,
+        message: `协作结构 "${structName}" 没有定义任何阶段`,
+        errors: [`协作结构必须至少包含一个阶段`],
+      };
+    }
+
+    const roleValidation = this.structRegistry.validateRoles(struct.roles);
+    console.log('[TeamOrchestration] Role validation result:', roleValidation);
+    
+    if (!roleValidation.valid) {
+      const registeredSlugs = this.roleRegistry.roleList().map(r => r.slug);
+      return {
+        ok: false,
+        command: '/team run struct',
+        message: `以下角色未定义：${roleValidation.missing.join(', ')}（已注册角色：${registeredSlugs.join(', ') || '无'}）`,
         errors: [`未定义角色：${roleValidation.missing.join(', ')}`],
       };
     }
 
     try {
+      console.log('[TeamOrchestration] Creating team...');
       const team = this.runtime.createTeam(structName, task);
+      console.log('[TeamOrchestration] Team created:', { teamId: team.id, structName });
+
+      console.log('[TeamOrchestration] Resolving stage roles:', struct.roles);
+      const allRoles = await this.resolveStageRoles(struct.roles);
+      console.log('[TeamOrchestration] Resolved roles:', allRoles.map(r => ({ name: r.name, slug: r.slug })));
+      
+      console.log('[TeamOrchestration] Creating agents for roles...');
+      const agents = await this.agentManager.createAgentsForRoles(allRoles, team.id, task);
+      console.log('[TeamOrchestration] Agents created:', agents.length, agents.map(a => a.roleDefinition.name));
+
+      this.addRuntimeLog(team.id, 'info', 'orchestration', 
+        `创建了 ${agents.length} 个 Agent：${agents.map(a => a.roleDefinition.name).join(', ')}`);
+
+      const agentInfos: AgentInfo[] = agents.map(a => ({
+        agentId: a.descriptor.agentId,
+        roleName: a.roleDefinition.name,
+        status: 'running',
+      }));
 
       const orchestrationProgress: OrchestrationProgress = {
         teamId: team.id,
@@ -85,7 +139,13 @@ export class TeamOrchestrationService {
         currentStageMode: struct.stages[0]?.mode || 'subagent',
         status: 'running',
         stageResults: [],
+        agents: agentInfos,
       };
+
+      console.log('[TeamOrchestration] Starting stage execution:', { 
+        totalStages: struct.stages.length,
+        stages: struct.stages.map(s => ({ name: s.name, mode: s.mode, roles: s.roles }))
+      });
 
       this.progress.update(map => {
         const newMap = new Map(map);
@@ -97,6 +157,7 @@ export class TeamOrchestrationService {
 
       for (let i = 0; i < struct.stages.length; i++) {
         const stage = struct.stages[i];
+        console.log(`[TeamOrchestration] Executing stage ${i + 1}/${struct.stages.length}:`, stage.name);
 
         if (i > 0) {
           this.runtime.advanceStage(team.id);
@@ -109,6 +170,11 @@ export class TeamOrchestrationService {
         });
 
         const stageResult = await this.executeStage(team.id, stage, task);
+        console.log(`[TeamOrchestration] Stage "${stage.name}" result:`, { 
+          success: stageResult.success, 
+          summary: stageResult.summary,
+          durationMs: stageResult.durationMs 
+        });
 
         this.updateProgressStageResult(team.id, stageResult);
 
@@ -157,6 +223,8 @@ export class TeamOrchestrationService {
         }
       }
 
+      await this.agentManager.terminateTeam(team.id);
+
       return {
         ok: true,
         command: '/team run struct',
@@ -179,35 +247,41 @@ export class TeamOrchestrationService {
     this.addRuntimeLog(teamId, 'info', 'orchestration', `开始执行阶段 "${stage.name}"，模式：${stage.mode}`);
 
     try {
+      const teamAgents = this.agentManager.getAgentsByTeam(teamId);
+      const stageAgents = teamAgents.filter(a => 
+        stage.roles.includes(a.roleDefinition.name) || 
+        stage.roles.includes(a.roleDefinition.slug)
+      );
+
       if (stage.mode === 'subagent') {
-        const result = await this.subagentCmd.execute(stage.roles, task);
+        const result = await this.executeSubagentStage(teamId, stage, stageAgents, task);
         const durationMs = Date.now() - startTime;
 
         return {
           stageName: stage.name,
           mode: stage.mode,
-          success: result.ok,
-          summary: result.message,
+          success: result.success,
+          summary: result.summary,
           durationMs,
-          subagentResults: result.data,
+          agentResults: result.agentResults,
         };
       }
 
       if (stage.mode === 'agent-team') {
-        const result = await this.agentCmd.execute(stage.roles, task);
+        const result = await this.executeAgentTeamStage(teamId, stage, stageAgents, task);
         const durationMs = Date.now() - startTime;
 
         return {
           stageName: stage.name,
           mode: stage.mode,
-          success: result.ok,
-          summary: result.message,
+          success: result.success,
+          summary: result.summary,
           durationMs,
         };
       }
 
       if (stage.mode === 'hybrid') {
-        const result = await this.executeHybridStage(teamId, stage, task);
+        const result = await this.executeHybridStage(teamId, stage, stageAgents, task);
         const durationMs = Date.now() - startTime;
 
         return {
@@ -239,14 +313,167 @@ export class TeamOrchestrationService {
     }
   }
 
-  private async executeHybridStage(teamId: string, stage: TeamStageDefinition, task: string): Promise<CommandResult> {
+  private async resolveStageRoles(roleNames: string[]): Promise<RoleDefinition[]> {
+    await this.roleRegistry.refreshFromFiles();
+    const resolved: RoleDefinition[] = [];
+    for (const name of roleNames) {
+      const role = this.roleRegistry.getByName(name) || this.roleRegistry.get(name);
+      if (role) {
+        resolved.push(role);
+      }
+    }
+    return resolved;
+  }
+
+  private async executeSubagentStage(
+    teamId: string,
+    stage: TeamStageDefinition,
+    stageAgents: TeamAgent[],
+    task: string,
+  ): Promise<{ success: boolean; summary: string; agentResults?: AgentTaskResult[] }> {
+    console.log('[TeamOrchestration] executeSubagentStage:', { 
+      teamId, 
+      stageName: stage.name, 
+      agentsCount: stageAgents.length,
+      parallel: stage.parallel !== false 
+    });
+    
+    if (stageAgents.length === 0) {
+      console.warn('[TeamOrchestration] No agents for stage:', stage.name);
+      return { success: false, summary: `阶段 "${stage.name}" 没有可用的 Agent` };
+    }
+
+    const team = this.runtime.getTeam(teamId);
+    if (!team) {
+      console.error('[TeamOrchestration] Team not found:', teamId);
+      return { success: false, summary: `团队 ${teamId} 不存在` };
+    }
+
+    console.log('[TeamOrchestration] Creating tasks for agents:', stageAgents.map(a => a.roleDefinition.name));
+    for (const agent of stageAgents) {
+      const taskId = this.taskBoard.createTask(teamId, `${agent.roleDefinition.name}: ${task}`, agent.roleDefinition.name, stage.name);
+
+      this.mailbox.sendMessage(
+        teamId,
+        team.leadAgentId,
+        agent.descriptor.agentId,
+        `阶段 "${stage.name}" 任务：${task}。你的职责：${agent.roleDefinition.description}`,
+        'normal'
+      );
+    }
+
+    const parallel = stage.parallel !== false;
+    let results: AgentTaskResult[];
+
+    const executionContext = {
+      teamId,
+      stageName: stage.name,
+      task,
+    };
+
+    console.log('[TeamOrchestration] Executing agents:', { parallel, agentsCount: stageAgents.length });
+    if (parallel && stageAgents.length > 1) {
+      results = await this.agentManager.executeParallel(stageAgents, executionContext);
+    } else {
+      results = await this.agentManager.executeSequential(stageAgents, executionContext);
+    }
+    
+    console.log('[TeamOrchestration] Agent execution results:', results.map(r => ({ 
+      roleName: r.roleName, 
+      success: r.success, 
+      contentLength: r.content.length,
+      durationMs: r.durationMs 
+    })));
+
+    for (const result of results) {
+      const taskEntry = this.taskBoard.getTasksByAssignee(teamId, result.roleName)
+        .find((t: import('./team.types').TeamTask) => t.status === 'in_progress');
+      
+      if (taskEntry) {
+        if (result.success) {
+          this.taskBoard.completeTask(teamId, taskEntry.id, result.content);
+        } else {
+          this.taskBoard.failTask(teamId, taskEntry.id, result.error || 'Unknown error');
+        }
+      }
+    }
+
+    const allSuccess = results.every(r => r.success);
+    const failedCount = results.filter(r => !r.success).length;
+
+    this.addRuntimeLog(teamId, allSuccess ? 'info' : 'warn', 'orchestration',
+      `阶段 "${stage.name}" Agent执行${allSuccess ? '完成' : '部分失败'}：${results.length - failedCount}/${results.length} 成功`);
+
+    return {
+      success: allSuccess,
+      summary: allSuccess
+        ? `${stageAgents.length} 个 Agent 全部执行完成`
+        : `${failedCount}/${stageAgents.length} 个 Agent 执行失败`,
+      agentResults: results,
+    };
+  }
+
+  private async executeAgentTeamStage(
+    teamId: string,
+    stage: TeamStageDefinition,
+    stageAgents: TeamAgent[],
+    task: string,
+  ): Promise<{ success: boolean; summary: string }> {
+    if (stageAgents.length === 0) {
+      return { success: false, summary: `阶段 "${stage.name}" 没有可用的 Agent` };
+    }
+
+    const team = this.runtime.getTeam(teamId);
+    if (!team) {
+      return { success: false, summary: `团队 ${teamId} 不存在` };
+    }
+
+    for (const agent of stageAgents) {
+      this.mailbox.sendMessage(
+        teamId,
+        team.leadAgentId,
+        agent.descriptor.agentId,
+        `阶段 "${stage.name}" 协作任务：${task}。你的职责：${agent.roleDefinition.description}`,
+        'normal'
+      );
+      this.taskBoard.createTask(teamId, `${agent.roleDefinition.name}: ${task}`, agent.roleDefinition.name, stage.name);
+    }
+
+    const results = await this.agentManager.executeParallel(stageAgents, {
+      teamId,
+      stageName: stage.name,
+      task,
+    });
+
+    const allSuccess = results.every(r => r.success);
+
+    this.addRuntimeLog(teamId, 'info', 'orchestration',
+      `阶段 "${stage.name}" agent-team协作${allSuccess ? '完成' : '部分失败'}，${stageAgents.length} 个成员`);
+
+    return {
+      success: allSuccess,
+      summary: `团队协作阶段 "${stage.name}" ${allSuccess ? '完成' : '部分失败'}，${stageAgents.length} 个成员`,
+    };
+  }
+
+  private async executeHybridStage(
+    teamId: string, 
+    stage: TeamStageDefinition, 
+    stageAgents: TeamAgent[], 
+    task: string
+  ): Promise<CommandResult> {
     this.addRuntimeLog(teamId, 'info', 'orchestration', `hybrid阶段：先subagent并行，再agent-team协作汇总`);
 
-    const subagentResult = await this.subagentCmd.execute(stage.roles, task);
+    const subagentResult = await this.executeSubagentStage(teamId, stage, stageAgents, task);
 
-    if (!subagentResult.ok) {
+    if (!subagentResult.success) {
       this.addRuntimeLog(teamId, 'warn', 'orchestration', `hybrid阶段subagent部分失败，升级到agent-team协作`);
-      return this.agentCmd.execute(stage.roles, `协作排查：${task}`);
+      const escalationResult = await this.executeAgentTeamStage(teamId, stage, stageAgents, `协作排查：${task}`);
+      return {
+        ok: escalationResult.success,
+        command: '/team run struct',
+        message: escalationResult.summary,
+      };
     }
 
     const team = this.runtime.getTeam(teamId);
@@ -259,15 +486,12 @@ export class TeamOrchestrationService {
       );
     }
 
-    const agentResult = await this.agentCmd.execute(stage.roles, `汇总并验证：${task}`);
+    const agentResult = await this.executeAgentTeamStage(teamId, stage, stageAgents, `汇总并验证：${task}`);
 
     return {
-      ok: agentResult.ok,
-      command: agentResult.command,
-      message: `hybrid完成：subagent=${subagentResult.message}, agent-team=${agentResult.message}`,
-      data: agentResult.data,
-      errors: agentResult.errors,
-      createdFiles: [...(subagentResult.createdFiles || []), ...(agentResult.createdFiles || [])],
+      ok: agentResult.success,
+      command: '/team run struct',
+      message: `hybrid完成：subagent=${subagentResult.summary}, agent-team=${agentResult.summary}`,
     };
   }
 
@@ -277,7 +501,13 @@ export class TeamOrchestrationService {
     this.addRuntimeLog(teamId, 'info', 'orchestration', `升级到协作模式，角色：${failedStage.roles.join(', ')}`);
 
     try {
-      const result = await this.agentCmd.execute(failedStage.roles, `协作排查：${task}`);
+      const teamAgents = this.agentManager.getAgentsByTeam(teamId);
+      const stageAgents = teamAgents.filter(a => 
+        failedStage.roles.includes(a.roleDefinition.name) || 
+        failedStage.roles.includes(a.roleDefinition.slug)
+      );
+
+      const result = await this.executeAgentTeamStage(teamId, failedStage, stageAgents, `协作排查：${task}`);
 
       const team = this.runtime.getTeam(teamId);
       if (team) {
@@ -292,8 +522,8 @@ export class TeamOrchestrationService {
       return {
         stageName: `${failedStage.name}-escalation`,
         mode: 'agent-team',
-        success: result.ok,
-        summary: result.message,
+        success: result.success,
+        summary: result.summary,
         durationMs: Date.now() - startTime,
       };
     } catch (error) {

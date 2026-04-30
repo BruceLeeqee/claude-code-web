@@ -22,6 +22,7 @@ export class TeamAgentCommandService {
 
   async execute(roleNames: string[], task: string): Promise<CommandResult<TeamRuntimeState>> {
     this.isRunning.set(true);
+    await this.registry.refreshFromFiles();
 
     const resolvedRoles: RoleDefinition[] = [];
     const missingRoles: string[] = [];

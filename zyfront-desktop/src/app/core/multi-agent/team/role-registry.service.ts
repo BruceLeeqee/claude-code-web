@@ -149,7 +149,31 @@ export class RoleRegistryService {
   }
 
   getByName(name: string): RoleDefinition | undefined {
-    return this.roleList().find(r => r.name === name);
+    const byName = this.roleList().find(r => r.name === name);
+    if (byName) return byName;
+
+    const bySlug = this.roles().get(name);
+    if (bySlug) return bySlug;
+
+    const lowerName = name.toLowerCase();
+    return this.roleList().find(r =>
+      r.name.toLowerCase() === lowerName ||
+      r.slug.toLowerCase() === lowerName
+    );
+  }
+
+  findBySlugOrName(identifier: string): RoleDefinition | undefined {
+    const bySlug = this.roles().get(identifier);
+    if (bySlug) return bySlug;
+
+    const byName = this.roleList().find(r => r.name === identifier);
+    if (byName) return byName;
+
+    const lowerId = identifier.toLowerCase();
+    return this.roleList().find(r =>
+      r.slug.toLowerCase() === lowerId ||
+      r.name.toLowerCase() === lowerId
+    );
   }
 
   list(): RoleDefinition[] {
@@ -170,6 +194,10 @@ export class RoleRegistryService {
 
   existsByName(name: string): boolean {
     return this.roleList().some(r => r.name === name);
+  }
+
+  existsBySlugOrName(identifier: string): boolean {
+    return !!this.findBySlugOrName(identifier);
   }
 
   generateTemplate(name: string, description: string, type: RoleDefinition['type'] = 'agent-team', model: string = 'MiniMax-M2.7'): string {

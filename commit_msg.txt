@@ -1,25 +1,26 @@
-feat(workbench): 增强工作台指令路由与多智能体团队协作
+feat(zyfront-desktop/multi-agent): 扩展 Team 模块能力，新增子代理与 LLM 执行服务
 
 【背景】
-- 工作台指令系统需要支持更复杂的团队协作场景
-- 多智能体模块需要更灵活的 struct 命令注册机制
+- Team 模块原有能力不足以支撑复杂的多代理协作场景
+- 需要支持子代理生命周期管理和 LLM 执行隔离
 
 【本次改动】
-- team-struct-command.service.ts 新增结构化命令解析与路由（+1049行）
-- workbench.page.ts 增强工作台页面交互逻辑（+269行）
-- multi-agent-sidebar.component.ts 优化侧边栏组件（+156行变更）
-- 新增 struct-registry.service.ts 结构注册服务
-- team-command-router.service.ts 重构命令路由分发
-- agent-memory.service.ts / session-memory.service.ts 优化记忆服务
-- command-executor.service.ts / directive-registry.ts 完善指令执行链
+- 新增 team-agent-manager.service.ts 管理子代理生命周期
+- 新增 team-llm-execution.service.ts 提供独立的 LLM 执行服务
+- 扩展 team-orchestration.service.ts 协调能力（+290行）
+- 扩展 team-file-persistence.service.ts 持久化能力（+393行）
+- team-subagent-command.service.ts 新增子代理命令支持（+107行）
+- 优化 role-registry.service.ts 和 struct-registry.service.ts 注册机制
+- 更新 models.page.ts 原型模块页面
 
 【影响范围】
-- workbench 模块：指令执行与工作台交互
-- multi-agent 模块：团队协作与结构化命令
-- memory 模块：会话与提取服务
+- zyfront-desktop multi-agent team 模块
+- team-agent-manager、team-llm-execution 新服务
 
 【验证】
-- 本地编译通过，Angular 服务注入正常
+- 本地编译通过
+- 相关 spec 测试文件已同步更新
 
 【风险与回滚】
-- 中等风险，涉及多模块联动，建议通过 git bisect 定位问题
+- 中等风险，涉及多个核心服务，建议发布后观察稳定性
+- 回滚需同时恢复多个文件的旧版本

@@ -112,16 +112,21 @@ export class TeamRuntimeService {
 
     this.persistence.writeRuntime(runtime);
 
-    struct.stages[0]?.roles.forEach(roleName => {
-      const member = members.find(m => m.roleName === roleName);
-      if (member) {
-        this.updateMemberStatus(teamId, member.agentId, 'active');
-      }
-    });
+    const firstStageRoles = struct.stages[0]?.roles;
+    if (Array.isArray(firstStageRoles)) {
+      firstStageRoles.forEach(roleName => {
+        const member = members.find(m => m.roleName === roleName);
+        if (member) {
+          this.updateMemberStatus(teamId, member.agentId, 'active');
+        }
+      });
+    }
 
-    struct.roles.forEach(roleName => {
-      this.taskBoard.createTask(teamId, `${roleName}: ${task}`, roleName, firstStage?.name);
-    });
+    if (Array.isArray(struct.roles)) {
+      struct.roles.forEach(roleName => {
+        this.taskBoard.createTask(teamId, `${roleName}: ${task}`, roleName, firstStage?.name);
+      });
+    }
 
     this.addLog(teamId, 'info', 'runtime', `初始化阶段：${firstStage?.name || '无阶段'}`);
 
@@ -208,12 +213,14 @@ export class TeamRuntimeService {
       return newMap;
     });
 
-    nextStage.roles.forEach(roleName => {
-      const member = updated.members.find(m => m.roleName === roleName);
-      if (member && member.status !== 'active') {
-        this.updateMemberStatus(teamId, member.agentId, 'active');
-      }
-    });
+    if (Array.isArray(nextStage.roles)) {
+      nextStage.roles.forEach(roleName => {
+        const member = updated.members.find(m => m.roleName === roleName);
+        if (member && member.status !== 'active') {
+          this.updateMemberStatus(teamId, member.agentId, 'active');
+        }
+      });
+    }
 
     this.addLog(teamId, 'info', 'runtime', `阶段切换：${struct.stages[previousIndex].name} → ${nextStage.name}`);
 
