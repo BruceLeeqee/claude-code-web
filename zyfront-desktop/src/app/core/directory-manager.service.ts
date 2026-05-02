@@ -23,6 +23,7 @@ const DEFAULT_DIRECTORY_KEYS: Record<string, string> = {
   'agent-memory-index': '02-AGENT-MEMORY/07-Meta',
   'agent-skills': '03-AGENT-TOOLS/01-Skills',
   'agent-plugins': '03-AGENT-TOOLS/02-Plugins',
+  'agent-docs': '03-AGENT-TOOLS/08-Docs',
   projects: '04-PROJECTS',
   resources: '05-RESOURCES',
   system: '06-SYSTEM',

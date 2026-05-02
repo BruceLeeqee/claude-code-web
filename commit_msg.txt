@@ -1,26 +1,25 @@
-feat(zyfront-desktop/multi-agent): 扩展 Team 模块能力，新增子代理与 LLM 执行服务
+feat(multi-agent): 完善多代理团队协作与 Workbench 页面增强
 
 【背景】
-- Team 模块原有能力不足以支撑复杂的多代理协作场景
-- 需要支持子代理生命周期管理和 LLM 执行隔离
+- 多代理系统需要更完善的侧边栏和团队协作支持
+- Workbench 页面需要更丰富的交互功能
 
 【本次改动】
-- 新增 team-agent-manager.service.ts 管理子代理生命周期
-- 新增 team-llm-execution.service.ts 提供独立的 LLM 执行服务
-- 扩展 team-orchestration.service.ts 协调能力（+290行）
-- 扩展 team-file-persistence.service.ts 持久化能力（+393行）
-- team-subagent-command.service.ts 新增子代理命令支持（+107行）
-- 优化 role-registry.service.ts 和 struct-registry.service.ts 注册机制
-- 更新 models.page.ts 原型模块页面
+- 新增 multi-agent-sidebar.component.ts 侧边栏组件
+- 扩展 team-orchestration.service.ts 团队编排能力（+151 行）
+- 新增 team-logger.service.ts 日志服务（+90 行）
+- 新增 team-command-router.service.ts 命令路由（+40 行）
+- 增强 team-mailbox.service.ts 邮箱服务
+- 增强 team-agent-manager.service.ts 代理管理
+- 完善 workbench.page.ts 工作台页面功能（+233 行）
+- 删除过时的 Roles 文件（backend-developer, frontend-developer, ui-designer）
 
 【影响范围】
-- zyfront-desktop multi-agent team 模块
-- team-agent-manager、team-llm-execution 新服务
+- zyfront-desktop multi-agent 模块
+- workbench 页面
 
 【验证】
 - 本地编译通过
-- 相关 spec 测试文件已同步更新
 
 【风险与回滚】
-- 中等风险，涉及多个核心服务，建议发布后观察稳定性
-- 回滚需同时恢复多个文件的旧版本
+- 低风险，删除文件为过时占位符，不影响核心功能

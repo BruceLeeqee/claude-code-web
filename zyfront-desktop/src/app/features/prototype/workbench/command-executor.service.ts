@@ -426,7 +426,7 @@ export class CommandExecutorService {
     });
 
     this.registerDirectiveExecutor('team_run', async (ctx) => {
-      const result = await this.teamCommandRouter.execute(`/team run ${ctx.parsed.args}`);
+      const result = await this.teamCommandRouter.execute(`/team-run ${ctx.parsed.args}`);
       return {
         success: result.ok,
         route: 'directive',

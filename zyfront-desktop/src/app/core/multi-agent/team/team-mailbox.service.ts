@@ -1,8 +1,10 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, signal, computed, inject } from '@angular/core';
 import { v4 as uuidv4 } from 'uuid';
 import type { TeamMessage, TeamMessagePriority } from './team.types';
 import { MultiAgentEventBusService } from '../multi-agent.event-bus.service';
 import { EVENT_TYPES } from '../multi-agent.events';
+import { LocalBridgeService } from '../../local-bridge.service';
+import { TEAM_FILE_PATHS } from './team.types';
 
 interface AgentMailbox {
   inbox: TeamMessage[];
@@ -12,6 +14,8 @@ interface AgentMailbox {
 @Injectable({ providedIn: 'root' })
 export class TeamMailboxService {
   private readonly mailboxesByTeam = signal<Map<string, Map<string, AgentMailbox>>>(new Map());
+  private readonly bridge = inject(LocalBridgeService);
+  private persistDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   readonly allMessages = computed(() => {
     const result: TeamMessage[] = [];
@@ -74,6 +78,8 @@ export class TeamMailboxService {
       source: 'system' as const,
       payload: { teamId, message },
     });
+
+    this.persistTeamMessages(teamId);
 
     return message;
   }
@@ -183,5 +189,48 @@ export class TeamMailboxService {
       }
       return newOuter;
     });
+  }
+
+  private persistTeamMessages(teamId: string): void {
+    const existing = this.persistDebounceTimers.get(teamId);
+    if (existing) clearTimeout(existing);
+
+    this.persistDebounceTimers.set(teamId, setTimeout(() => {
+      this.persistDebounceTimers.delete(teamId);
+      const messages = this.getMessagesByTeam(teamId);
+      const filePath = `${TEAM_FILE_PATHS.messages}/${teamId}/messages.json`;
+      const content = JSON.stringify(messages, null, 2);
+      this.bridge.write(filePath, content, 'vault').catch(e => {
+        console.error('[TeamMailbox] Failed to persist messages:', filePath, e);
+      });
+    }, 500));
+  }
+
+  async loadTeamMessages(teamId: string): Promise<void> {
+    try {
+      const filePath = `${TEAM_FILE_PATHS.messages}/${teamId}/messages.json`;
+      const result = await this.bridge.read(filePath, 'vault');
+      if (result.ok && typeof result.content === 'string') {
+        const parsed = JSON.parse(result.content) as TeamMessage[];
+        this.mailboxesByTeam.update(outer => {
+          const newOuter = new Map(outer);
+          const teamMailboxes = new Map<string, AgentMailbox>();
+          for (const msg of parsed) {
+            if (!teamMailboxes.has(msg.from)) {
+              teamMailboxes.set(msg.from, { inbox: [], outbox: [] });
+            }
+            if (!teamMailboxes.has(msg.to)) {
+              teamMailboxes.set(msg.to, { inbox: [], outbox: [] });
+            }
+            teamMailboxes.get(msg.from)!.outbox.push(msg);
+            teamMailboxes.get(msg.to)!.inbox.push(msg);
+          }
+          newOuter.set(teamId, teamMailboxes);
+          return newOuter;
+        });
+      }
+    } catch {
+      // File doesn't exist yet, that's fine
+    }
   }
 }

@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import type { TeamLogEntry } from './team.types';
 import { MultiAgentEventBusService } from '../multi-agent.event-bus.service';
 import { EVENT_TYPES } from '../multi-agent.events';
+import { LocalBridgeService } from '../../local-bridge.service';
+import { TEAM_FILE_PATHS } from './team.types';
 
 export interface StructuredLogEntry extends TeamLogEntry {
   formatted: string;
@@ -140,5 +142,93 @@ export class TeamLoggerService {
     ].filter(Boolean).join(' ');
 
     return `[${ts}] ${level} [${source}] ${entry.message}${ctx ? ` | ${ctx}` : ''}`;
+  }
+
+  private readonly bridge = inject(LocalBridgeService);
+
+  formatAgentTerminalOutput(roleName: string, rawOutput: string): { terminal: string; logFilePath: string } {
+    const now = new Date();
+    const timestamp = now.toTimeString().slice(0, 8);
+    const fileTimestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+
+    const slug = this.roleNameToSlug(roleName);
+    const logDir = `.agent-logs/${slug}`;
+    const logFilePath = `${logDir}/${fileTimestamp}.log`;
+
+    const { summary, codeBlocks, fullContent } = this.extractSummaryAndCode(rawOutput);
+
+    const terminalLines: string[] = [];
+
+    if (summary) {
+      const summaryLines = summary.split('\n').filter(l => l.trim());
+      for (const line of summaryLines.slice(0, 2)) {
+        terminalLines.push(`[${roleName}] ${timestamp} | ${line}`);
+      }
+    }
+
+    if (codeBlocks.length > 0) {
+      const firstBlock = codeBlocks[0]!;
+      const codeLines = firstBlock.code.split('\n');
+      const coreLines = codeLines.slice(0, 5);
+      terminalLines.push(`[${roleName}] 关键代码（${codeLines.length}行中取前${coreLines.length}行）`);
+      terminalLines.push(`[${roleName}] \`\`\`${firstBlock.lang}`);
+      for (const cl of coreLines) {
+        terminalLines.push(`[${roleName}] ${cl}`);
+      }
+      terminalLines.push(`[${roleName}] \`\`\``);
+    }
+
+    terminalLines.push(`[${roleName}] 日志文件：${logDir}/${fileTimestamp}.log`);
+
+    void this.persistAgentLog(logFilePath, fullContent);
+
+    return {
+      terminal: terminalLines.join('\r\n'),
+      logFilePath,
+    };
+  }
+
+  private extractSummaryAndCode(rawOutput: string): {
+    summary: string;
+    codeBlocks: Array<{ lang: string; code: string }>;
+    fullContent: string;
+  } {
+    const codeBlocks: Array<{ lang: string; code: string }> = [];
+    const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = codeBlockRegex.exec(rawOutput)) !== null) {
+      codeBlocks.push({
+        lang: match[1] || 'text',
+        code: match[2].trim(),
+      });
+    }
+
+    let summary = rawOutput.replace(/```[\s\S]*?```/g, '').trim();
+    summary = summary.replace(/\n{3,}/g, '\n\n').trim();
+    if (summary.length > 300) {
+      summary = summary.substring(0, 300) + '...';
+    }
+
+    return { summary, codeBlocks, fullContent: rawOutput };
+  }
+
+  private async persistAgentLog(filePath: string, content: string): Promise<void> {
+    try {
+      await this.bridge.write(filePath, content, 'vault');
+    } catch (e) {
+      console.error('[TeamLogger] Failed to persist agent log:', filePath, e);
+    }
+  }
+
+  private roleNameToSlug(name: string): string {
+    const map: Record<string, string> = {
+      '产品经理': 'dev-product',
+      '架构师': 'dev-leader',
+      '前端开发': 'dev-front',
+      '后端开发': 'dev-back',
+      '测试工程师': 'dev-test',
+    };
+    return map[name] || name.toLowerCase().replace(/\s+/g, '-');
   }
 }

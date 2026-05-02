@@ -44,6 +44,8 @@ import { TerminalMemoryGraphService } from '../../../core/terminal-memory-graph.
 import { CommandRouterService } from './command-router.service';
 import { CommandProcessingService } from './command-processing.service';
 import { CommandExecutorService } from './command-executor.service';
+import { TeamCommandRouterService } from '../../../core/multi-agent/team/team-command-router.service';
+import { TeamLoggerService } from '../../../core/multi-agent/team/team-logger.service';
 import { InputPreprocessorService } from './input-preprocessor.service';
 import { WorkbenchAssistantFlowService } from './workbench-assistant-flow.service';
 import { WorkbenchAssistantStreamService } from './workbench-assistant-stream.service';
@@ -51,7 +53,7 @@ import { WorkbenchAssistantStreamCoordinatorService } from './workbench-assistan
 import { WorkbenchAssistantModeExecutorService } from './workbench-assistant-mode-executor.service';
 import { WorkbenchAssistantModeFlowService } from './workbench-assistant-mode-flow.service';
 import { DIRECTIVE_REGISTRY, isCoordinationMode, parseDirective, getModeDirectives, type DirectiveDefinition } from './directive-registry';
-import { Subscription } from 'rxjs';
+import { Subscription, filter } from 'rxjs';
 import { type TurnContext } from '../../../core/memory/memory.types';
 import { MultiAgentOrchestratorService } from '../../../core/multi-agent/multi-agent.orchestrator.service';
 import type { TeammateMode, WorkbenchTeamVm } from '../../../core/multi-agent/multi-agent.types';
@@ -164,6 +166,7 @@ const VAULT_EXPLORER_FIXED_CHILDREN: Record<string, Array<{ name: string; path: 
     { name: '05-Teams', path: '03-AGENT-TOOLS/05-Teams' },
     { name: '06-Tasks', path: '03-AGENT-TOOLS/06-Tasks' },
     { name: '07-Messages', path: '03-AGENT-TOOLS/07-Messages' },
+    { name: '08-Docs', path: '03-AGENT-TOOLS/08-Docs' },
   ],
   '05-RESOURCES': [
     { name: 'images', path: '05-RESOURCES/images' },
@@ -554,6 +557,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly assistantStreamCoordinator = inject(WorkbenchAssistantStreamCoordinatorService);
   private readonly assistantModeExecutor = inject(WorkbenchAssistantModeExecutorService);
   private readonly assistantModeFlow = inject(WorkbenchAssistantModeFlowService);
+  private readonly teamCommandRouter = inject(TeamCommandRouterService);
+  private readonly teamLogger = inject(TeamLoggerService);
 
   protected readonly llmAvailable = signal(this.hasLlmConfigured());
 
@@ -801,8 +806,13 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private memoryStatsTimer?: number;
   private settingsSub?: Subscription;
   private routeQuerySub?: Subscription;
+  private agentEventSubs: Subscription[] = [];
   private recentTurnsMemoryPath?: string;
   private recentTurnsIndexPath?: string;
+  private teamAgentOutputBuffers = new Map<string, string>();
+  private teamAgentThinkingBuffers = new Map<string, string>();
+  private teamAgentHeaderShown = new Map<string, boolean>();
+  private activeTeamTabId = signal<string | null>(null);
   /** 工具调用轨迹，与历史消息合并为右栏「记忆」 */
   private readonly toolMemoryTrace = signal<MemoryVm[]>([]);
 
@@ -827,6 +837,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.scrollFocusedTeammateIntoView();
     });
     this.loadWorkbenchRecoveryMeta();
+    this.subscribeToAgentEvents();
     this.syncTimer = window.setInterval(() => {
       this.syncCoordinatorState();
       void this.rebuildMemoryPanel();
@@ -850,6 +861,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.agentEventSubs.forEach(s => s.unsubscribe());
+    this.agentEventSubs = [];
     if (this.autoSaveTimer !== undefined) {
       clearTimeout(this.autoSaveTimer);
       this.autoSaveTimer = undefined;
@@ -981,6 +994,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected displayTabLabel(tab: string): string {
     if (tab === 'Terminal - Main') return tab;
     if (tab.startsWith('Debug / ')) return tab;
+    if (tab.startsWith('Team / ')) return tab;
+    if (tab.startsWith('Loop / ')) return tab;
     let plain = tab.startsWith('↔ ') ? tab.slice(2).trim() : tab;
     if (/^(vault|workspace):/.test(plain)) {
       plain = plain.replace(/^(vault|workspace):/, '');
@@ -996,9 +1011,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     return tab.startsWith('Loop / ');
   }
 
-  /** 是否为终端型 tab（debug 或 loop），共享同一个 xterm 面板 */
+  protected isTeamTab(tab: string): boolean {
+    return tab.startsWith('Team / ');
+  }
+
   protected isTerminalTab(tab: string): boolean {
-    return this.isDebugTab(tab) || this.isLoopTab(tab);
+    return this.isDebugTab(tab) || this.isLoopTab(tab) || this.isTeamTab(tab);
   }
 
   protected debugTabViewModel(tab: string): import('./debug/debug-command.types').DebugTabViewModel | null {
@@ -4808,6 +4826,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         '\x1b[90m  /loop stop    暂停执行    /loop resume  恢复执行\x1b[0m\r\n' +
         '\x1b[90m  /debug loop   查看 Loop 调试信息\x1b[0m\r\n',
       );
+    } else if (this.isTeamTab(tab)) {
+      this.debugXtermWrite(
+        '\x1b[90mTeam 终端：多智能体协作输出。\x1b[0m\r\n' +
+        '\x1b[90m  /team status  查看团队状态  /team stop <teamId>  停止团队\x1b[0m\r\n',
+      );
     } else {
       this.debugXtermWrite(
         '\x1b[90mDebug 终端：仅支持 /debug 命令。输入 /debug prompt | /debug memory | /debug workbench 查看诊断信息。\x1b[0m\r\n',
@@ -4826,6 +4849,8 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const tab = this.activeTab();
     if (this.isLoopTab(tab)) {
       this.debugXtermWrite('\x1b[36mloop>\x1b[0m ');
+    } else if (this.isTeamTab(tab)) {
+      this.debugXtermWrite('\x1b[35mteam>\x1b[0m ');
     } else {
       this.debugXtermWrite('\x1b[32m>\x1b[0m ');
     }
@@ -4848,7 +4873,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   /** 处理终端输入（自动根据 tab 类型判断允许的命令） */
   private feedTabTerminalInput(data: string): void {
     if (!this.debugXterm) return;
-    const isLoop = this.isLoopTab(this.activeTab());
+    const activeTab = this.activeTab();
+    const isLoop = this.isLoopTab(activeTab);
+    const isTeam = this.isTeamTab(activeTab);
 
     for (const ch of data) {
       if (ch === '\r' || ch === '\n') {
@@ -4862,14 +4889,18 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         }
 
         if (isLoop) {
-          // Loop 终端：允许 /loop 和 /debug 命令
           if (!line.startsWith('/loop') && !line.startsWith('/debug')) {
             this.debugXtermWrite('\x1b[31m仅支持 /loop 或 /debug 命令\x1b[0m\r\n');
             this.writeDebugTerminalPrompt();
             continue;
           }
+        } else if (isTeam) {
+          if (!line.startsWith('/team') && !line.startsWith('/debug')) {
+            this.debugXtermWrite('\x1b[31m仅支持 /team 或 /debug 命令\x1b[0m\r\n');
+            this.writeDebugTerminalPrompt();
+            continue;
+          }
         } else {
-          // Debug 终端：仅允许 /debug 命令
           if (!line.startsWith('/debug')) {
             this.debugXtermWrite('\x1b[31m仅支持 /debug 命令，例如: /debug prompt, /debug memory, /debug workbench\x1b[0m\r\n');
             this.writeDebugTerminalPrompt();
@@ -4907,10 +4938,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   /** 在终端中执行命令 */
   private async executeTabTerminalCommand(raw: string): Promise<void> {
     const isLoop = this.isLoopTab(this.activeTab());
+    const isTeam = this.isTeamTab(this.activeTab());
 
-    // Loop 终端中的 /loop step/status/stop/resume 子命令
     if (isLoop && raw.startsWith('/loop')) {
       await this.executeLoopTerminalCommand(raw);
+      return;
+    }
+
+    if (isTeam && raw.startsWith('/team')) {
+      await this.executeTeamTerminalCommand(raw);
       return;
     }
 
@@ -5006,6 +5042,43 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.debugXtermWrite(`\x1b[31m执行失败: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`);
     }
     this.writeDebugTerminalPrompt();
+  }
+
+  private async executeTeamTerminalCommand(raw: string): Promise<void> {
+    try {
+      const result = await this.teamCommandRouter.execute(raw);
+      if (result.ok) {
+        this.debugXtermWrite(`\x1b[32m${result.message}\x1b[0m\r\n`);
+      } else {
+        this.debugXtermWrite(`\x1b[31m${result.message}\x1b[0m\r\n`);
+        if (result.errors?.length) {
+          for (const err of result.errors) {
+            this.debugXtermWrite(`  \x1b[90m${err}\x1b[0m\r\n`);
+          }
+        }
+      }
+    } catch (e) {
+      this.debugXtermWrite(`\x1b[31m执行失败: ${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`);
+    }
+    this.writeDebugTerminalPrompt();
+  }
+
+  private openTeamTab(structName: string): void {
+    const tabKey = `Team / ${structName}`;
+    this.addTabIfMissing(tabKey);
+    this.activeTeamTabId.set(tabKey);
+    this.setTab(tabKey);
+
+    if (!this.debugTerminalInitialized) {
+      setTimeout(() => {
+        this.initDebugXterm();
+        this.debugXtermWrite(`\x1b[35m[Team]\x1b[0m 协作结构 \x1b[33m${structName}\x1b[0m 启动中...\r\n`);
+        this.writeDebugTerminalPrompt();
+      }, 100);
+    } else {
+      this.debugXtermWrite(`\x1b[35m[Team]\x1b[0m 协作结构 \x1b[33m${structName}\x1b[0m 启动中...\r\n`);
+      this.writeDebugTerminalPrompt();
+    }
   }
 
   private async replayMainSessionHistory(): Promise<void> {
@@ -5501,8 +5574,20 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       if (loopHandled) return;
     }
 
-    if (/^\/team\b/i.test(t)) {
+    if (/^\/team(-run|-role|-struct|-subagent|-agent)?\b/i.test(t)) {
       this.pushHistory(t);
+
+      const isTeamRun = /^\/team-run\b/i.test(t);
+
+      if (isTeamRun) {
+        const parts = t.trim().split(/\s+/);
+        const structName = parts[1] || '';
+        if (structName) {
+          this.aiXtermWrite(`\r\n\x1b[35m[team]\x1b[0m 协作输出已切换到 \x1b[33mTeam / ${structName}\x1b[0m tab\r\n`);
+          this.openTeamTab(structName);
+        }
+      }
+
       const processedTeam = await this.commandProcessing.process(t, {
         sessionId: SESSION_ID,
         mode: this.runtime.coordinator.getState().mode,
@@ -5918,8 +6003,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       return true;
     }
 
-    if (/^\/team\b/i.test(t)) {
-      this.aiXtermWrite('\x1b[36m[team] 将在主终端处理团队创建命令。\x1b[0m\r\n');
+    if (/^\/team(-run|-role|-struct|-subagent|-agent)?\b/i.test(t)) {
       this.setTab('Terminal - Main');
       await this.dispatchMainTerminalLine(t);
       return true;
@@ -7205,6 +7289,135 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       source: 'executor',
       payload: { agentId, output },
     } as MultiAgentEvent<'agent.output'>);
+  }
+
+  private subscribeToAgentEvents(): void {
+    const { events$ } = this.multiAgentEventBus;
+
+    this.agentEventSubs.push(
+      events$.pipe(
+        filter((e: MultiAgentEvent) => e.type === EVENT_TYPES.AGENT_THINKING),
+      ).subscribe(event => {
+        const payload = (event as MultiAgentEvent<'agent.thinking'>).payload as { agentId: string; thinking: string };
+        if (payload?.agentId && payload?.thinking) {
+          this.writeTeamAgentThinkingToTerminal(payload.agentId, payload.thinking);
+        }
+      }),
+    );
+
+    this.agentEventSubs.push(
+      events$.pipe(
+        filter((e: MultiAgentEvent) => e.type === EVENT_TYPES.AGENT_OUTPUT),
+      ).subscribe(event => {
+        const payload = (event as MultiAgentEvent<'agent.output'>).payload as { agentId: string; output: string };
+        if (payload?.agentId && payload?.output) {
+          this.writeTeamAgentOutputToTerminal(payload.agentId, payload.output);
+        }
+      }),
+    );
+
+    this.agentEventSubs.push(
+      events$.pipe(
+        filter((e: MultiAgentEvent) => e.type === EVENT_TYPES.AGENT_CREATED),
+      ).subscribe(event => {
+        const payload = (event as MultiAgentEvent<'agent.created'>).payload as { descriptor: { agentId: string; agentName: string } };
+        if (payload?.descriptor) {
+          this.teamAgentHeaderShown.delete(payload.descriptor.agentId);
+          this.teamAgentOutputBuffers.delete(payload.descriptor.agentId);
+          this.teamAgentThinkingBuffers.delete(payload.descriptor.agentId);
+        }
+      }),
+    );
+
+    this.agentEventSubs.push(
+      events$.pipe(
+        filter((e: MultiAgentEvent) =>
+          e.type === EVENT_TYPES.TEAM_RUNTIME_MEMBER_JOINED
+        ),
+      ).subscribe(event => {
+        const payload = event.payload as { agentId: string; roleName: string };
+        if (payload?.agentId) {
+          this.teamAgentHeaderShown.delete(payload.agentId);
+          this.teamAgentOutputBuffers.delete(payload.agentId);
+          this.teamAgentThinkingBuffers.delete(payload.agentId);
+          const name = payload.roleName || payload.agentId;
+          const color = this.getAgentColor(payload.agentId);
+          this.teamDebugWrite(`\r\n${color}[${name}]\x1b[0m 已加入团队\r\n`);
+        }
+      }),
+    );
+  }
+
+  private teamDebugWrite(text: string): void {
+    if (this.activeTeamTabId()) {
+      this.debugXtermWrite(text);
+    } else {
+      this.aiXtermWrite(text);
+    }
+  }
+
+  private getAgentColor(agentId: string): string {
+    const name = this.resolveAgentName(agentId);
+    const colorMap: Record<string, string> = {
+      '产品经理': '\x1b[34m',
+      '架构师': '\x1b[90m',
+      '前端开发': '\x1b[32m',
+      '后端开发': '\x1b[32m',
+      '测试工程师': '\x1b[33m',
+    };
+    return colorMap[name] || '\x1b[35m';
+  }
+
+  private writeTeamAgentThinkingToTerminal(agentId: string, thinking: string): void {
+    if (!this.teamAgentHeaderShown.has(agentId)) {
+      const name = this.resolveAgentName(agentId);
+      const color = this.getAgentColor(agentId);
+      this.teamDebugWrite(`\r\n${color}[${name} - 思考中]\x1b[0m\r\n`);
+      this.teamAgentHeaderShown.set(agentId, true);
+    }
+    const existing = this.teamAgentThinkingBuffers.get(agentId) || '';
+    this.teamAgentThinkingBuffers.set(agentId, existing + thinking);
+  }
+
+  private writeTeamAgentOutputToTerminal(agentId: string, output: string): void {
+    const name = this.resolveAgentName(agentId);
+    const color = this.getAgentColor(agentId);
+
+    const { terminal } = this.teamLogger.formatAgentTerminalOutput(name, output);
+
+    if (!this.teamAgentHeaderShown.has(agentId)) {
+      this.teamDebugWrite(`\r\n${color}[${name}]\x1b[0m\r\n`);
+      this.teamAgentHeaderShown.set(agentId, true);
+    }
+
+    const coloredTerminal = terminal
+      .replace(new RegExp(`\\[${name}\\]`, 'g'), `${color}[${name}]\x1b[0m`);
+
+    this.teamDebugWrite(coloredTerminal + '\r\n');
+
+    const existing = this.teamAgentOutputBuffers.get(agentId) || '';
+    this.teamAgentOutputBuffers.set(agentId, existing + output);
+  }
+
+  private resolveAgentName(agentId: string): string {
+    const slugNameMap: Record<string, string> = {
+      'dev-product': '产品经理',
+      'dev-leader': '架构师',
+      'dev-front': '前端开发',
+      'dev-back': '后端开发',
+      'dev-test': '测试工程师',
+      'frontend-developer': '前端开发',
+      'backend-developer': '后端开发',
+      'qa-engineer': '测试工程师',
+      'architect': '架构师',
+      'ui-designer': 'UI设计师',
+    };
+    const match = agentId.match(/^agent-(.+?)-/);
+    if (match) {
+      const slug = match[1];
+      return slugNameMap[slug] || slug;
+    }
+    return agentId;
   }
 
   private pushHistory(input: string): void {

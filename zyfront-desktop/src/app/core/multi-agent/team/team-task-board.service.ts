@@ -1,12 +1,16 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, signal, computed, inject } from '@angular/core';
 import { v4 as uuidv4 } from 'uuid';
 import type { TeamTask, TeamTaskStatus, CommandResult } from './team.types';
 import { MultiAgentEventBusService } from '../multi-agent.event-bus.service';
 import { EVENT_TYPES } from '../multi-agent.events';
+import { LocalBridgeService } from '../../local-bridge.service';
+import { TEAM_FILE_PATHS } from './team.types';
 
 @Injectable({ providedIn: 'root' })
 export class TeamTaskBoardService {
   private readonly tasksByTeam = signal<Map<string, Map<string, TeamTask>>>(new Map());
+  private readonly bridge = inject(LocalBridgeService);
+  private persistDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   readonly allTasks = computed(() => {
     const result: TeamTask[] = [];
@@ -61,6 +65,8 @@ export class TeamTaskBoardService {
       payload: { teamId, task },
     });
 
+    this.persistTeamTasks(teamId);
+
     return task;
   }
 
@@ -82,6 +88,8 @@ export class TeamTaskBoardService {
       source: 'system',
       payload: { teamId, taskId, assignee },
     });
+
+    this.persistTeamTasks(teamId);
 
     return updated;
   }
@@ -114,6 +122,8 @@ export class TeamTaskBoardService {
         payload: { teamId, taskId, outputs: updated.outputs },
       });
     }
+
+    this.persistTeamTasks(teamId);
 
     return updated;
   }
@@ -188,6 +198,8 @@ export class TeamTaskBoardService {
       payload: { teamId, taskId, previousStatus: task.status, newStatus: 'rejected', reason: error },
     });
 
+    this.persistTeamTasks(teamId);
+
     return updated;
   }
 
@@ -217,5 +229,41 @@ export class TeamTaskBoardService {
   taskList(teamId?: string): TeamTask[] {
     if (teamId) return this.getTasksByTeam(teamId);
     return this.allTasks();
+  }
+
+  private persistTeamTasks(teamId: string): void {
+    const existing = this.persistDebounceTimers.get(teamId);
+    if (existing) clearTimeout(existing);
+
+    this.persistDebounceTimers.set(teamId, setTimeout(() => {
+      this.persistDebounceTimers.delete(teamId);
+      const tasks = this.getTasksByTeam(teamId);
+      const filePath = `${TEAM_FILE_PATHS.tasks}/${teamId}/tasks.json`;
+      const content = JSON.stringify(tasks, null, 2);
+      this.bridge.write(filePath, content, 'vault').catch(e => {
+        console.error('[TeamTaskBoard] Failed to persist tasks:', filePath, e);
+      });
+    }, 500));
+  }
+
+  async loadTeamTasks(teamId: string): Promise<void> {
+    try {
+      const filePath = `${TEAM_FILE_PATHS.tasks}/${teamId}/tasks.json`;
+      const result = await this.bridge.read(filePath, 'vault');
+      if (result.ok && typeof result.content === 'string') {
+        const parsed = JSON.parse(result.content) as TeamTask[];
+        this.tasksByTeam.update(outer => {
+          const newOuter = new Map(outer);
+          const teamMap = new Map<string, TeamTask>();
+          for (const task of parsed) {
+            teamMap.set(task.id, task);
+          }
+          newOuter.set(teamId, teamMap);
+          return newOuter;
+        });
+      }
+    } catch {
+      // File doesn't exist yet, that's fine
+    }
   }
 }

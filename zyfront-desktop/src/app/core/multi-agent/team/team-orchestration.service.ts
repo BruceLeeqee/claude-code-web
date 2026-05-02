@@ -113,6 +113,11 @@ export class TeamOrchestrationService {
       const team = this.runtime.createTeam(structName, task);
       console.log('[TeamOrchestration] Team created:', { teamId: team.id, structName });
 
+      await Promise.all([
+        this.taskBoard.loadTeamTasks(team.id),
+        this.mailbox.loadTeamMessages(team.id),
+      ]);
+
       console.log('[TeamOrchestration] Resolving stage roles:', struct.roles);
       const allRoles = await this.resolveStageRoles(struct.roles);
       console.log('[TeamOrchestration] Resolved roles:', allRoles.map(r => ({ name: r.name, slug: r.slug })));
@@ -155,6 +160,8 @@ export class TeamOrchestrationService {
 
       this.runtime.updateStatus(team.id, 'running', '开始执行协作结构');
 
+      const stageOutputMap = new Map<string, string>();
+
       for (let i = 0; i < struct.stages.length; i++) {
         const stage = struct.stages[i];
         console.log(`[TeamOrchestration] Executing stage ${i + 1}/${struct.stages.length}:`, stage.name);
@@ -169,12 +176,21 @@ export class TeamOrchestrationService {
           currentStageMode: stage.mode,
         });
 
-        const stageResult = await this.executeStage(team.id, stage, task);
+        const previousStageOutputs = this.buildPreviousStageContext(i, struct.stages, stageOutputMap);
+
+        const stageResult = await this.executeStage(team.id, stage, task, previousStageOutputs);
         console.log(`[TeamOrchestration] Stage "${stage.name}" result:`, { 
           success: stageResult.success, 
           summary: stageResult.summary,
           durationMs: stageResult.durationMs 
         });
+
+        if (stageResult.success && stageResult.agentResults) {
+          const stageOutput = stageResult.agentResults
+            .map(r => `## ${r.roleName} 的产出\n${r.content}`)
+            .join('\n\n');
+          stageOutputMap.set(stage.name, stageOutput);
+        }
 
         this.updateProgressStageResult(team.id, stageResult);
 
@@ -241,7 +257,7 @@ export class TeamOrchestrationService {
     }
   }
 
-  private async executeStage(teamId: string, stage: TeamStageDefinition, task: string): Promise<StageResult> {
+  private async executeStage(teamId: string, stage: TeamStageDefinition, task: string, previousStageOutputs?: string): Promise<StageResult> {
     const startTime = Date.now();
 
     this.addRuntimeLog(teamId, 'info', 'orchestration', `开始执行阶段 "${stage.name}"，模式：${stage.mode}`);
@@ -254,7 +270,7 @@ export class TeamOrchestrationService {
       );
 
       if (stage.mode === 'subagent') {
-        const result = await this.executeSubagentStage(teamId, stage, stageAgents, task);
+        const result = await this.executeSubagentStage(teamId, stage, stageAgents, task, previousStageOutputs);
         const durationMs = Date.now() - startTime;
 
         return {
@@ -268,7 +284,7 @@ export class TeamOrchestrationService {
       }
 
       if (stage.mode === 'agent-team') {
-        const result = await this.executeAgentTeamStage(teamId, stage, stageAgents, task);
+        const result = await this.executeAgentTeamStage(teamId, stage, stageAgents, task, previousStageOutputs);
         const durationMs = Date.now() - startTime;
 
         return {
@@ -277,11 +293,12 @@ export class TeamOrchestrationService {
           success: result.success,
           summary: result.summary,
           durationMs,
+          agentResults: result.agentResults,
         };
       }
 
       if (stage.mode === 'hybrid') {
-        const result = await this.executeHybridStage(teamId, stage, stageAgents, task);
+        const result = await this.executeHybridStage(teamId, stage, stageAgents, task, previousStageOutputs);
         const durationMs = Date.now() - startTime;
 
         return {
@@ -330,6 +347,7 @@ export class TeamOrchestrationService {
     stage: TeamStageDefinition,
     stageAgents: TeamAgent[],
     task: string,
+    previousStageOutputs?: string,
   ): Promise<{ success: boolean; summary: string; agentResults?: AgentTaskResult[] }> {
     console.log('[TeamOrchestration] executeSubagentStage:', { 
       teamId, 
@@ -349,15 +367,17 @@ export class TeamOrchestrationService {
       return { success: false, summary: `团队 ${teamId} 不存在` };
     }
 
+    const stageTask = this.buildStageTask(stage, task, previousStageOutputs);
+
     console.log('[TeamOrchestration] Creating tasks for agents:', stageAgents.map(a => a.roleDefinition.name));
     for (const agent of stageAgents) {
-      const taskId = this.taskBoard.createTask(teamId, `${agent.roleDefinition.name}: ${task}`, agent.roleDefinition.name, stage.name);
+      const taskId = this.taskBoard.createTask(teamId, `${agent.roleDefinition.name}: ${stageTask}`, agent.roleDefinition.name, stage.name);
 
       this.mailbox.sendMessage(
         teamId,
         team.leadAgentId,
         agent.descriptor.agentId,
-        `阶段 "${stage.name}" 任务：${task}。你的职责：${agent.roleDefinition.description}`,
+        `阶段 "${stage.name}" 任务：${stageTask}。你的职责：${agent.roleDefinition.description}`,
         'normal'
       );
     }
@@ -368,14 +388,15 @@ export class TeamOrchestrationService {
     const executionContext = {
       teamId,
       stageName: stage.name,
-      task,
+      task: stageTask,
+      inputs: previousStageOutputs ? [previousStageOutputs] : undefined,
     };
 
     console.log('[TeamOrchestration] Executing agents:', { parallel, agentsCount: stageAgents.length });
     if (parallel && stageAgents.length > 1) {
       results = await this.agentManager.executeParallel(stageAgents, executionContext);
     } else {
-      results = await this.agentManager.executeSequential(stageAgents, executionContext);
+      results = await this.agentManager.executeSequential(stageAgents, executionContext, { passResults: true });
     }
     
     console.log('[TeamOrchestration] Agent execution results:', results.map(r => ({ 
@@ -418,7 +439,8 @@ export class TeamOrchestrationService {
     stage: TeamStageDefinition,
     stageAgents: TeamAgent[],
     task: string,
-  ): Promise<{ success: boolean; summary: string }> {
+    previousStageOutputs?: string,
+  ): Promise<{ success: boolean; summary: string; agentResults?: AgentTaskResult[] }> {
     if (stageAgents.length === 0) {
       return { success: false, summary: `阶段 "${stage.name}" 没有可用的 Agent` };
     }
@@ -428,21 +450,24 @@ export class TeamOrchestrationService {
       return { success: false, summary: `团队 ${teamId} 不存在` };
     }
 
+    const stageTask = this.buildStageTask(stage, task, previousStageOutputs);
+
     for (const agent of stageAgents) {
       this.mailbox.sendMessage(
         teamId,
         team.leadAgentId,
         agent.descriptor.agentId,
-        `阶段 "${stage.name}" 协作任务：${task}。你的职责：${agent.roleDefinition.description}`,
+        `阶段 "${stage.name}" 协作任务：${stageTask}。你的职责：${agent.roleDefinition.description}`,
         'normal'
       );
-      this.taskBoard.createTask(teamId, `${agent.roleDefinition.name}: ${task}`, agent.roleDefinition.name, stage.name);
+      this.taskBoard.createTask(teamId, `${agent.roleDefinition.name}: ${stageTask}`, agent.roleDefinition.name, stage.name);
     }
 
     const results = await this.agentManager.executeParallel(stageAgents, {
       teamId,
       stageName: stage.name,
-      task,
+      task: stageTask,
+      inputs: previousStageOutputs ? [previousStageOutputs] : undefined,
     });
 
     const allSuccess = results.every(r => r.success);
@@ -453,6 +478,7 @@ export class TeamOrchestrationService {
     return {
       success: allSuccess,
       summary: `团队协作阶段 "${stage.name}" ${allSuccess ? '完成' : '部分失败'}，${stageAgents.length} 个成员`,
+      agentResults: results,
     };
   }
 
@@ -460,15 +486,20 @@ export class TeamOrchestrationService {
     teamId: string, 
     stage: TeamStageDefinition, 
     stageAgents: TeamAgent[], 
-    task: string
+    task: string,
+    previousStageOutputs?: string,
   ): Promise<CommandResult> {
     this.addRuntimeLog(teamId, 'info', 'orchestration', `hybrid阶段：先subagent并行，再agent-team协作汇总`);
 
-    const subagentResult = await this.executeSubagentStage(teamId, stage, stageAgents, task);
+    const subagentResult = await this.executeSubagentStage(teamId, stage, stageAgents, task, previousStageOutputs);
+
+    const subagentOutput = subagentResult.agentResults
+      ?.map(r => `## ${r.roleName} 的产出\n${r.content}`)
+      .join('\n\n') || '';
 
     if (!subagentResult.success) {
       this.addRuntimeLog(teamId, 'warn', 'orchestration', `hybrid阶段subagent部分失败，升级到agent-team协作`);
-      const escalationResult = await this.executeAgentTeamStage(teamId, stage, stageAgents, `协作排查：${task}`);
+      const escalationResult = await this.executeAgentTeamStage(teamId, stage, stageAgents, `协作排查：${task}`, subagentOutput);
       return {
         ok: escalationResult.success,
         command: '/team run struct',
@@ -486,7 +517,7 @@ export class TeamOrchestrationService {
       );
     }
 
-    const agentResult = await this.executeAgentTeamStage(teamId, stage, stageAgents, `汇总并验证：${task}`);
+    const agentResult = await this.executeAgentTeamStage(teamId, stage, stageAgents, `汇总并验证：${task}`, subagentOutput);
 
     return {
       ok: agentResult.success,
@@ -586,5 +617,91 @@ export class TeamOrchestrationService {
     };
 
     this.runtime.persistRuntime(teamId);
+  }
+
+  private buildPreviousStageContext(
+    currentStageIndex: number,
+    stages: TeamStageDefinition[],
+    stageOutputMap: Map<string, string>,
+  ): string {
+    if (currentStageIndex === 0) return '';
+
+    const previousOutputs: string[] = [];
+    for (let i = 0; i < currentStageIndex; i++) {
+      const prevStage = stages[i];
+      const output = stageOutputMap.get(prevStage.name);
+      if (output) {
+        previousOutputs.push(`### 阶段 "${prevStage.name}" 的产出\n${output}`);
+      }
+    }
+
+    if (previousOutputs.length === 0) return '';
+
+    return `## 前序阶段的产出物\n\n以下是之前阶段已经完成的工作成果，请基于这些内容继续推进：\n\n${previousOutputs.join('\n\n')}\n\n---\n请基于以上前序阶段的产出，继续完成你当前阶段的任务。`;
+  }
+
+  private buildStageTask(
+    stage: TeamStageDefinition,
+    originalTask: string,
+    previousStageOutputs?: string,
+  ): string {
+    const parts: string[] = [];
+
+    parts.push(`【团队目标】${originalTask}`);
+    parts.push(`【当前阶段】${stage.name}（模式：${stage.mode}）`);
+
+    if (stage.trigger) {
+      parts.push(`【触发条件】${stage.trigger}`);
+    }
+
+    if (stage.output) {
+      parts.push(`【本阶段产出要求】${stage.output}`);
+    } else {
+      const deliverableHints = this.inferStageDeliverables(stage);
+      if (deliverableHints) {
+        parts.push(`【本阶段产出要求】${deliverableHints}`);
+      }
+    }
+
+    if (stage.completionCondition) {
+      parts.push(`【完成条件】${stage.completionCondition}`);
+    }
+
+    if (stage.handoffCondition) {
+      parts.push(`【移交条件】${stage.handoffCondition}`);
+    }
+
+    if (previousStageOutputs) {
+      parts.push(previousStageOutputs);
+    }
+
+    return parts.join('\n\n');
+  }
+
+  private inferStageDeliverables(stage: TeamStageDefinition): string {
+    const stageName = stage.name.toLowerCase();
+    const roleHints = stage.roles.map(r => r.toLowerCase());
+
+    if (stageName.includes('需求') || roleHints.some(r => r.includes('产品') || r.includes('product') || r.includes('经理'))) {
+      return '请输出完整的需求文档，包含：用户故事、功能需求列表、非功能需求、优先级排序。确保与用户进行充分的需求沟通和头脑风暴。';
+    }
+
+    if (stageName.includes('设计') || stageName.includes('架构') || roleHints.some(r => r.includes('架构') || r.includes('architect'))) {
+      return '请输出完整的设计文档，包含：系统架构图描述、模块划分、接口设计、数据模型、技术选型说明。';
+    }
+
+    if (stageName.includes('开发') || stageName.includes('实现') || roleHints.some(r => r.includes('开发') || r.includes('developer') || r.includes('前端') || r.includes('后端'))) {
+      return '请基于前序阶段的需求文档和设计文档进行代码实现，输出关键代码文件和实现说明。';
+    }
+
+    if (stageName.includes('测试') || roleHints.some(r => r.includes('测试') || r.includes('test') || r.includes('qa'))) {
+      return '请输出测试报告，包含：测试用例、测试结果、发现的缺陷列表、回归验证结论。';
+    }
+
+    if (stageName.includes('ui') || roleHints.some(r => r.includes('设计') || r.includes('design'))) {
+      return '请输出设计方案，包含：界面布局方案、交互流程说明、样式规范建议。';
+    }
+
+    return '请输出本阶段的详细工作成果文档。';
   }
 }

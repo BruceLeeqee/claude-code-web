@@ -127,6 +127,16 @@ export class TeamAgentManager {
     this.updateAgentStatus(agentId, 'running', 'Agent created and ready');
 
     this.eventBus.emit({
+      type: EVENT_TYPES.AGENT_CREATED,
+      sessionId: teamId,
+      source: 'system',
+      payload: {
+        descriptor,
+        runtimeState,
+      },
+    });
+
+    this.eventBus.emit({
       type: EVENT_TYPES.TEAM_RUNTIME_MEMBER_JOINED,
       sessionId: teamId,
       source: 'system',
@@ -373,10 +383,12 @@ export class TeamAgentManager {
   }
 
   private updateAgentStatus(agentId: string, status: AgentLifecycleStatus, reason?: string): void {
+    let previousStatus: AgentLifecycleStatus = 'initializing';
     this.agents.update(map => {
       const newMap = new Map(map);
       const agent = newMap.get(agentId);
       if (agent) {
+        previousStatus = agent.runtimeState.status;
         agent.runtimeState.status = status;
         agent.runtimeState.lastSeenAt = Date.now();
         agent.runtimeState.lastStateChangeAt = Date.now();
@@ -387,17 +399,27 @@ export class TeamAgentManager {
       return newMap;
     });
 
+    const eventTypeMap: Partial<Record<AgentLifecycleStatus, keyof import('../multi-agent.events').MultiAgentEventMap>> = {
+      'running': EVENT_TYPES.AGENT_STARTED,
+      'idle': EVENT_TYPES.AGENT_IDLE,
+      'stopped': EVENT_TYPES.AGENT_STOPPED,
+      'failed': EVENT_TYPES.AGENT_FAILED,
+      'stopping': EVENT_TYPES.AGENT_STOPPING,
+    };
+
+    const eventType = eventTypeMap[status] || EVENT_TYPES.AGENT_STARTED;
+
     this.eventBus.emit({
-      type: EVENT_TYPES.AGENT_STARTED,
+      type: eventType as keyof import('../multi-agent.events').MultiAgentEventMap,
       sessionId: agentId,
       source: 'system',
       payload: {
         agentId,
-        previousStatus: 'initializing' as AgentLifecycleStatus,
+        previousStatus,
         newStatus: status,
         reason,
       },
-    });
+    } as any);
   }
 
   private mapRoleType(roleType: string): import('../domain/types').AgentRole {

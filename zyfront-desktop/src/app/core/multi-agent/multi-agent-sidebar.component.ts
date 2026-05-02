@@ -240,6 +240,54 @@ export class MultiAgentSidebarComponent implements OnDestroy {
         .subscribe(event => {
           this.handleAgentOutput(event as MultiAgentEvent<'agent.output'>);
         }),
+      this.eventBus.events$
+        .pipe(filter((e: MultiAgentEvent) => e.type === EVENT_TYPES.TEAM_RUNTIME_MEMBER_JOINED))
+        .subscribe(event => {
+          const payload = event.payload as { teamId: string; agentId: string; roleName: string };
+          if (payload?.agentId) {
+            const now = Date.now();
+            this.agentDescriptors.update(map => {
+              const newMap = new Map(map);
+              if (!newMap.has(payload.agentId)) {
+                newMap.set(payload.agentId, {
+                  agentId: payload.agentId,
+                  agentName: payload.roleName || payload.agentId,
+                  role: 'executor' as any,
+                  teamId: payload.teamId,
+                  sessionId: payload.teamId,
+                  modelId: 'default',
+                  backendType: 'in-process',
+                  promptTemplate: '',
+                  permissions: [],
+                  createdAt: now,
+                  createdBy: 'planner',
+                  lifetimePolicy: 'task-bound',
+                  metadata: {},
+                });
+              }
+              return newMap;
+            });
+            this.agentStates.update(map => {
+              const newMap = new Map(map);
+              if (!newMap.has(payload.agentId)) {
+                newMap.set(payload.agentId, {
+                  agentId: payload.agentId,
+                  status: 'running' as any,
+                  lastSeenAt: now,
+                  heartbeatInterval: 30000,
+                  activeTaskIds: [],
+                  recoveryAttempts: 0,
+                  totalMessagesProcessed: 0,
+                  totalTokensUsed: 0,
+                  startedAt: now,
+                  lastStateChangeAt: now,
+                });
+              }
+              return newMap;
+            });
+            this.refreshAgents();
+          }
+        }),
     );
   }
 

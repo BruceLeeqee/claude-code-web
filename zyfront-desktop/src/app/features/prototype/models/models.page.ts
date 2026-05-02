@@ -38,6 +38,7 @@ const LATEST_DIRECTORY_KEY_OVERRIDES: Record<string, string> = {
   'agent-memory-index': '02-AGENT-MEMORY/07-Meta',
   'agent-skills': '03-AGENT-TOOLS/01-Skills',
   'agent-plugins': '03-AGENT-TOOLS/02-Plugins',
+  'agent-docs': '03-AGENT-TOOLS/08-Docs',
 };
 
 export type ConnectionIndicator = 'untested' | 'testing' | 'ok' | 'error';

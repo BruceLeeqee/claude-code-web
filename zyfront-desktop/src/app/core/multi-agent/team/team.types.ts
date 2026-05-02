@@ -172,12 +172,23 @@ export interface GeneratedRoleDocument {
 }
 
 export interface ParsedTeamCommand {
-  family: 'team-role' | 'team-struct' | 'team' | 'team-subagent' | 'team-agent';
+  family: 'team-role' | 'team-struct' | 'team' | 'team-subagent' | 'team-agent' | 'team-run';
   subcommand: string;
   args: string[];
   raw: string;
   tokenErrors?: string[];
 }
+
+export const AGENT_TOOLS_SUBDIRS = [
+  { name: '01-Skills', key: 'agent-skills', path: '03-AGENT-TOOLS/01-Skills' },
+  { name: '02-Plugins', key: 'agent-plugins', path: '03-AGENT-TOOLS/02-Plugins' },
+  { name: '03-Roles', key: 'roles', path: '03-AGENT-TOOLS/03-Roles' },
+  { name: '04-Structs', key: 'structs', path: '03-AGENT-TOOLS/04-Structs' },
+  { name: '05-Teams', key: 'teams', path: '03-AGENT-TOOLS/05-Teams' },
+  { name: '06-Tasks', key: 'tasks', path: '03-AGENT-TOOLS/06-Tasks' },
+  { name: '07-Messages', key: 'messages', path: '03-AGENT-TOOLS/07-Messages' },
+  { name: '08-Docs', key: 'agent-docs', path: '03-AGENT-TOOLS/08-Docs' },
+] as const;
 
 export const TEAM_FILE_PATHS = {
   roles: '03-AGENT-TOOLS/03-Roles',
@@ -185,6 +196,7 @@ export const TEAM_FILE_PATHS = {
   teams: '03-AGENT-TOOLS/05-Teams',
   tasks: '03-AGENT-TOOLS/06-Tasks',
   messages: '03-AGENT-TOOLS/07-Messages',
+  docs: '03-AGENT-TOOLS/08-Docs',
 } as const;
 
 const PINYIN_MAP: Record<string, string> = {

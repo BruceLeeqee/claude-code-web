@@ -130,6 +130,7 @@ const VAULT_STRUCTURE = {
         { name: '05-Teams' },
         { name: '06-Tasks' },
         { name: '07-Messages' },
+        { name: '08-Docs', key: 'agent-docs', desc: '文档根：需求文档、设计文档、测试案例、验收文档' },
       ],
     },
     {
