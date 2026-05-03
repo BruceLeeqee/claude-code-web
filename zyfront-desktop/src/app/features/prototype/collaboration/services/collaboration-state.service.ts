@@ -83,7 +83,7 @@ export interface CollaborationStateSnapshot {
 @Injectable({ providedIn: 'root' })
 export class CollaborationStateService {
   private readonly state = signal<CollaborationStateSnapshot>({
-    activeTab: 'cognitive',
+    activeTab: 'network',
     mode: 'battle',
     modeLabel: '对抗模式',
     modeDescription: '智能体之间的辩论和竞争',

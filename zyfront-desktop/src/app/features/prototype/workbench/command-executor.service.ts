@@ -427,12 +427,13 @@ export class CommandExecutorService {
 
     this.registerDirectiveExecutor('team_run', async (ctx) => {
       const result = await this.teamCommandRouter.execute(`/team-run ${ctx.parsed.args}`);
+      const metadata = (result.data as Record<string, unknown> | undefined) ?? {};
       return {
         success: result.ok,
         route: 'directive',
         responseType: result.ok ? 'directive' : 'error',
         content: result.ok ? result.message : `错误: ${result.message}`,
-        metadata: result.data as Record<string, unknown> | undefined,
+        metadata: { ...metadata, tabKey: 'Team Run', teamRun: true },
         shouldQuery: false,
         displayType: result.ok ? 'success' : 'error',
       };

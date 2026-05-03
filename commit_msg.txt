@@ -1,25 +1,24 @@
-feat(multi-agent): 完善多代理团队协作与 Workbench 页面增强
+feat(prototype/collaboration): 重构协作页面并简化多代理侧边栏
 
 【背景】
-- 多代理系统需要更完善的侧边栏和团队协作支持
-- Workbench 页面需要更丰富的交互功能
+- 原有多代理侧边栏组件过于臃肿，样式和逻辑混杂
+- 协作页面功能需要增强，网络可视化组件缺失
 
 【本次改动】
-- 新增 multi-agent-sidebar.component.ts 侧边栏组件
-- 扩展 team-orchestration.service.ts 团队编排能力（+151 行）
-- 新增 team-logger.service.ts 日志服务（+90 行）
-- 新增 team-command-router.service.ts 命令路由（+40 行）
-- 增强 team-mailbox.service.ts 邮箱服务
-- 增强 team-agent-manager.service.ts 代理管理
-- 完善 workbench.page.ts 工作台页面功能（+233 行）
-- 删除过时的 Roles 文件（backend-developer, frontend-developer, ui-designer）
+- 新增 collaboration-network.component 网络可视化组件
+- 简化 multi-agent-sidebar.component，移除冗余样式和逻辑（约减少900行）
+- 增强 collaboration.page.ts 协作状态管理和交互逻辑
+- 优化 workbench.page.ts 指令执行和 directiveRegistry
+- 同步更新 model-catalog 和 app-settings 服务
 
 【影响范围】
-- zyfront-desktop multi-agent 模块
-- workbench 页面
+- prototype/collaboration 协作功能模块
+- multi-agent 侧边栏组件
+- workbench 命令执行链路
 
 【验证】
 - 本地编译通过
+- 相关页面渲染正常
 
 【风险与回滚】
-- 低风险，删除文件为过时占位符，不影响核心功能
+- 中等风险，涉及多文件联动，回滚需逐文件恢复

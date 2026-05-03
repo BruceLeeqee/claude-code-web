@@ -2,6 +2,11 @@
   "files.encoding": "utf8",
   "files.autoGuessEncoding": false,
   "editor.unicodeHighlight.ambiguousCharacters": true,
+  "terminal.integrated.cursorStyle": "block",
+  "terminal.integrated.cursorBlinking": true,
+  "terminal.integrated.cursorWidth": 3,
+  "terminal.integrated.gpuAcceleration": "off",
+  "terminal.integrated.customGlyphs": false,
   "files.watcherExclude": {
     "**/zyfront-core/dist/**": true,
     "**/angular-web/dist/**": true,

@@ -683,7 +683,7 @@ export class TeamOrchestrationService {
     const roleHints = stage.roles.map(r => r.toLowerCase());
 
     if (stageName.includes('需求') || roleHints.some(r => r.includes('产品') || r.includes('product') || r.includes('经理'))) {
-      return '请输出完整的需求文档，包含：用户故事、功能需求列表、非功能需求、优先级排序。确保与用户进行充分的需求沟通和头脑风暴。';
+      return '请输出完整的需求文档，包含：用户故事、功能需求列表、非功能需求、优先级排序。注意：你只负责需求分析和文档输出，绝不编写、修改或执行任何代码。';
     }
 
     if (stageName.includes('设计') || stageName.includes('架构') || roleHints.some(r => r.includes('架构') || r.includes('architect'))) {

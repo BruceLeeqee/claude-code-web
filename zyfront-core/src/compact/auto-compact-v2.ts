@@ -15,7 +15,7 @@ const DEFAULT_POLICY: CompactV2Policy = {
   enabled: true,
   maxMessagesBeforeCompact: 50,
   compactToMessages: 20,
-  maxEstimatedTokens: 24_000,
+  maxEstimatedTokens: 120_000,
   keepSystemMessages: true,
 };
 

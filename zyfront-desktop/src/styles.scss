@@ -45,8 +45,18 @@ body {
 
 .xterm .xterm-cursor {
   z-index: 10 !important;
-  opacity: 1 !important;
   visibility: visible !important;
+}
+
+.xterm.xterm-focus .xterm-cursor {
+  visibility: visible !important;
+}
+
+.xterm:not(.xterm-focus) .xterm-cursor.xterm-cursor-block,
+.xterm:not(.xterm-focus) .xterm-cursor.xterm-cursor-underline,
+.xterm:not(.xterm-focus) .xterm-cursor.xterm-cursor-bar {
+  visibility: visible !important;
+  opacity: 0.5 !important;
 }
 
 ::-webkit-scrollbar {

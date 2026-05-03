@@ -20,6 +20,7 @@ import { NzIconModule } from 'ng-zorro-antd/icon';
 import { ActivatedRoute } from '@angular/router';
 import { GlobalShellFrameComponent } from '../../../shared/global-shell-frame.component';
 import { PrototypeCoreFacade } from '../../../shared/prototype-core.facade';
+import { CollaborationPrototypePageComponent } from '../collaboration/collaboration.page';
 import {
   WorkbenchMonacoEditorComponent,
   type WorkbenchEditorDiagnosticRow,
@@ -62,6 +63,7 @@ import { MultiAgentSidebarComponent } from '../../../core/multi-agent/multi-agen
 import { WorkbenchModeService } from '../../../core/multi-agent/services/workbench-mode.service';
 import { MultiAgentEventBusService } from '../../../core/multi-agent/multi-agent.event-bus.service';
 import { EVENT_TYPES } from '../../../core/multi-agent/multi-agent.events';
+import { CollaborationNetworkComponent } from '../collaboration/components/collaboration-network.component';
 import { TerminalSessionHostService } from './services/terminal/terminal-session-host.service';
 import { ThinkingBlockStateMachineService } from './services/terminal/thinking-block-state-machine.service';
 import { TerminalBlockRendererService } from './services/terminal/terminal-block-renderer.service';
@@ -358,12 +360,6 @@ interface GitChangedFile {
   status: string;
 }
 
-interface RightPanelChangedFile {
-  path: string;
-  status: string;
-  mtime: string;
-}
-
 interface GitCommitLine {
   hash: string;
   subject: string;
@@ -420,6 +416,7 @@ function parsePlanStepsFromText(text: string): string[] {
     NzProgressModule,
     WorkbenchMonacoEditorComponent,
     MultiAgentSidebarComponent,
+    CollaborationNetworkComponent,
     NgSwitch,
     NgSwitchCase,
     NgSwitchDefault,
@@ -561,9 +558,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private readonly teamLogger = inject(TeamLoggerService);
 
   protected readonly llmAvailable = signal(this.hasLlmConfigured());
-
-  /** 左侧：资源管理器 / 搜索 / Git */
-  protected readonly sidebarView = signal<SidebarView>('explorer');
+  /** 左侧：资源管理器 / 搜索 / Git */  protected readonly sidebarView = signal<SidebarView>('explorer');
   
   /** 三个可折叠区域的状态 */
   protected readonly projectTreeExpanded = signal(true);
@@ -589,8 +584,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly gitUiMessage = signal('');
 
   protected readonly taskListExpanded = signal(false);
-  protected readonly changedFilesExpanded = signal(true);
-  protected readonly rightPanelChangedFiles = signal<RightPanelChangedFile[]>([]);
   /** 中间编辑器：普通高亮 / diff 文本 */
   protected readonly previewKind = signal<'code' | 'diff'>('code');
   /** Monaco 编辑内容与磁盘是否一致 */
@@ -811,8 +804,33 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private recentTurnsIndexPath?: string;
   private teamAgentOutputBuffers = new Map<string, string>();
   private teamAgentThinkingBuffers = new Map<string, string>();
+  private teamAgentThinkingRendered = new Set<string>();
   private teamAgentHeaderShown = new Map<string, boolean>();
+  private teamAgentPaneLogBuffers = new Map<string, string>();
+  private teamAgentPaneLogTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private teamAgentThinkingLogBuffers = new Map<string, string>();
+  private teamAgentThinkingLogTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  protected readonly teamWorkbenchPaneCommands = signal<string[]>(Array.from({ length: 6 }, () => ''));
+  protected readonly teamWorkbenchPaneLogs = signal<Map<string, Array<{ time: string; type: string; msg: string }>>>(new Map());
+  private readonly teamAgentNameMap = signal<Map<string, string>>(new Map());
   private activeTeamTabId = signal<string | null>(null);
+  protected readonly teamWorkbenchVm = signal(this.multiAgent.getCurrentVm());
+  protected readonly teamRunMinimizedIndices = signal<Set<number>>(new Set());
+  protected readonly teamRunMaximizedIndex = signal<number | null>(null);
+  protected readonly teamWorkbenchAgents = computed(() => {
+    const vm = this.teamWorkbenchVm();
+    const logs = this.teamWorkbenchPaneLogs();
+    const nameMap = this.teamAgentNameMap();
+    const teammates = vm.teammates;
+    const knownIds = new Set(teammates.map(t => t.agentId));
+    const extraAgents: Array<{ agentId: string; name: string; role?: string }> = [];
+    for (const agentId of logs.keys()) {
+      if (!knownIds.has(agentId)) {
+        extraAgents.push({ agentId, name: nameMap.get(agentId) || agentId, role: 'teammate' });
+      }
+    }
+    return [...teammates, ...extraAgents];
+  });
   /** 工具调用轨迹，与历史消息合并为右栏「记忆」 */
   private readonly toolMemoryTrace = signal<MemoryVm[]>([]);
 
@@ -840,6 +858,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.subscribeToAgentEvents();
     this.syncTimer = window.setInterval(() => {
       this.syncCoordinatorState();
+      this.bindTeamWorkbenchState();
       void this.rebuildMemoryPanel();
     }, 500);
     this.memoryStatsTimer = window.setInterval(() => {
@@ -1012,11 +1031,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   }
 
   protected isTeamTab(tab: string): boolean {
-    return tab.startsWith('Team / ');
+    return tab === 'Team Run' || tab.startsWith('Team / ');
   }
 
   protected isTerminalTab(tab: string): boolean {
-    return this.isDebugTab(tab) || this.isLoopTab(tab) || this.isTeamTab(tab);
+    return this.isDebugTab(tab) || this.isLoopTab(tab) || this.isTeamTab(tab) || tab === 'Team Run';
   }
 
   protected debugTabViewModel(tab: string): import('./debug/debug-command.types').DebugTabViewModel | null {
@@ -1028,6 +1047,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected async openDebugPromptTab(): Promise<void> {
     await this.openDebugTab('prompt', this.activeDebugSessionId());
+  }
+
+  protected openTeamRunTab(): void {
+    this.openCollaborationTab();
   }
 
   protected async openDebugMemoryTab(): Promise<void> {
@@ -1061,6 +1084,19 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   protected readonly structConfirmName = signal('');
   /** struct 确认模式是否已回显过用户输入 */
   protected readonly structConfirmInputEchoed = signal(false);
+
+  // ── Team Run 需求确认模式 ──
+  /** 是否正在主终端与产品经理对话确认需求文档 */
+  protected readonly teamRunRequirementMode = signal(false);
+  /** 待确认的 team-run 原始命令 */
+  protected readonly teamRunPendingCommand = signal('');
+  /** team-run 需求确认模式是否已回显过用户输入 */
+  protected readonly teamRunRequirementInputEchoed = signal(false);
+  /** team-run 需求确认对话的 struct 名称 */
+  protected readonly teamRunPendingStructName = signal('');
+  /** team-run 需求确认对话的任务描述 */
+  protected readonly teamRunPendingTask = signal('');
+  protected readonly teamRunBrainstorm = signal(false);
 
   // ── 多任务管理 ──
   /** 所有 Loop 任务的摘要列表 */
@@ -1374,81 +1410,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected toggleTaskListExpanded(): void {
     this.taskListExpanded.update((v) => !v);
-  }
-
-  protected toggleChangedFilesExpanded(): void {
-    this.changedFilesExpanded.update((v) => !v);
-    if (this.changedFilesExpanded()) {
-      void this.refreshRightPanelChangedFiles();
-    }
-  }
-
-  protected changedFileStatusClass(status: string): string {
-    if (status === 'M' || status === 'MM') return 'status-modified';
-    if (status === 'A' || status === 'AM') return 'status-added';
-    if (status === 'D') return 'status-deleted';
-    if (status === 'R') return 'status-renamed';
-    if (status === '?' || status === '!!') return 'status-untracked';
-    return 'status-other';
-  }
-
-  protected async refreshRightPanelChangedFiles(): Promise<void> {
-    try {
-      const por = await window.zytrader.terminal.exec('cmd.exe /c git status --porcelain=1 -u 2>nul', '.');
-      const files: RightPanelChangedFile[] = [];
-      if (por.stdout) {
-        const rawFiles: { path: string; status: string }[] = [];
-        for (const line of por.stdout.split(/\r?\n/)) {
-          const raw = line.trim();
-          if (!raw) continue;
-          const status = raw.slice(0, 2).trim();
-          const pathPart = raw.slice(3).trim();
-          const path = pathPart.includes(' -> ') ? pathPart.split(' -> ').pop()?.trim() ?? pathPart : pathPart;
-          if (path) rawFiles.push({ path: path.replace(/\\/g, '/'), status: status || '?' });
-        }
-        if (rawFiles.length > 0) {
-          const mtimeMap = new Map<string, string>();
-          const psScript = rawFiles.map(f => {
-            const escaped = f.path.replace(/'/g, "''");
-            return `try { $i=Get-Item -LiteralPath '${escaped}' -ErrorAction SilentlyContinue; if($i) { Write-Output ('${f.path}|' + $i.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')) } } catch {}`;
-          }).join('; ');
-          try {
-            const r = await window.zytrader.terminal.exec(
-              `powershell -NoProfile -NonInteractive -Command "${psScript}"`,
-              '.',
-            );
-            if (r.stdout) {
-              for (const line of r.stdout.split(/\r?\n/)) {
-                const t = line.trim();
-                if (!t) continue;
-                const sepIdx = t.lastIndexOf('|');
-                if (sepIdx < 0) continue;
-                const fpath = t.slice(0, sepIdx);
-                const mtime = t.slice(sepIdx + 1);
-                if (fpath && mtime) mtimeMap.set(fpath, mtime);
-              }
-            }
-          } catch {}
-          for (const f of rawFiles) {
-            files.push({
-              path: f.path,
-              status: f.status,
-              mtime: mtimeMap.get(f.path) || '',
-            });
-          }
-          files.sort((a, b) => {
-            if (a.mtime && b.mtime) return b.mtime.localeCompare(a.mtime);
-            if (a.mtime) return -1;
-            if (b.mtime) return 1;
-            return a.path.localeCompare(b.path);
-          });
-        }
-      }
-      this.rightPanelChangedFiles.set(files);
-    } catch {
-      this.rightPanelChangedFiles.set([]);
-    }
-    this.cdr.markForCheck();
   }
 
   protected currentModeLabel(): string {
@@ -2182,6 +2143,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       this.psFitAddon?.fit();
       if (tab === 'Terminal - Main') {
         this.focusAiTerminal();
+        this.forceAiCursorVisible();
       }
       if (this.isTerminalTab(tab)) {
         this.focusDebugTerminal();
@@ -2197,6 +2159,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     if (tab === 'Terminal - Main') return;
     this.tabEditorState.delete(tab);
     this.agentIdByTab.delete(tab);
+    if (tab === 'Team Run') {
+      this.activeTeamTabId.set(null);
+    }
     const cur = this.tabs().filter((t) => t !== tab);
     this.tabs.set(cur);
     if (this.activeTab() === tab) {
@@ -3014,9 +2979,64 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.xterm?.focus();
   }
 
+  private ensureAiTerminalFocusedState(): void {
+    const host = this.xtermHost?.nativeElement;
+    if (!host) return;
+    const xtermRoot = host.querySelector('.xterm') as HTMLElement | null;
+    const helper = host.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+    xtermRoot?.classList.add('xterm-focus');
+    if (helper && document.activeElement !== helper) {
+      try {
+        helper.focus({ preventScroll: true });
+      } catch {
+        helper.focus();
+      }
+    }
+  }
+
+  private forceAiCursorVisible(): void {
+    if (!this.xterm) return;
+    const host = this.xtermHost?.nativeElement;
+    if (!host) return;
+    this.ensureAiTerminalFocusedState();
+    const cursor = host.querySelector('.xterm-cursor') as HTMLElement | null;
+    if (cursor) {
+      cursor.style.visibility = 'visible';
+      cursor.style.display = 'block';
+    }
+  }
+
   protected focusPowerShellTerminal(): void {
     this.psTerminal?.focus();
-    this.psTerminal?.write('\x1b[?25h');
+    this.forcePsCursorVisible();
+    this.ensurePsTerminalFocusedState();
+  }
+
+  private ensurePsTerminalFocusedState(): void {
+    const host = this.psHost?.nativeElement;
+    if (!host) return;
+    const xtermRoot = host.querySelector('.xterm') as HTMLElement | null;
+    const helper = host.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+    xtermRoot?.classList.add('xterm-focus');
+    if (helper && document.activeElement !== helper) {
+      try {
+        helper.focus({ preventScroll: true });
+      } catch {
+        helper.focus();
+      }
+    }
+  }
+
+  private forcePsCursorVisible(): void {
+    if (!this.psTerminal) return;
+    const host = this.psHost?.nativeElement;
+    if (!host) return;
+    this.ensurePsTerminalFocusedState();
+    const cursor = host.querySelector('.xterm-cursor') as HTMLElement | null;
+    if (cursor) {
+      cursor.style.visibility = 'visible';
+      cursor.style.display = 'block';
+    }
   }
 
   protected onBottomResizeStart(event: MouseEvent): void {
@@ -3039,9 +3059,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   protected toggleRightPanel(): void {
     this.rightPanelVisible.update((v) => !v);
-    if (this.rightPanelVisible()) {
-      void this.refreshRightPanelChangedFiles();
-    }
     queueMicrotask(() => {
       this.fitAddon?.fit();
       this.updateTabOverflow();
@@ -4606,7 +4623,10 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.xterm.loadAddon(this.fitAddon);
     this.xterm.open(host);
     this.fitAddon.fit();
-    queueMicrotask(() => this.focusAiTerminal());
+    queueMicrotask(() => {
+      this.focusAiTerminal();
+      this.forceAiCursorVisible();
+    });
 
     this.xterm.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== 'keydown') return true;
@@ -4649,6 +4669,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     };
     host.addEventListener('contextmenu', this.aiXtermContextMenu);
 
+    host.addEventListener('mousedown', () => {
+      queueMicrotask(() => this.ensureAiTerminalFocusedState());
+    });
+
+    host.addEventListener('focusin', () => {
+      this.ensureAiTerminalFocusedState();
+      this.forceAiCursorVisible();
+    });
 
     host.addEventListener('keydown', (e) => {
       if (e.shiftKey && e.code === 'Tab') {
@@ -5063,22 +5091,167 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.writeDebugTerminalPrompt();
   }
 
-  private openTeamTab(structName: string): void {
-    const tabKey = `Team / ${structName}`;
+  private openCollaborationTab(): void {
+    const tabKey = 'Team Run';
     this.addTabIfMissing(tabKey);
+    this.teamWorkbenchVm.set(this.multiAgent.getCurrentVm());
+    this.bindTeamWorkbenchState();
     this.activeTeamTabId.set(tabKey);
     this.setTab(tabKey);
 
-    if (!this.debugTerminalInitialized) {
-      setTimeout(() => {
-        this.initDebugXterm();
-        this.debugXtermWrite(`\x1b[35m[Team]\x1b[0m 协作结构 \x1b[33m${structName}\x1b[0m 启动中...\r\n`);
-        this.writeDebugTerminalPrompt();
-      }, 100);
-    } else {
-      this.debugXtermWrite(`\x1b[35m[Team]\x1b[0m 协作结构 \x1b[33m${structName}\x1b[0m 启动中...\r\n`);
-      this.writeDebugTerminalPrompt();
+    this.leftPanelVisible.set(true);
+    this.terminalMenuVisible.set(false);
+    this.rightPanelVisible.set(false);
+
+    this.sidebarView.set('explorer');
+    this.projectTreeExpanded.set(false);
+    this.recentSessionsExpanded.set(false);
+    this.memoryVaultExpanded.set(true);
+    this.gitChangesExpanded.set(false);
+    this.gitCommitsExpanded.set(false);
+
+    const tree = this.memoryTree();
+    this.collapseAllDirNodes(tree);
+    for (const n of tree) {
+      if (n.name === '03-AGENT-TOOLS') {
+        n.expanded = true;
+        if (!n.loaded) {
+          void this.loadDir('03-AGENT-TOOLS', n, 'vault').then(() => {
+            const docsNode = (n.children || []).find(c => c.type === 'dir' && c.name === '08-Docs');
+            if (docsNode) {
+              docsNode.expanded = true;
+              if (!docsNode.loaded) {
+                void this.loadDir('03-AGENT-TOOLS/08-Docs', docsNode, 'vault');
+              }
+            }
+            this.memoryTree.set([...this.memoryTree()]);
+          });
+        } else {
+          const docsNode = (n.children || []).find(c => c.type === 'dir' && c.name === '08-Docs');
+          if (docsNode) {
+            docsNode.expanded = true;
+            if (!docsNode.loaded) {
+              void this.loadDir('03-AGENT-TOOLS/08-Docs', docsNode, 'vault');
+            }
+          }
+        }
+      }
     }
+    this.memoryTree.set([...tree]);
+
+    this.cdr.markForCheck();
+  }
+
+  private bindTeamWorkbenchState(): void {
+    const vm = this.multiAgent.getCurrentVm();
+    this.teamWorkbenchVm.set(vm);
+    if (this.teamRunMinimizedIndices().size > vm.teammates.length) {
+      const next = new Set<number>();
+      for (const index of this.teamRunMinimizedIndices()) {
+        if (index < vm.teammates.length) next.add(index);
+      }
+      this.teamRunMinimizedIndices.set(next);
+    }
+    if (this.teamRunMaximizedIndex() !== null && this.teamRunMaximizedIndex()! >= vm.teammates.length) {
+      this.teamRunMaximizedIndex.set(null);
+    }
+  }
+
+  protected teamWorkbenchMinimizedIndices(): Set<number> {
+    return this.teamRunMinimizedIndices();
+  }
+
+  protected teamWorkbenchMaximizedIndex(): number | null {
+    return this.teamRunMaximizedIndex();
+  }
+
+  protected onTeamRunMinimizedChange(next: Set<number>): void {
+    this.teamRunMinimizedIndices.set(new Set(next));
+    this.cdr.markForCheck();
+  }
+
+  protected onTeamRunMaximizedChange(next: number | null): void {
+    this.teamRunMaximizedIndex.set(next);
+    this.cdr.markForCheck();
+  }
+
+  protected onTeamRunCommandInputChanged(event: { index: number; value: string }): void {
+    const next = [...this.teamWorkbenchPaneCommands()];
+    next[event.index] = event.value;
+    this.teamWorkbenchPaneCommands.set(next);
+  }
+
+  protected onTeamRunCommandInput(event: { index: number; value: string }): void {
+    this.onTeamRunCommandInputChanged(event);
+  }
+
+  protected onTeamRunCommand(event: { index: number; value: string }): void {
+    const agents = this.teamWorkbenchAgents();
+    const agent = agents[event.index];
+    if (!agent) return;
+    const agentId = agent.agentId || '';
+    if (!agentId) return;
+
+    this.appendTeamPaneLog(agentId, 'user', event.value);
+
+    const vm = this.teamWorkbenchVm();
+    const teammate = vm.teammates.find(t => t.agentId === agentId);
+
+    if (teammate) {
+      void this.multiAgent.sendMessage(agentId, event.value).catch(err => {
+        this.appendTeamPaneLog(agentId, 'system', `发送失败: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    } else {
+      void this.sendDirectAgentMessage(agentId, agent.name, agent.role, event.value);
+    }
+
+    const current = this.teamWorkbenchVm();
+    this.teamWorkbenchVm.set({ ...current, updatedAt: Date.now() });
+    const next = [...this.teamWorkbenchPaneCommands()];
+    next[event.index] = '';
+    this.teamWorkbenchPaneCommands.set(next);
+    this.cdr.markForCheck();
+  }
+
+  private async sendDirectAgentMessage(agentId: string, agentName: string, role: string | undefined, text: string): Promise<void> {
+    try {
+      const assistant = this.runtime.assistant;
+      const client = this.runtime.client;
+      const modelConfig = client.getModel();
+
+      const roleHint = role ? `你的角色是：${role}。` : '';
+      const systemPrompt = `${roleHint}你是团队协作中的${agentName}，请根据用户的指令给出专业的回答。`;
+
+      const sessionId = `team-direct-${agentId}-${Date.now()}`;
+      const response = await assistant.chatWithMeta(sessionId, {
+        userInput: text,
+        systemPrompt,
+        config: modelConfig,
+      });
+
+      const responseText = response.message?.content || '';
+      if (responseText) {
+        this.appendTeamPaneLog(agentId, 'output', responseText);
+      }
+    } catch (error) {
+      this.appendTeamPaneLog(agentId, 'system', `响应失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    this.cdr.markForCheck();
+  }
+
+  protected onTeamRunPaneClosed(indexOrEvent: number | Event): void {
+    const index = typeof indexOrEvent === 'number' ? indexOrEvent : Number((indexOrEvent.target as HTMLElement | null)?.getAttribute?.('data-index') ?? NaN);
+    if (!Number.isInteger(index) || index < 0) return;
+    const vm = this.teamWorkbenchVm();
+    const teammates = vm.teammates.filter((_, i) => i !== index);
+    this.teamWorkbenchVm.set({ ...vm, teammates, updatedAt: Date.now() });
+    const minimized = new Set(this.teamRunMinimizedIndices());
+    minimized.delete(index);
+    this.teamRunMinimizedIndices.set(minimized);
+    if (this.teamRunMaximizedIndex() === index) {
+      this.teamRunMaximizedIndex.set(null);
+    }
+    this.cdr.markForCheck();
   }
 
   private async replayMainSessionHistory(): Promise<void> {
@@ -5569,6 +5742,12 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
+    // ── Team Run 需求确认模式：用户正在与产品经理对话确认需求文档 ──
+    if (this.teamRunRequirementMode()) {
+      await this.handleTeamRunRequirementInput(t);
+      return;
+    }
+
     if (this.activeTab() === 'Loop / Task') {
       const loopHandled = await this.handleLoopTabInput(t);
       if (loopHandled) return;
@@ -5580,12 +5759,28 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const isTeamRun = /^\/team-run\b/i.test(t);
 
       if (isTeamRun) {
-        const parts = t.trim().split(/\s+/);
-        const structName = parts[1] || '';
-        if (structName) {
-          this.aiXtermWrite(`\r\n\x1b[35m[team]\x1b[0m 协作输出已切换到 \x1b[33mTeam / ${structName}\x1b[0m tab\r\n`);
-          this.openTeamTab(structName);
+        const hasBrainstormFlag = /\s-b\b/.test(t);
+        const cleanedInput = t.replace(/\s-b\b/g, '');
+        const structMatch = cleanedInput.match(/^\/team-run\s+(\S+)\s+(.+)$/s);
+        const structName = structMatch?.[1] || '';
+        const task = structMatch?.[2] || '';
+
+        this.teamRunRequirementMode.set(true);
+        this.teamRunPendingCommand.set(t);
+        this.teamRunPendingStructName.set(structName);
+        this.teamRunPendingTask.set(task);
+        this.teamRunBrainstorm.set(hasBrainstormFlag);
+        this.teamRunRequirementInputEchoed.set(false);
+
+        if (hasBrainstormFlag) {
+          this.aiXtermWrite(`\r\n\x1b[35m[team]\x1b[0m 正在启动产品经理对话（头脑风暴模式），请先确认需求文档...\r\n`);
+        } else {
+          this.aiXtermWrite(`\r\n\x1b[35m[team]\x1b[0m 正在启动产品经理对话，请先确认需求文档...\r\n`);
         }
+        this.writeMainTerminalPrompt();
+
+        void this.startTeamRunPmConversation(structName, task, hasBrainstormFlag);
+        return;
       }
 
       const processedTeam = await this.commandProcessing.process(t, {
@@ -5621,8 +5816,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       if (hasTabKey) {
         const tabKey = String(processedTeam.executionResult.metadata!['tabKey']);
         const isTeamCommand = /^team-(role|struct):/i.test(tabKey);
+        const isTeamRun = tabKey === 'Team Run';
         
-        if (isTeamCommand && filePath) {
+        if ((isTeamCommand || isTeamRun) && filePath) {
           this.addTabIfMissing(tabKey);
           const openScope = processedTeam.executionResult.metadata?.['openScope'] === 'workspace' ? 'workspace' : 'vault';
           
@@ -5728,9 +5924,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         }
       }
 
-      // debug 命令不在主终端展示任何内容（结果在独立 debug 终端 tab 中展示）
+      // debug / team-run 命令不在主终端展示重复内容，改为独立 tab 承载
       const isTerminalTabDirective = processed.executionResult.responseType === 'directive' &&
         /^\/debug\b/i.test(processed.preprocessed.normalized.trim());
+      const isTeamRunDirective = processed.executionResult.responseType === 'directive' &&
+        /^\/team-run\b/i.test(processed.preprocessed.normalized.trim());
       
       // 对于 natural 或 fallback 路由，不调用 presentUnifiedCommandEntry，避免重复输出用户输入
       const isNaturalOrFallback = processed.executionResult.responseType === 'fallback' || 
@@ -5738,7 +5936,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
                                   (processed.executionResult.responseType !== 'directive' && 
                                    processed.executionResult.responseType !== 'shell');
 
-      if (!isTerminalTabDirective && !isNaturalOrFallback) {
+      if (!isTerminalTabDirective && !isTeamRunDirective && !isNaturalOrFallback) {
         this.presentUnifiedCommandEntry(processed.executionResult);
       }
 
@@ -5984,6 +6182,180 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.structConfirmInputEchoed.set(false);
     this.aiXtermWrite('\x1b[36m[team-struct] 正在更新方案...\x1b[0m\r\n');
     await this.dispatchMainTerminalLine(`/team-struct update ${input}`);
+  }
+
+  private async startTeamRunPmConversation(structName: string, task: string, brainstorm: boolean = false): Promise<void> {
+    const assistant = this.runtime.assistant;
+    const client = this.runtime.client;
+    const modelConfig = client.getModel();
+
+    const baseRules = `你是一位经验丰富的产品经理。用户想要启动一个团队协作任务来完成任务。
+
+协作结构：${structName || '未指定'}
+任务描述：${task || '未指定'}
+
+你的职责是：
+1. 理解并明确需求
+2. 输出完整的需求文档，包含：用户故事、功能需求列表、非功能需求、优先级排序
+3. 确保用户对需求文档完全满意
+
+重要规则：
+- 你是产品经理，只负责需求分析和文档输出，绝不编写、修改或执行任何代码
+- 你不负责技术实现、代码编写、文件修改等开发工作
+- 如果用户要求你写代码或修改文件，请拒绝并说明这不在你的职责范围内`;
+
+    const brainstormRules = brainstorm
+      ? `\n- 你需要与用户进行充分的需求沟通和头脑风暴，每次只问1-2个关键问题，逐步明确需求`
+      : `\n- 请直接根据用户的任务描述生成需求文档，不需要逐个问题确认`;
+
+    const closingRules = `
+- 当你认为需求已经足够明确时，输出完整的需求文档
+- 在需求文档的最后一行，必须写上「需求文档已确认，输入"确认"开始团队执行」
+- 如果用户说"取消"或"退出"，回复"已取消需求确认"`;
+
+    const systemPrompt = baseRules + brainstormRules + closingRules;
+
+    const sessionId = `team-pm-${Date.now()}`;
+    const userFirstMessage = task
+      ? `我想启动团队协作任务。协作结构：${structName}，任务描述：${task}。请帮我梳理和确认需求。`
+      : '我想启动团队协作任务，请帮我梳理需求。';
+
+    try {
+      const response = await assistant.chatWithMeta(sessionId, {
+        userInput: userFirstMessage,
+        systemPrompt,
+        config: modelConfig,
+      });
+
+      const responseText = response.message?.content || '';
+      const reasoningContent = (response.message as any)?.reasoningContent || (response as any)?.reasoningContent || '';
+      if (reasoningContent) {
+        const cols = Math.max(40, this.xterm?.cols ?? 100);
+        const framed = this.frameThinkingContent(this.nextThinkingBlockId++, reasoningContent, cols);
+        this.aiXtermWrite(`\r\n${framed.replace(/\n/g, '\r\n')}\r\n`);
+      }
+      if (responseText) {
+        this.aiXtermWrite(`\r\n\x1b[35m[产品经理]\x1b[0m ${responseText.replace(/\n/g, '\r\n')}\r\n`);
+      }
+    } catch (error) {
+      this.aiXtermWrite(`\x1b[31m[产品经理] 启动对话失败: ${error instanceof Error ? error.message : String(error)}\x1b[0m\r\n`);
+      this.teamRunRequirementMode.set(false);
+    }
+    this.writeMainTerminalPrompt();
+  }
+
+  private static readonly TEAM_RUN_CONFIRM_WORDS = /^(确认|确认需求|确认开始|开始执行|确认执行|ok|yes|confirm|start)$/i;
+  private static readonly TEAM_RUN_CANCEL_WORDS = /^(取消|退出|exit|cancel|quit|abort)$/i;
+
+  private async handleTeamRunRequirementInput(input: string): Promise<void> {
+    if (!this.teamRunRequirementInputEchoed()) {
+      this.aiXtermWrite(`\r\n\x1b[90m[用户]\x1b[0m ${input}\r\n`);
+      this.teamRunRequirementInputEchoed.set(true);
+    }
+
+    const trimmedInput = input.trim();
+
+    if (WorkbenchPageComponent.TEAM_RUN_CANCEL_WORDS.test(trimmedInput)) {
+      this.teamRunRequirementMode.set(false);
+      this.teamRunPendingCommand.set('');
+      this.teamRunPendingStructName.set('');
+      this.teamRunPendingTask.set('');
+      this.teamRunBrainstorm.set(false);
+      this.teamRunRequirementInputEchoed.set(false);
+      this.aiXtermWrite('\x1b[33m[team] 需求确认已取消。\x1b[0m\r\n');
+      this.writeMainTerminalPrompt();
+      return;
+    }
+
+    if (WorkbenchPageComponent.TEAM_RUN_CONFIRM_WORDS.test(trimmedInput)) {
+      this.teamRunRequirementMode.set(false);
+      this.teamRunRequirementInputEchoed.set(false);
+      this.aiXtermWrite('\x1b[36m[team] 需求已确认，正在启动团队执行...\x1b[0m\r\n');
+
+      const rawCommand = this.teamRunPendingCommand();
+      this.teamRunPendingCommand.set('');
+      this.teamRunPendingStructName.set('');
+      this.teamRunPendingTask.set('');
+      this.teamRunBrainstorm.set(false);
+
+      this.openCollaborationTab();
+
+      const processedTeam = await this.commandProcessing.process(rawCommand, {
+        sessionId: SESSION_ID,
+        mode: this.runtime.coordinator.getState().mode,
+        source: 'user',
+      }, {
+        source: 'user',
+        preservePrefixes: false,
+        allowBridgeSlashCommands: true,
+      });
+
+      if (processedTeam.executionResult.responseType === 'directive') {
+        await this.runDirective(rawCommand);
+      }
+      return;
+    }
+
+    this.teamRunRequirementInputEchoed.set(false);
+
+    const assistant = this.runtime.assistant;
+    const client = this.runtime.client;
+    const modelConfig = client.getModel();
+
+    const structName = this.teamRunPendingStructName();
+    const task = this.teamRunPendingTask();
+    const brainstorm = this.teamRunBrainstorm();
+
+    const baseRules = `你是一位经验丰富的产品经理。用户想要启动一个团队协作任务来完成任务。
+
+协作结构：${structName || '未指定'}
+任务描述：${task || '未指定'}
+
+你的职责是：
+1. 理解并明确需求
+2. 输出完整的需求文档，包含：用户故事、功能需求列表、非功能需求、优先级排序
+3. 确保用户对需求文档完全满意
+
+重要规则：
+- 你是产品经理，只负责需求分析和文档输出，绝不编写、修改或执行任何代码
+- 你不负责技术实现、代码编写、文件修改等开发工作
+- 如果用户要求你写代码或修改文件，请拒绝并说明这不在你的职责范围内`;
+
+    const brainstormRules = brainstorm
+      ? `\n- 你需要与用户进行充分的需求沟通和头脑风暴，每次只问1-2个关键问题，逐步明确需求`
+      : `\n- 请直接根据用户的任务描述生成需求文档，不需要逐个问题确认`;
+
+    const closingRules = `
+- 当你认为需求已经足够明确时，输出完整的需求文档
+- 在需求文档的最后一行，必须写上「需求文档已确认，输入"确认"开始团队执行」
+- 如果用户说"取消"或"退出"，回复"已取消需求确认"`;
+
+    const systemPrompt = baseRules + brainstormRules + closingRules;
+
+    const sessionId = `team-pm-${Date.now()}`;
+
+    try {
+      const response = await assistant.chatWithMeta(sessionId, {
+        userInput: trimmedInput,
+        systemPrompt,
+        config: modelConfig,
+      });
+
+      const responseText = response.message?.content || '';
+      const reasoningContent = (response.message as any)?.reasoningContent || (response as any)?.reasoningContent || '';
+      if (reasoningContent) {
+        const cols = Math.max(40, this.xterm?.cols ?? 100);
+        const framed = this.frameThinkingContent(this.nextThinkingBlockId++, reasoningContent, cols);
+        this.aiXtermWrite(`\r\n${framed.replace(/\n/g, '\r\n')}\r\n`);
+      }
+      if (responseText) {
+        this.aiXtermWrite(`\r\n\x1b[35m[产品经理]\x1b[0m ${responseText.replace(/\n/g, '\r\n')}\r\n`);
+      }
+    } catch (error) {
+      this.aiXtermWrite(`\x1b[31m[产品经理] 对话失败: ${error instanceof Error ? error.message : String(error)}\x1b[0m\r\n`);
+      this.teamRunRequirementMode.set(false);
+    }
+    this.writeMainTerminalPrompt();
   }
 
   /** Loop tab 中的输入：用于继续执行或回到主终端 */
@@ -7301,6 +7673,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         const payload = (event as MultiAgentEvent<'agent.thinking'>).payload as { agentId: string; thinking: string };
         if (payload?.agentId && payload?.thinking) {
           this.writeTeamAgentThinkingToTerminal(payload.agentId, payload.thinking);
+          this.bufferTeamThinkingLog(payload.agentId, payload.thinking);
         }
       }),
     );
@@ -7312,6 +7685,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
         const payload = (event as MultiAgentEvent<'agent.output'>).payload as { agentId: string; output: string };
         if (payload?.agentId && payload?.output) {
           this.writeTeamAgentOutputToTerminal(payload.agentId, payload.output);
+          this.bufferTeamPaneLog(payload.agentId, payload.output);
         }
       }),
     );
@@ -7325,6 +7699,9 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           this.teamAgentHeaderShown.delete(payload.descriptor.agentId);
           this.teamAgentOutputBuffers.delete(payload.descriptor.agentId);
           this.teamAgentThinkingBuffers.delete(payload.descriptor.agentId);
+          this.teamAgentThinkingRendered.delete(payload.descriptor.agentId);
+          this.updateTeamAgentName(payload.descriptor.agentId, payload.descriptor.agentName);
+          this.appendTeamPaneLog(payload.descriptor.agentId, 'system', `已创建 ${payload.descriptor.agentName}`);
         }
       }),
     );
@@ -7335,21 +7712,24 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
           e.type === EVENT_TYPES.TEAM_RUNTIME_MEMBER_JOINED
         ),
       ).subscribe(event => {
-        const payload = event.payload as { agentId: string; roleName: string };
+        const payload = event.payload as { teamId?: string; agentId: string; roleName: string };
         if (payload?.agentId) {
           this.teamAgentHeaderShown.delete(payload.agentId);
           this.teamAgentOutputBuffers.delete(payload.agentId);
           this.teamAgentThinkingBuffers.delete(payload.agentId);
+          this.teamAgentThinkingRendered.delete(payload.agentId);
           const name = payload.roleName || payload.agentId;
+          this.updateTeamAgentName(payload.agentId, name);
           const color = this.getAgentColor(payload.agentId);
           this.teamDebugWrite(`\r\n${color}[${name}]\x1b[0m 已加入团队\r\n`);
+          this.appendTeamPaneLog(payload.agentId, 'system', `已加入团队：${name}`);
         }
       }),
     );
   }
 
   private teamDebugWrite(text: string): void {
-    if (this.activeTeamTabId()) {
+    if (this.activeTeamTabId() || this.isTeamTab(this.activeTab())) {
       this.debugXtermWrite(text);
     } else {
       this.aiXtermWrite(text);
@@ -7370,9 +7750,6 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
   private writeTeamAgentThinkingToTerminal(agentId: string, thinking: string): void {
     if (!this.teamAgentHeaderShown.has(agentId)) {
-      const name = this.resolveAgentName(agentId);
-      const color = this.getAgentColor(agentId);
-      this.teamDebugWrite(`\r\n${color}[${name} - 思考中]\x1b[0m\r\n`);
       this.teamAgentHeaderShown.set(agentId, true);
     }
     const existing = this.teamAgentThinkingBuffers.get(agentId) || '';
@@ -7382,6 +7759,14 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
   private writeTeamAgentOutputToTerminal(agentId: string, output: string): void {
     const name = this.resolveAgentName(agentId);
     const color = this.getAgentColor(agentId);
+
+    const accumulatedThinking = this.teamAgentThinkingBuffers.get(agentId) || '';
+    if (accumulatedThinking && !this.teamAgentThinkingRendered.has(agentId)) {
+      this.teamAgentThinkingRendered.add(agentId);
+      const cols = Math.max(40, this.debugXterm?.cols ?? this.xterm?.cols ?? 100);
+      const framed = this.frameThinkingContent(this.nextThinkingBlockId++, accumulatedThinking, cols);
+      this.teamDebugWrite(`\r\n${framed.replace(/\n/g, '\r\n')}\r\n`);
+    }
 
     const { terminal } = this.teamLogger.formatAgentTerminalOutput(name, output);
 
@@ -7397,6 +7782,82 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     const existing = this.teamAgentOutputBuffers.get(agentId) || '';
     this.teamAgentOutputBuffers.set(agentId, existing + output);
+  }
+
+  private appendTeamPaneLog(agentId: string, type: 'user' | 'output' | 'system', msg: string): void {
+    const logs = this.teamWorkbenchPaneLogs();
+    const existing = logs.get(agentId) || [];
+    const time = new Date().toLocaleTimeString();
+    const paneLogs = [...existing, { time, type, msg }];
+
+    const newLogs = new Map(logs);
+    newLogs.set(agentId, paneLogs);
+    this.teamWorkbenchPaneLogs.set(newLogs);
+  }
+
+  private bufferTeamPaneLog(agentId: string, delta: string): void {
+    const existing = this.teamAgentPaneLogBuffers.get(agentId) || '';
+    const accumulated = existing + delta;
+    this.teamAgentPaneLogBuffers.set(agentId, accumulated);
+
+    const sentenceEndPattern = /[。！？\n.!?]/;
+    if (sentenceEndPattern.test(delta) || accumulated.length > 200) {
+      this.flushTeamPaneLog(agentId);
+    } else {
+      const existingTimer = this.teamAgentPaneLogTimers.get(agentId);
+      if (existingTimer) clearTimeout(existingTimer);
+      this.teamAgentPaneLogTimers.set(agentId, setTimeout(() => {
+        this.flushTeamPaneLog(agentId);
+      }, 600));
+    }
+  }
+
+  private flushTeamPaneLog(agentId: string): void {
+    const timer = this.teamAgentPaneLogTimers.get(agentId);
+    if (timer) {
+      clearTimeout(timer);
+      this.teamAgentPaneLogTimers.delete(agentId);
+    }
+    const buffered = this.teamAgentPaneLogBuffers.get(agentId);
+    if (!buffered) return;
+    this.teamAgentPaneLogBuffers.delete(agentId);
+    this.appendTeamPaneLog(agentId, 'output', buffered);
+  }
+
+  private bufferTeamThinkingLog(agentId: string, delta: string): void {
+    const existing = this.teamAgentThinkingLogBuffers.get(agentId) || '';
+    const accumulated = existing + delta;
+    this.teamAgentThinkingLogBuffers.set(agentId, accumulated);
+
+    const sentenceEndPattern = /[。！？\n.!?]/;
+    if (sentenceEndPattern.test(delta) || accumulated.length > 200) {
+      this.flushTeamThinkingLog(agentId);
+    } else {
+      const existingTimer = this.teamAgentThinkingLogTimers.get(agentId);
+      if (existingTimer) clearTimeout(existingTimer);
+      this.teamAgentThinkingLogTimers.set(agentId, setTimeout(() => {
+        this.flushTeamThinkingLog(agentId);
+      }, 600));
+    }
+  }
+
+  private flushTeamThinkingLog(agentId: string): void {
+    const timer = this.teamAgentThinkingLogTimers.get(agentId);
+    if (timer) {
+      clearTimeout(timer);
+      this.teamAgentThinkingLogTimers.delete(agentId);
+    }
+    const buffered = this.teamAgentThinkingLogBuffers.get(agentId);
+    if (!buffered) return;
+    this.teamAgentThinkingLogBuffers.delete(agentId);
+    const display = buffered.length > 300 ? `${buffered.slice(0, 300)}...` : buffered;
+    this.appendTeamPaneLog(agentId, 'system', `[思考] ${display}`);
+  }
+
+  private updateTeamAgentName(agentId: string, name: string): void {
+    const map = new Map(this.teamAgentNameMap());
+    map.set(agentId, name);
+    this.teamAgentNameMap.set(map);
   }
 
   private resolveAgentName(agentId: string): string {
@@ -7455,7 +7916,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.psFitAddon = new FitAddon();
     this.psTerminal = new Terminal({
       cursorBlink: true,
-      cursorStyle: 'underline',
+      cursorStyle: 'bar',
       cursorWidth: 2,
       fontFamily:
         "'JetBrains Mono', 'Cascadia Mono', Consolas, 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC', monospace",
@@ -7464,7 +7925,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       theme: {
         background: '#080b14',
         foreground: '#dbe7ff',
-        cursor: '#93c5fd',
+        cursor: '#facc15',
         cursorAccent: '#080b14',
         selectionBackground: '#1f2937',
         black: '#0b1020',
@@ -7492,7 +7953,16 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     this.psTerminal.open(host);
     this.psFitAddon.fit();
     this.psTerminal.focus();
-    this.psTerminal.write('\x1b[?25h');
+
+    this.psTerminal.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
+      for (const p of params) {
+        if (typeof p === 'number' && p === 25) return true;
+        if (Array.isArray(p) && p.includes(25)) return true;
+      }
+      return false;
+    });
+
+    this.forcePsCursorVisible();
 
     this.psTerminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== 'keydown') return true;
@@ -7534,11 +8004,28 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
 
     this.detachPsData = window.zytrader.terminal.onData((payload) => {
       if (payload.id !== this.activePsSessionId()) return;
-      const data = payload.data.replace(/\x1b\[\?25l/g, '\x1b[?25h');
+      const data = payload.data
+        .replace(/\x1b\[\?1c/g, '')
+        .replace(/\x1b\[\?([0-9;]*)(l|h)/g, (match, params, mode) => {
+          if (mode === 'l') {
+            const nums = params.split(';').filter(n => n !== '25');
+            if (nums.length === 0) return '';
+            return `\x1b[?${nums.join(';')}l`;
+          }
+          return match;
+        });
       this.psTerminal?.write(data);
       this.psSessions.update((arr) =>
         arr.map((s) => (s.id === payload.id ? { ...s, output: (s.output + payload.data).slice(-24000) } : s)),
       );
+      if (/\x1b\[2J/.test(payload.data) || /\x1b\[H/.test(payload.data)) {
+        setTimeout(() => {
+          const id = this.activePsSessionId();
+          if (id) {
+            void window.zytrader.terminal.write({ id, data: '\r' });
+          }
+        }, 50);
+      }
     });
 
     this.detachPsExit = window.zytrader.terminal.onExit((payload) => {
@@ -7552,6 +8039,15 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const id = this.activePsSessionId();
       if (!id) return;
       void window.zytrader.terminal.write({ id, data });
+    });
+
+    host.addEventListener('mousedown', () => {
+      queueMicrotask(() => this.ensurePsTerminalFocusedState());
+    });
+
+    host.addEventListener('focusin', () => {
+      this.ensurePsTerminalFocusedState();
+      this.forcePsCursorVisible();
     });
 
     this.psResizeObserver = new ResizeObserver(() => {
@@ -7623,6 +8119,11 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
       const id = this.activePsSessionId();
       if (id) {
         void window.zytrader.terminal.write({ id, data: 'Set-Location .\r' });
+        setTimeout(() => {
+          this.psTerminal?.clear();
+          this.forcePsCursorVisible();
+          this.focusPowerShellTerminal();
+        }, 200);
       }
     }, 600);
   }
@@ -7632,6 +8133,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     const target = this.psSessions().find((s) => s.id === id);
     this.psTerminal?.clear();
     if (target?.output) this.psTerminal?.write(target.output);
+    this.forcePsCursorVisible();
     queueMicrotask(() => {
       this.psFitAddon?.fit();
       this.focusPowerShellTerminal();
@@ -7640,6 +8142,7 @@ export class WorkbenchPageComponent implements AfterViewInit, OnDestroy {
     setTimeout(() => {
       this.psFitAddon?.fit();
       this.syncPowerShellSize();
+      this.forcePsCursorVisible();
     }, 80);
   }
 

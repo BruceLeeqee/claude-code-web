@@ -1,6 +1,6 @@
 <section class="proto-page collaboration-proto arena-page">
   <div class="arena-shell">
-    <div class="arena-content-with-sidebar">
+    <div class="arena-content-without-sidebar">
       <!-- Header -->
       <header class="arena-header">
         <div class="arena-branding">
@@ -13,56 +13,22 @@
           </div>
         </div>
         <div class="arena-top-nav">
+        <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'network'" (click)="switchTab('network')">多窗协作</button>
         <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'arena'" (click)="switchTab('arena')">智能体看板</button>
         <button type="button" class="arena-nav-btn" [class.is-active]="activeTab() === 'cognitive'" (click)="switchTab('cognitive')">可视化编排</button>
       </div>
       </header>
 
       <!-- Main Content -->
-      <div class="arena-viewport" [style.grid-template-columns]="activeTab() === 'cognitive' ? '1fr' : '260px 1fr 280px'">
-        <!-- ============ Left Panel (Hidden in cognitive view) ============ -->
-        <aside class="arena-sidebar-left" *ngIf="activeTab() !== 'cognitive'">
-          <!-- Timeline Panel -->
-          <div class="pixel-panel">
-            <app-timeline></app-timeline>
-          </div>
-
-          <!-- Shared Board Panel -->
-          <div class="pixel-panel">
-            <div class="panel-header panel-header-yellow">
-              <span class="panel-title">协作摘要</span>
-            </div>
-            <div class="shared-board">
-              <div class="board-item">
-                <span class="board-label">运行中智能体</span>
-                <span class="board-value board-value-yellow">{{ summaryValue('runningAgents') }}</span>
-              </div>
-              <div class="board-item">
-                <span class="board-label">当前任务</span>
-                <span class="board-value board-value-yellow">{{ summaryValue('currentTasks') }}</span>
-              </div>
-              <div class="board-item">
-                <span class="board-label">协作强度</span>
-                <span class="board-value board-value-green">{{ summaryValue('collaborationLevel') }}</span>
-              </div>
-              <div class="board-item">
-                <span class="board-label">同步延迟</span>
-                <span class="board-value board-value-blue">{{ summaryValue('syncLatency') }}</span>
-              </div>
-            </div>
-          </div>
-        </aside>
-
+      <div class="arena-viewport" [class.network-default-view]="activeTab() === 'network'" [style.grid-template-columns]="activeTab() === 'cognitive' ? '1fr' : activeTab() === 'network' ? '1fr' : '260px 1fr 280px'">
+        <div class="arena-scroll-shell">
         <!-- ============ ARENA VIEW ============ -->
         <ng-container *ngIf="activeTab() === 'arena'">
-          <!-- Center Stage -->
           <main class="arena-main">
             <app-battle-stage [stage]="battleStageData"></app-battle-stage>
           </main>
 
-          <!-- Right Panel -->
           <aside class="arena-sidebar-right">
-            <!-- Debate Panel -->
             <app-debate-panel></app-debate-panel>
 
             <div class="pixel-panel">
@@ -90,7 +56,6 @@
               </div>
             </div>
 
-            <!-- Agent Status Panel -->
             <div class="pixel-panel">
               <div class="panel-header panel-header-cyan">
                 <span class="panel-title">AGENT</span>
@@ -129,6 +94,11 @@
               </div>
             </div>
           </aside>
+        </ng-container>
+
+        <!-- ============ NETWORK VIEW ============ -->
+        <ng-container *ngIf="activeTab() === 'network'">
+          <app-collaboration-network [agents]="agents"></app-collaboration-network>
         </ng-container>
 
         <!-- ============ COGNITIVE VIEW ============ -->
@@ -216,30 +186,8 @@
 
 
 
-      </div>
-
-      <!-- Footer -->
-      <footer class="arena-footer">
-        <div class="footer-content">
-          <div class="footer-left">
-            <span class="footer-status">SYSTEM: {{ isPlaying() ? 'PLAYING' : 'PAUSED' }} / {{ 60 * speed }}FPS</span>
-          </div>
-          <div class="footer-center">
-            <button class="footer-btn" (click)="resetGame()">⏮</button>
-            <button class="footer-btn footer-btn-play" (click)="togglePlay()">{{ isPlaying() ? '⏸' : '▶' }}</button>
-            <button class="footer-btn" (click)="suggestScale()">⏭</button>
-            <span class="footer-divider">|</span>
-            <button *ngFor="let s of speeds" class="footer-btn" [class.footer-btn-max]="s === 8" [class.footer-btn-active]="speed === s" (click)="setSpeed(s)">{{ s }}X{{ s === 8 ? ' MAX' : '' }}</button>
-          </div>
-          <div class="footer-right">
-            <span class="footer-hint">[P] 暂停</span>
-            <span class="footer-hint">[R] 重置</span>
-            <span class="footer-hint">[M] 模式</span>
-            <span class="footer-hint">[TAB] 视图</span>
-          </div>
         </div>
-      </footer>
-
+      </div>
 
     </div>
   </div>

@@ -54,7 +54,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     enabled: true,
     maxMessagesBeforeCompact: 50,
     compactToMessages: 20,
-    maxEstimatedTokens: 24000,
+    maxEstimatedTokens: 120000,
   },
   cost: {
     maxSessionCostUsd: 5,

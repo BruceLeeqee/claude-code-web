@@ -198,8 +198,9 @@
               </div>
             </section>
 
-            <!-- 通用终端面板（Debug / Loop） -->
+            <!-- 通用终端面板（Debug / Loop / Team Run） -->
             <section class="debug-panel" *ngIf="isTerminalTab(activeTab())" (click)="focusDebugTerminal()">
+              <app-collaboration-network *ngIf="activeTab() === 'Team Run'" [team]="teamWorkbenchVm()" [agents]="teamWorkbenchAgents()" [minimizedIndices]="teamWorkbenchMinimizedIndices()" [maximizedIndex]="teamWorkbenchMaximizedIndex()" [messageOverrides]="teamWorkbenchPaneLogs()" [commandInputs]="teamWorkbenchPaneCommands()" (minimizedChange)="onTeamRunMinimizedChange($event)" (maximizedChange)="onTeamRunMaximizedChange($event)" (commandInputChanged)="onTeamRunCommandInputChanged($event)" (commandSubmitted)="onTeamRunCommand($event)" (paneClosed)="onTeamRunPaneClosed($event)"></app-collaboration-network>
               <!-- Loop Tab：带工具栏的双模式视图 -->
               <div *ngIf="isLoopTab(activeTab())" class="loop-panel">
                 <!-- 工具栏 -->
@@ -365,7 +366,7 @@
               </div>
 
               <!-- Debug Tab 或 Loop 终端视图：xterm -->
-              <div class="debug-terminal-body" *ngIf="!isLoopTab(activeTab()) || loopViewMode() === 'terminal'">
+              <div class="debug-terminal-body" *ngIf="activeTab() !== 'Team Run' && (!isLoopTab(activeTab()) || loopViewMode() === 'terminal')">
                 <div #debugXtermHost class="debug-xterm-host"></div>
               </div>
             </section>
@@ -440,40 +441,30 @@
               </div>
             </div>
 
-            <div class="changed-files-strip" [class.expanded]="changedFilesExpanded()">
-              <button type="button" class="task-list-header" (click)="toggleChangedFilesExpanded()">
-                <div class="task-list-left">
-                  <span class="task-list-badge changed-badge">&gt;变更文件</span>
-                  <span class="task-list-title" *ngIf="rightPanelChangedFiles().length">{{ rightPanelChangedFiles().length }} 个文件</span>
+            <div class="ai-composer compact recreated-composer" [class.has-images]="composerImages().length > 0">
+              <div class="composer-top-strip">
+                <div class="composer-top-left">
+                  <button type="button" class="composer-top-icon is-active" title="工具">
+                    <span nz-icon nzType="menu"></span>
+                  </button>
+                  <button type="button" class="composer-top-icon" title="模式" (click)="cycleWorkbenchCoordinationMode()">
+                    <span class="mode-icon">{{ workbenchModeLabel() }}</span>
+                  </button>
+                  <span class="composer-task-pill" *ngIf="loopTaskList().length">{{ currentTaskSummary() }}</span>
                 </div>
-                <span class="task-list-arrow">{{ changedFilesExpanded() ? '▾' : '▸' }}</span>
-              </button>
-
-              <div class="changed-files-body" *ngIf="changedFilesExpanded()">
-                <button
-                  type="button"
-                  class="changed-file-item"
-                  *ngFor="let f of rightPanelChangedFiles()"
-                  (click)="openGitDiffFile(f.path)"
-                  [title]="f.path"
-                >
-                  <span class="changed-file-status" [class]="changedFileStatusClass(f.status)">{{ f.status }}</span>
-                  <span class="changed-file-name">{{ f.path.split('/').pop() }}</span>
-                  <span class="changed-file-dir">{{ f.path.includes('/') ? f.path.substring(0, f.path.lastIndexOf('/')) : '' }}</span>
-                  <span class="changed-file-time">{{ f.mtime }}</span>
-                </button>
+                <div class="composer-top-right">
+                  <span class="composer-context-hint">{{ composerImages().length ? imageBadgeText() : '当前会话' }}</span>
+                </div>
               </div>
-            </div>
 
-            <div class="ai-composer compact">
-              <div class="composer-input-wrapper compact">
-                <textarea 
-                  class="composer-textarea" 
-                  [value]="composerDraft()" 
+              <div class="composer-input-wrapper compact recreated-input-shell">
+                <textarea
+                  class="composer-textarea"
+                  [value]="composerDraft()"
                   (input)="composerDraft.set($any($event.target).value)"
                   (paste)="onPaste($event)"
                   placeholder="Ask anything or @agents to delegate"
-                  rows="1"
+                  rows="3"
                 ></textarea>
               </div>
 
@@ -488,28 +479,25 @@
                 </div>
               </div>
 
-              <div class="composer-footer-row compact">
-                <div class="footer-left compact">
-                  <button type="button" class="composer-circle-btn" title="模式" (click)="cycleWorkbenchCoordinationMode()">
-                    <span class="mode-icon">{{ workbenchModeLabel() }}</span>
-                  </button>
-                  <button type="button" class="composer-circle-btn" [title]="currentModelLabel()" (click)="modelSelectRef?.showPicker?.()">
-                    <span nz-icon nzType="robot"></span>
+              <div class="composer-footer-row compact recreated-footer-row">
+                <div class="footer-left compact recreated-footer-left">
+                  <button type="button" class="composer-token-btn" title="提及 Agent">@</button>
+                  <button type="button" class="composer-token-btn" title="插入命令">#</button>
+                  <button type="button" class="composer-model-chip" [title]="currentModelLabel()" (click)="modelSelectRef?.showPicker?.()">
+                    <span class="composer-model-chip__label">{{ currentModelName() }}</span>
+                    <span class="composer-model-chip__caret">⌄</span>
                   </button>
                   <select #modelSelectRef class="composer-model-select-hidden" (change)="onModelSelectChange($event)">
                     <option *ngFor="let model of availableModelCatalog()" [value]="model.id" [selected]="currentModelEntry()?.id === model.id">
                       {{ model.providerLabel }} · {{ model.shortName }}
                     </option>
                   </select>
-                  <button type="button" class="composer-circle-btn" title="上下文">
-                    <span class="circle-ring"></span>
-                  </button>
-                  <button type="button" class="composer-circle-btn" title="图片" (click)="triggerImageUpload()">
+                </div>
+                <div class="footer-right compact recreated-footer-right">
+                  <button type="button" class="composer-utility-btn" title="上传图片" (click)="triggerImageUpload()">
                     <span nz-icon nzType="picture"></span>
                   </button>
-                </div>
-                <div class="footer-right compact">
-                  <button type="button" class="send-btn" [disabled]="!composerDraft().trim()" (click)="sendDraftToMainTerminal()">
+                  <button type="button" class="send-btn recreated-send-btn" [disabled]="!composerDraft().trim()" (click)="sendDraftToMainTerminal()">
                     <span nz-icon nzType="arrow-up"></span>
                   </button>
                 </div>

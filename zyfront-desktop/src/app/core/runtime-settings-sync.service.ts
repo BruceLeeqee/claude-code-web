@@ -47,7 +47,7 @@ export class RuntimeSettingsSyncService {
         enabled: Boolean(settings.compression.enabled),
         maxMessagesBeforeCompact: Number(settings.compression.maxMessagesBeforeCompact ?? 50),
         compactToMessages: Number(settings.compression.compactToMessages ?? 20),
-        maxEstimatedTokens: Number(settings.compression.maxEstimatedTokens ?? 24000),
+        maxEstimatedTokens: Number(settings.compression.maxEstimatedTokens ?? 120000),
       });
     });
   }

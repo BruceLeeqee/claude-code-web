@@ -17,16 +17,7 @@ import { ModeSwitchApiService } from './services/mode-switch-api.service';
 import { AgentStateMachineService } from './services/agent-state-machine.service';
 import { PlanModeTriggerService } from './services/plan-mode-trigger.service';
 import { IntentClassifierService } from './services/intent-classifier.service';
-import { TeamRuntimeService } from './team/team-runtime.service';
-import { TeamTaskBoardService } from './team/team-task-board.service';
-import { TeamMailboxService } from './team/team-mailbox.service';
-import { RoleRegistryService } from './team/role-registry.service';
-import { StructRegistryService } from './team/struct-registry.service';
-import { TeamStageMachineService } from './team/team-stage-machine.service';
-import { TeamLoggerService, StructuredLogEntry } from './team/team-logger.service';
-import { TeamCommandRouterService } from './team/team-command-router.service';
 import type { TaskGraph, TaskNode, AgentDescriptor, AgentRuntimeState, TaskNodeStatus } from './domain/types';
-import type { TeamRuntimeState, TeamMemberState, TeamTask } from './team/team.types';
 import type { ExecutionMode } from './services/execution-mode-decider.service';
 import { EVENT_TYPES, MultiAgentEvent, TaskPlannedPayload, AgentCreatedPayload, TaskStartedPayload, TaskCompletedPayload, TaskFailedPayload, AgentStateChangedPayload, AgentThinkingPayload, AgentOutputPayload } from './multi-agent.events';
 import { Subscription } from 'rxjs';
@@ -84,14 +75,6 @@ export class MultiAgentSidebarComponent implements OnDestroy {
   private readonly stateMachine = inject(AgentStateMachineService);
   private readonly planModeTrigger = inject(PlanModeTriggerService);
   private readonly intentClassifier = inject(IntentClassifierService);
-  private readonly teamRuntime = inject(TeamRuntimeService);
-  private readonly teamTaskBoard = inject(TeamTaskBoardService);
-  private readonly teamMailbox = inject(TeamMailboxService);
-  private readonly roleRegistry = inject(RoleRegistryService);
-  private readonly structRegistry = inject(StructRegistryService);
-  private readonly stageMachine = inject(TeamStageMachineService);
-  private readonly teamLogger = inject(TeamLoggerService);
-  private readonly commandRouter = inject(TeamCommandRouterService);
 
   protected readonly executionMode = signal<ExecutionMode>('single');
   protected readonly modeReason = signal('');
@@ -106,34 +89,6 @@ export class MultiAgentSidebarComponent implements OnDestroy {
   protected readonly isProcessing = signal(false);
   protected readonly currentRequest = signal('');
   protected readonly taskListExpanded = signal(true);
-
-  protected readonly activeTeam = computed(() => this.teamRuntime.activeRuntime());
-  protected readonly teamMembers = computed(() => this.activeTeam()?.members ?? []);
-  protected readonly teamTasks = computed(() => {
-    const team = this.activeTeam();
-    return this.teamTaskBoard.taskList(team?.id);
-  });
-  protected readonly teamProgress = computed(() => {
-    const team = this.activeTeam();
-    if (!team) return { total: 0, completed: 0, failed: 0, pending: 0, inProgress: 0 };
-    return this.teamTaskBoard.getProgress(team.id);
-  });
-  protected readonly activeTeamStage = computed(() => {
-    const team = this.activeTeam();
-    if (!team) return null;
-    return this.teamRuntime.getCurrentStage(team.id) ?? null;
-  });
-  protected readonly availableRoles = computed(() => this.roleRegistry.roleList());
-  protected readonly availableStructs = computed(() => this.structRegistry.structList());
-  protected readonly sidebarTab = signal<number>(0);
-
-  protected readonly commandFeedback = signal<{ command: string; result: string; success: boolean; timestamp: number }[]>([]);
-  protected readonly recentLogs = computed(() => this.teamLogger.recentLogs());
-  protected readonly stageMachineState = computed(() => {
-    const team = this.activeTeam();
-    if (!team) return null;
-    return this.stageMachine.getMachine(team.id);
-  });
 
   /** 默认智能体 ID */
   private static readonly DEFAULT_AGENT_ID = 'agent-default-chaoti';
@@ -196,11 +151,6 @@ export class MultiAgentSidebarComponent implements OnDestroy {
           this.handleTaskPlanned(event as MultiAgentEvent<'task.planned'>);
         }),
       this.eventBus.events$
-        .pipe(filter((e: MultiAgentEvent) => e.type === EVENT_TYPES.TEAM_ROLE_CREATED))
-        .subscribe(() => {
-          void this.refreshTeamData();
-        }),
-      this.eventBus.events$
         .pipe(filter((e: MultiAgentEvent) => e.type === EVENT_TYPES.AGENT_CREATED))
         .subscribe(event => {
           this.handleAgentCreated(event as MultiAgentEvent<'agent.created'>);
@@ -239,54 +189,6 @@ export class MultiAgentSidebarComponent implements OnDestroy {
         .pipe(filter((e: MultiAgentEvent) => e.type === EVENT_TYPES.AGENT_OUTPUT))
         .subscribe(event => {
           this.handleAgentOutput(event as MultiAgentEvent<'agent.output'>);
-        }),
-      this.eventBus.events$
-        .pipe(filter((e: MultiAgentEvent) => e.type === EVENT_TYPES.TEAM_RUNTIME_MEMBER_JOINED))
-        .subscribe(event => {
-          const payload = event.payload as { teamId: string; agentId: string; roleName: string };
-          if (payload?.agentId) {
-            const now = Date.now();
-            this.agentDescriptors.update(map => {
-              const newMap = new Map(map);
-              if (!newMap.has(payload.agentId)) {
-                newMap.set(payload.agentId, {
-                  agentId: payload.agentId,
-                  agentName: payload.roleName || payload.agentId,
-                  role: 'executor' as any,
-                  teamId: payload.teamId,
-                  sessionId: payload.teamId,
-                  modelId: 'default',
-                  backendType: 'in-process',
-                  promptTemplate: '',
-                  permissions: [],
-                  createdAt: now,
-                  createdBy: 'planner',
-                  lifetimePolicy: 'task-bound',
-                  metadata: {},
-                });
-              }
-              return newMap;
-            });
-            this.agentStates.update(map => {
-              const newMap = new Map(map);
-              if (!newMap.has(payload.agentId)) {
-                newMap.set(payload.agentId, {
-                  agentId: payload.agentId,
-                  status: 'running' as any,
-                  lastSeenAt: now,
-                  heartbeatInterval: 30000,
-                  activeTaskIds: [],
-                  recoveryAttempts: 0,
-                  totalMessagesProcessed: 0,
-                  totalTokensUsed: 0,
-                  startedAt: now,
-                  lastStateChangeAt: now,
-                });
-              }
-              return newMap;
-            });
-            this.refreshAgents();
-          }
         }),
     );
   }
@@ -615,18 +517,6 @@ export class MultiAgentSidebarComponent implements OnDestroy {
 
   async processRequest(request: string): Promise<void> {
     if (!request.trim()) return;
-
-    if (this.commandRouter.isTeamCommand(request)) {
-      this.isProcessing.set(true);
-      this.currentRequest.set(request);
-      try {
-        const result = await this.commandRouter.execute(request);
-        this.teamLogger.info('sidebar', `团队命令执行结果: ${result.message}`, { details: { result } });
-      } finally {
-        this.isProcessing.set(false);
-      }
-      return;
-    }
 
     this.isProcessing.set(true);
     this.currentRequest.set(request);
@@ -1030,124 +920,5 @@ export class MultiAgentSidebarComponent implements OnDestroy {
   /** 判断 agent 是否为默认智能体 */
   isDefaultAgent(agentId: string): boolean {
     return agentId === MultiAgentSidebarComponent.DEFAULT_AGENT_ID;
-  }
-
-  protected getTeamStatusText(status: string): string {
-    const texts: Record<string, string> = {
-      'created': '已创建',
-      'initializing': '初始化中',
-      'running': '运行中',
-      'awaiting-handoff': '等待切换',
-      'blocked': '已阻塞',
-      'paused': '已暂停',
-      'completed': '已完成',
-      'failed': '失败',
-      'cleaning-up': '清理中',
-      'closed': '已关闭',
-    };
-    return texts[status] || status;
-  }
-
-  protected getTeamStatusColor(status: string): string {
-    const colors: Record<string, string> = {
-      'created': 'default',
-      'initializing': 'processing',
-      'running': 'processing',
-      'awaiting-handoff': 'warning',
-      'blocked': 'error',
-      'paused': 'warning',
-      'completed': 'success',
-      'failed': 'error',
-      'cleaning-up': 'processing',
-      'closed': 'default',
-    };
-    return colors[status] || 'default';
-  }
-
-  protected getMemberStatusColor(status: string): string {
-    const colors: Record<string, string> = {
-      'joining': 'processing',
-      'active': 'success',
-      'idle': 'default',
-      'busy': 'processing',
-      'waiting': 'warning',
-      'leaving': 'warning',
-      'left': 'default',
-      'error': 'error',
-    };
-    return colors[status] || 'default';
-  }
-
-  protected getMemberStatusText(status: string): string {
-    const texts: Record<string, string> = {
-      'joining': '加入中',
-      'active': '活跃',
-      'idle': '空闲',
-      'busy': '忙碌',
-      'waiting': '等待',
-      'leaving': '离开中',
-      'left': '已离开',
-      'error': '错误',
-    };
-    return texts[status] || status;
-  }
-
-  protected getStageModeText(mode: string): string {
-    const texts: Record<string, string> = {
-      'subagent': '并行隔离',
-      'agent-team': '协作共享',
-      'hybrid': '混合编排',
-    };
-    return texts[mode] || mode;
-  }
-
-  protected getStageModeColor(mode: string): string {
-    const colors: Record<string, string> = {
-      'subagent': 'blue',
-      'agent-team': 'green',
-      'hybrid': 'purple',
-    };
-    return colors[mode] || 'default';
-  }
-
-  addCommandFeedback(command: string, result: string, success: boolean): void {
-    this.commandFeedback.update(feedback => [
-      ...feedback.slice(-19),
-      { command, result, success, timestamp: Date.now() },
-    ]);
-  }
-
-  async refreshTeamData(): Promise<void> {
-    await this.roleRegistry.refreshFromFiles();
-    await this.structRegistry.refreshFromFiles();
-  }
-
-  protected getLogLevelColor(level: string): string {
-    const colors: Record<string, string> = {
-      'info': 'blue',
-      'warn': 'orange',
-      'error': 'red',
-      'debug': 'default',
-    };
-    return colors[level] || 'default';
-  }
-
-  protected formatLogTime(timestamp: number): string {
-    return new Date(timestamp).toLocaleTimeString();
-  }
-
-  protected getStageNodeColor(state: string): string {
-    const colors: Record<string, string> = {
-      'idle': 'default',
-      'pending': 'default',
-      'running': 'processing',
-      'succeeded': 'success',
-      'failed': 'error',
-      'escalating': 'warning',
-      'retrying': 'warning',
-      'skipped': 'default',
-      'aborted': 'error',
-    };
-    return colors[state] || 'default';
   }
 }

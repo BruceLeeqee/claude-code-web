@@ -149,10 +149,12 @@ export class TeamCommandRouterService {
     if (commandToken === '/team-run') {
       const subcommand = tokens[1]?.value || '';
       const args = tokens.slice(2).map(t => t.value);
+      const normalizedSubcommand = subcommand === 'struct' ? 'run' : subcommand;
+      const normalizedArgs = subcommand === 'struct' ? [tokens[2]?.value || '', ...tokens.slice(3).map(t => t.value)] : args;
       return {
         family: 'team-run',
-        subcommand,
-        args,
+        subcommand: normalizedSubcommand,
+        args: normalizedArgs,
         raw: trimmed,
         tokenErrors: errors.length > 0 ? errors : undefined,
       };
@@ -486,7 +488,7 @@ export class TeamCommandRouterService {
       '/team-struct list',
       '/team-struct info <struct-name>',
       '/team run struct "结构名" "任务"',
-      '/team-run <结构名> "任务描述"',
+      '/team-run <结构名> "任务描述" [-b]',
       '/team-subagent frontend,backend "任务"',
       '/team-agent frontend,backend,qa "任务"',
       '/team status [teamId]',
@@ -503,7 +505,7 @@ export class TeamCommandRouterService {
         { usage: '/team', description: '显示团队命令帮助' },
         { usage: '/team status [teamId]', description: '查看团队运行状态，不传 teamId 则查看当前活跃团队' },
         { usage: '/team run struct "结构名" "任务"', description: '使用指定协作结构运行团队任务' },
-        { usage: '/team-run <结构名> "任务描述"', description: '快捷方式：使用指定协作结构运行团队任务' },
+        { usage: '/team-run <结构名> "任务描述" [-b]', description: '快捷方式：使用指定协作结构运行团队任务，加 -b 开启头脑风暴' },
         { usage: '/team pause <teamId>', description: '暂停指定团队的运行' },
         { usage: '/team resume <teamId>', description: '恢复暂停的团队运行' },
         { usage: '/team stop <teamId>', description: '停止并关闭指定团队' },

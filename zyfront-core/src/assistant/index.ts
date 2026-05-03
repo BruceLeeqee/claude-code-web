@@ -27,7 +27,7 @@ import { ContextManager } from '../context/index.js';
 import { InMemoryHistoryStore, type HistoryStore } from '../history/index.js';
 import { SkillRegistry } from '../skills/index.js';
 import { ToolRegistry } from '../tools/index.js';
-import { SessionCompactor, autoCompactIfNeededV2, type AutoCompactPolicy, type CompactV2Policy } from '../compact/index.js';
+import { SessionCompactor, autoCompactIfNeededV2, sanitizeCompactedMessagesForApi, type AutoCompactPolicy, type CompactV2Policy } from '../compact/index.js';
 import { CoordinatorEngine } from '../coordinator/index.js';
 import { composePrompt } from '../prompt/composer.js';
 import { buildEffectiveSystemPrompt } from '../prompt/effective-system-prompt.js';
@@ -62,6 +62,10 @@ export interface AssistantChatInput extends Omit<ChatRequest, 'messages'> {
 const MAX_TOOL_ROUNDS = 100;
 /** 单轮流式请求失败重试上限（网络抖动/网关偶发错误） */
 const MAX_STREAM_REQUEST_RETRIES = 5;
+/** 上下文溢出后最大强制压缩重试次数 */
+const MAX_CONTEXT_OVERFLOW_RETRIES = 3;
+/** 检测 API 返回的上下文溢出错误 */
+const CONTEXT_OVERFLOW_RE = /context window exceeds limit|context_length_exceeded|context length exceeded|too many tokens|max.*context.*exceed/i;
 
 export class AssistantRuntime {
   /** 会话上下文持久化（与 history 分离存储键空间） */
@@ -201,10 +205,31 @@ export class AssistantRuntime {
       if (prompt.finalPrompt) payload.systemPrompt = prompt.finalPrompt;
       if (toolDefs.length > 0) payload.tools = toolDefs;
 
-      const response = await this.opts.api.createMessage({
-        ...payload,
-        config: request.config,
-      });
+      let response: ChatResponse | undefined;
+      let lastPayload = payload;
+
+      for (let overflowRetry = 0; overflowRetry <= MAX_CONTEXT_OVERFLOW_RETRIES; overflowRetry++) {
+        try {
+          response = await this.opts.api.createMessage({
+            ...lastPayload,
+            config: request.config,
+          });
+          break;
+        } catch (apiError) {
+          const errMsg = apiError instanceof Error ? apiError.message : String(apiError);
+          if (overflowRetry < MAX_CONTEXT_OVERFLOW_RETRIES && CONTEXT_OVERFLOW_RE.test(errMsg)) {
+            const forceHist = lastPayload.messages;
+            const forceCompacted = this.forceCompactForOverflow(forceHist, overflowRetry);
+            lastPayload = { ...lastPayload, messages: forceCompacted };
+            continue;
+          }
+          throw apiError;
+        }
+      }
+
+      if (!response) {
+        throw new Error('Failed to get API response after context overflow retries');
+      }
 
       lastResponse = response;
       await this.history.append(sessionId, response.message);
@@ -345,8 +370,11 @@ export class AssistantRuntime {
             };
             if (prompt.finalPrompt) streamReq.systemPrompt = prompt.finalPrompt;
             if (toolDefs.length > 0) streamReq.tools = toolDefs;
+            let currentStreamReq = streamReq;
+            let contextOverflowRetries = 0;
+
             for (let attempt = 1; attempt <= MAX_STREAM_REQUEST_RETRIES; attempt++) {
-              const upstream = this.opts.api.createMessageStream(streamReq, {
+              const upstream = this.opts.api.createMessageStream(currentStreamReq, {
                 signal: cancelController.signal,
               });
               const reader = upstream.stream.getReader();
@@ -484,6 +512,18 @@ export class AssistantRuntime {
                 controller.enqueue({ type: 'error', error: 'Stream aborted' });
                 controller.close();
                 return;
+              }
+
+              if (CONTEXT_OVERFLOW_RE.test(retryableError) && contextOverflowRetries < MAX_CONTEXT_OVERFLOW_RETRIES) {
+                contextOverflowRetries++;
+                const forceCompacted = this.forceCompactForOverflow(currentStreamReq.messages, contextOverflowRetries - 1);
+                currentStreamReq = { ...currentStreamReq, messages: forceCompacted };
+                controller.enqueue({
+                  type: 'delta',
+                  textDelta: `\n[自动压缩] 上下文超出限制，正在压缩后重试（${contextOverflowRetries}/${MAX_CONTEXT_OVERFLOW_RETRIES}）\n`,
+                });
+                attempt = 0;
+                continue;
               }
 
               if (attempt < MAX_STREAM_REQUEST_RETRIES) {
@@ -722,6 +762,36 @@ export class AssistantRuntime {
       return messages;
     }
     return messages.slice(-AssistantRuntime.FALLBACK_MAX_MESSAGES);
+  }
+
+  /**
+   * 上下文溢出时强制压缩：每次重试递进裁剪更多消息，
+   * 最终降级到仅保留最近几条纯文本消息。
+   */
+  private forceCompactForOverflow(messages: ChatMessage[], retryIndex: number): ChatMessage[] {
+    const system = messages.filter((m) => m.role === 'system');
+    const nonSystem = messages.filter((m) => m.role !== 'system');
+
+    const keepCounts = [Math.max(nonSystem.length >> 1, 4), Math.max(nonSystem.length >> 2, 2), 2];
+    const keepCount = keepCounts[Math.min(retryIndex, keepCounts.length - 1)]!;
+
+    const tail = nonSystem.slice(-keepCount);
+    const dropped = nonSystem.slice(0, Math.max(nonSystem.length - tail.length, 0));
+
+    const summary: ChatMessage[] = dropped.length > 0
+      ? [{
+          id: `compact_overflow_${Date.now()}`,
+          role: 'user',
+          content: `[系统提示] 上下文已超出模型限制，已自动压缩 ${dropped.length} 条历史消息。请基于当前信息继续。`,
+          timestamp: Date.now(),
+          metadata: { compactOverflow: true, droppedCount: dropped.length },
+        }]
+      : [];
+
+    const keptRaw = [...system, ...summary, ...tail];
+    return this.dropDanglingToolResults(
+      sanitizeCompactedMessagesForApi(keptRaw),
+    );
   }
 
   /**

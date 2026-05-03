@@ -877,7 +877,7 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
             enabled: true,
             maxMessagesBeforeCompact: 50,
             compactToMessages: 20,
-            maxEstimatedTokens: 24000,
+            maxEstimatedTokens: 120000,
           },
           cost: {
             maxSessionCostUsd: 5,
@@ -942,7 +942,7 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
           enabled: true,
           maxMessagesBeforeCompact: 50,
           compactToMessages: 20,
-          maxEstimatedTokens: 24000,
+          maxEstimatedTokens: 120000,
         },
         cost: {
           maxSessionCostUsd: 5,
@@ -1187,7 +1187,7 @@ export class ModelsPrototypePageComponent implements OnInit, OnDestroy {
         enabled: true,
         maxMessagesBeforeCompact: 50,
         compactToMessages: 20,
-        maxEstimatedTokens: 24000,
+        maxEstimatedTokens: 120000,
       };
     }
     if (!out['cost']) {

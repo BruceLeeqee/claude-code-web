@@ -1,11 +1,12 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, inject, OnDestroy, OnInit, signal } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, CUSTOM_ELEMENTS_SCHEMA, inject, OnDestroy, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AgentNodeComponent } from './components/agent-node.component';
 import { BattleStageComponent } from './components/battle-stage.component';
 import { DebatePanelComponent } from './components/debate-panel.component';
-import { TimelineComponent } from './components/timeline.component';
+
 import { OrchestrationCanvasComponent } from './components/orchestration-canvas.component';
+import { CollaborationNetworkComponent } from './components/collaboration-network.component';
 import { MultiAgentOrchestratorService } from '../../../core/multi-agent/multi-agent.orchestrator.service';
 import { CollaborationStateService, CollaborationAgentVm, CollaborationTeamVm } from './services/collaboration-state.service';
 import { ModeManagerService } from './services/mode-manager.service';
@@ -23,6 +24,8 @@ import { DEBATE_ORCHESTRATION_MOCKS } from './services/debate-orchestration.mock
 import { DebateTopicBridgeService } from './services/debate-topic-bridge.service';
 
 type ViewType = 'arena' | 'network' | 'cognitive';
+
+type CollaborationPageTab = ViewType | 'workspace';
 
 interface AgentBuildForm {
   name: string;
@@ -60,7 +63,8 @@ interface TaskOrchestrationItem {
 @Component({
   selector: 'app-collaboration-page',
   standalone: true,
-  imports: [CommonModule, FormsModule, AgentNodeComponent, BattleStageComponent, DebatePanelComponent, TimelineComponent, OrchestrationCanvasComponent],
+  imports: [CommonModule, FormsModule, AgentNodeComponent, BattleStageComponent, DebatePanelComponent, OrchestrationCanvasComponent, CollaborationNetworkComponent],
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
   templateUrl: './collaboration.page.html',
   styleUrls: ['../prototype-page.scss', './collaboration.page.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -94,12 +98,16 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
   protected readonly isPlaying = signal(false);
   protected speed = 1;
   protected readonly speeds = [1, 2, 4, 8];
+  protected readonly minimizedNetworkPanes = signal<Record<number, boolean>>({});
+  protected readonly maximizedNetworkPane = signal<number | null>(null);
 
   protected showAgentBuildModal = signal(false);
   protected showTeamBuildModal = signal(false);
   protected showTaskOrchestrationModal = signal(false);
   protected showAgentDashboardModal = signal(false);
   protected showAgentEditModal = signal(false);
+  protected networkCommandInputs: string[] = Array.from({ length: 6 }, () => '');
+  protected networkMessagesOverride: Array<Array<{ time: string; type: string; msg: string }> | null> = Array.from({ length: 6 }, () => null);
 
   protected agentEditForm: AgentEditForm = {
     id: '',
@@ -195,8 +203,115 @@ export class CollaborationPrototypePageComponent implements OnInit, OnDestroy {
     return this.stateService.agents();
   }
 
-  protected switchTab(tab: ViewType): void {
-    this.stateService.setActiveTab(tab);
+  protected networkStatusLabel(status: string): string {
+    return status === 'running' || status === 'busy' ? 'RUNNING' : status === 'idle' ? 'IDLE' : status === 'error' ? 'ERROR' : 'BOOTING';
+  }
+
+  protected networkStatusClass(status: string): string {
+    return status === 'running' || status === 'busy' ? 'bg-status-running' : status === 'idle' ? 'bg-status-idle' : status === 'error' ? 'bg-status-error' : 'bg-status-booting';
+  }
+
+  protected networkStatusTextClass(status: string): string {
+    return status === 'running' || status === 'busy' ? 'status-running' : status === 'idle' ? 'status-idle' : status === 'error' ? 'status-error' : 'status-booting';
+  }
+
+  protected networkAgentIcon(role: string): string {
+    if (role === 'architect') return 'lucide:layers-3';
+    if (role === 'analyst') return 'lucide:bar-chart-3';
+    if (role === 'developer') return 'lucide:code-2';
+    if (role === 'tester') return 'lucide:shield-check';
+    if (role === 'devops') return 'lucide:server';
+    return 'lucide:file-text';
+  }
+
+  protected networkAgentIconClass(role: string): string {
+    if (role === 'architect') return 'icon-architect';
+    if (role === 'analyst') return 'icon-analyst';
+    if (role === 'developer') return 'icon-developer';
+    if (role === 'tester') return 'icon-tester';
+    if (role === 'devops') return 'icon-devops';
+    return 'icon-product';
+  }
+
+  protected networkProgress(agent: CollaborationAgentVm, index: number): number {
+    return Math.max(8, Math.min(99, agent.load ? Math.round(agent.load * 1.1) : [12, 24, 34, 46, 58, 67, 72, 81][index % 8]));
+  }
+
+  protected networkRemaining(agent: CollaborationAgentVm, index: number): string {
+    return `${Math.max(5, 28 - index * 2)}m`;
+  }
+
+  protected networkMessages(index: number): Array<{ time: string; type: string; msg: string }> {
+    return this.networkMessagesOverride[index] ?? [
+      { time: '19:03:03', type: 'process', msg: '协议握手完成。' },
+      { time: '19:03:10', type: 'process', msg: '正在处理 任务流...' },
+      { time: '19:03:14', type: 'process', msg: '检测到输入信号，正在解析数据流...' },
+    ];
+  }
+
+  protected networkInputValue(index: number): string {
+    return this.networkCommandInputs[index] ?? '';
+  }
+
+  protected submitNetworkCommand(index: number): void {
+    const value = (this.networkCommandInputs[index] ?? '').trim();
+    if (!value) return;
+    const messages = this.networkMessages(index);
+    messages.push({ time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), type: 'success', msg: `CMD: ${value}` });
+    this.networkMessagesOverride[index] = messages;
+    this.networkCommandInputs[index] = '';
+  }
+
+  protected isNetworkPaneMinimized(index: number): boolean {
+    return !!this.minimizedNetworkPanes()[index];
+  }
+
+  protected isNetworkPaneMaximized(index: number): boolean {
+    return this.maximizedNetworkPane() === index;
+  }
+
+  protected toggleNetworkPaneMinimize(index: number): void {
+    if (this.maximizedNetworkPane() === index) {
+      this.resetNetworkLayout();
+      return;
+    }
+    const next = { ...this.minimizedNetworkPanes() };
+    next[index] = !next[index];
+    this.minimizedNetworkPanes.set(next);
+  }
+
+  protected maximizeNetworkPane(index: number): void {
+    this.maximizedNetworkPane.set(index);
+    this.minimizedNetworkPanes.set({});
+  }
+
+  protected resetNetworkLayout(): void {
+    this.maximizedNetworkPane.set(null);
+    this.minimizedNetworkPanes.set({});
+  }
+
+
+  protected closeNetworkPane(index: number): void {
+    const remaining = this.stateService.agents().filter((_, agentIndex) => agentIndex !== index);
+    this.stateService.resetCollaborationScene(this.stateService.mode());
+    remaining.forEach(agent => this.stateService.addAgent(agent));
+    this.networkMessagesOverride = this.networkMessagesOverride.filter((_, messageIndex) => messageIndex !== index);
+    this.networkCommandInputs = this.networkCommandInputs.filter((_, inputIndex) => inputIndex !== index);
+    const minimized = { ...this.minimizedNetworkPanes() };
+    delete minimized[index];
+    this.minimizedNetworkPanes.set(minimized);
+    if (this.maximizedNetworkPane() === index) this.maximizedNetworkPane.set(null);
+  }
+
+  protected toggleAgentAction(agentId: string): void {
+    const agent = this.agents.find(item => item.id === agentId);
+    if (!agent) return;
+    const nextStatus: 'running' | 'idle' = agent.status === 'running' || agent.status === 'busy' ? 'idle' : 'running';
+    this.stateService.updateAgentStatus(agentId, nextStatus);
+  }
+
+  protected switchTab(tab: CollaborationPageTab): void {
+    this.stateService.setActiveTab(tab === 'workspace' ? 'network' : tab);
   }
 
   protected openAgentBuildModal(): void {
